@@ -23,7 +23,7 @@ The backend never forwards raw Kubernetes objects. It maps each object to a smal
 
 | Field | Type | Notes |
 |---|---|---|
-| `id` | string | Kubernetes `metadata.uid` (unique even if a name is reused) |
+| `id` | string | `<Kind>/<namespace>/<name>`, see [ADR-0004](0004-node-ids-from-names.md) (was `metadata.uid`) |
 | `kind` | string | `Pod`, `Deployment`, `Service`, `Node`, … |
 | `ns` | string | Namespace; empty for cluster-scoped objects |
 | `name` | string | |

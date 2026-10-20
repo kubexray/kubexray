@@ -1,0 +1,311 @@
+package cluster
+
+import (
+	appsv1 "k8s.io/api/apps/v1"
+	batchv1 "k8s.io/api/batch/v1"
+	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	"github.com/kubexray/kubexray/internal/graph"
+)
+
+// Kinds that kubexray maps. ConfigMaps and Secrets are watched as metadata
+// only, so their contents never reach the process.
+const (
+	KindNamespace   = "Namespace"
+	KindNode        = "Node"
+	KindPod         = "Pod"
+	KindDeployment  = "Deployment"
+	KindReplicaSet  = "ReplicaSet"
+	KindStatefulSet = "StatefulSet"
+	KindDaemonSet   = "DaemonSet"
+	KindJob         = "Job"
+	KindService     = "Service"
+	KindIngress     = "Ingress"
+	KindConfigMap   = "ConfigMap"
+	KindSecret      = "Secret"
+	KindPVC         = "PersistentVolumeClaim"
+)
+
+// baseNode fills the fields every node has. Namespaced objects are grouped
+// under their Namespace.
+func baseNode(kind string, m metav1.Object) graph.Node {
+	n := graph.Node{
+		ID:        graph.ID(kind, m.GetNamespace(), m.GetName()),
+		Kind:      kind,
+		Namespace: m.GetNamespace(),
+		Name:      m.GetName(),
+		Labels:    m.GetLabels(),
+		Created:   m.GetCreationTimestamp().Time,
+	}
+	if ns := m.GetNamespace(); ns != "" {
+		n.Parent = graph.ID(KindNamespace, "", ns)
+	}
+	return n
+}
+
+// ownerEdges links an object to each of its owners.
+func ownerEdges(id string, m metav1.Object) []graph.Edge {
+	edges := make([]graph.Edge, 0, len(m.GetOwnerReferences()))
+	for _, ref := range m.GetOwnerReferences() {
+		edges = append(edges, graph.NewEdge(graph.EdgeOwns, graph.ID(ref.Kind, m.GetNamespace(), ref.Name), id))
+	}
+	return edges
+}
+
+func mapNamespace(ns *corev1.Namespace) (graph.Node, []graph.Edge) {
+	n := baseNode(KindNamespace, ns)
+	n.Status = graph.Status{Phase: string(ns.Status.Phase), Ready: ns.Status.Phase == corev1.NamespaceActive}
+	return n, nil
+}
+
+func mapNode(node *corev1.Node) (graph.Node, []graph.Edge) {
+	n := baseNode(KindNode, node)
+	for _, c := range node.Status.Conditions {
+		if c.Type == corev1.NodeReady {
+			n.Status.Ready = c.Status == corev1.ConditionTrue
+			if !n.Status.Ready {
+				n.Status.Reason = c.Reason
+			}
+		}
+	}
+	if node.Spec.Unschedulable {
+		n.Status.Reason = "SchedulingDisabled"
+	}
+	return n, nil
+}
+
+func mapPod(pod *corev1.Pod) (graph.Node, []graph.Edge) {
+	n := baseNode(KindPod, pod)
+	if pod.Spec.NodeName != "" {
+		n.Parent = graph.ID(KindNode, "", pod.Spec.NodeName)
+	}
+	n.Status = podStatus(pod)
+
+	edges := ownerEdges(n.ID, pod)
+	for _, id := range podDependencies(pod) {
+		edges = append(edges, graph.NewEdge(graph.EdgeMounts, n.ID, id))
+	}
+	return n, edges
+}
+
+// podStatus summarises a pod the way `kubectl get pods` would: the most
+// telling reason wins.
+func podStatus(pod *corev1.Pod) graph.Status {
+	s := graph.Status{Phase: string(pod.Status.Phase), Reason: pod.Status.Reason}
+	for _, c := range pod.Status.Conditions {
+		if c.Type == corev1.PodReady {
+			s.Ready = c.Status == corev1.ConditionTrue
+		}
+	}
+
+	var waiting, terminated, lastTerminated string
+	for _, cs := range pod.Status.ContainerStatuses {
+		s.Restarts += cs.RestartCount
+		switch {
+		case cs.State.Waiting != nil && (waiting == "" || isStarting(waiting)):
+			waiting = cs.State.Waiting.Reason
+		case cs.State.Terminated != nil && terminated == "":
+			terminated = cs.State.Terminated.Reason
+		}
+		if cs.LastTerminationState.Terminated != nil && lastTerminated == "" {
+			lastTerminated = cs.LastTerminationState.Terminated.Reason
+		}
+	}
+
+	switch {
+	case pod.DeletionTimestamp != nil:
+		s.Reason = "Terminating"
+	case waiting != "" && !isStarting(waiting):
+		s.Reason = waiting // e.g. CrashLoopBackOff, ImagePullBackOff
+	case terminated != "":
+		s.Reason = terminated // e.g. OOMKilled, Error, Completed
+	case waiting != "":
+		s.Reason = waiting
+	case s.Reason == "" && lastTerminated != "" && s.Restarts > 0:
+		s.Reason = lastTerminated // recovered, but say why it restarted
+	}
+	return s
+}
+
+// isStarting reports whether a waiting reason is a normal part of startup
+// rather than a problem.
+func isStarting(reason string) bool {
+	return reason == "ContainerCreating" || reason == "PodInitializing"
+}
+
+// podDependencies returns the IDs of the ConfigMaps, Secrets and PVCs a pod
+// uses, through volumes or environment variables, without duplicates.
+func podDependencies(pod *corev1.Pod) []string {
+	var ids []string
+	seen := map[string]bool{}
+	add := func(kind, name string) {
+		if name == "" {
+			return
+		}
+		id := graph.ID(kind, pod.Namespace, name)
+		if !seen[id] {
+			seen[id] = true
+			ids = append(ids, id)
+		}
+	}
+
+	for _, v := range pod.Spec.Volumes {
+		switch {
+		case v.ConfigMap != nil:
+			add(KindConfigMap, v.ConfigMap.Name)
+		case v.Secret != nil:
+			add(KindSecret, v.Secret.SecretName)
+		case v.PersistentVolumeClaim != nil:
+			add(KindPVC, v.PersistentVolumeClaim.ClaimName)
+		case v.Projected != nil:
+			for _, src := range v.Projected.Sources {
+				if src.ConfigMap != nil {
+					add(KindConfigMap, src.ConfigMap.Name)
+				}
+				if src.Secret != nil {
+					add(KindSecret, src.Secret.Name)
+				}
+			}
+		}
+	}
+
+	containers := make([]corev1.Container, 0, len(pod.Spec.InitContainers)+len(pod.Spec.Containers))
+	containers = append(containers, pod.Spec.InitContainers...)
+	containers = append(containers, pod.Spec.Containers...)
+	for _, c := range containers {
+		for _, src := range c.EnvFrom {
+			if src.ConfigMapRef != nil {
+				add(KindConfigMap, src.ConfigMapRef.Name)
+			}
+			if src.SecretRef != nil {
+				add(KindSecret, src.SecretRef.Name)
+			}
+		}
+		for _, env := range c.Env {
+			if env.ValueFrom == nil {
+				continue
+			}
+			if ref := env.ValueFrom.ConfigMapKeyRef; ref != nil {
+				add(KindConfigMap, ref.Name)
+			}
+			if ref := env.ValueFrom.SecretKeyRef; ref != nil {
+				add(KindSecret, ref.Name)
+			}
+		}
+	}
+	for _, s := range pod.Spec.ImagePullSecrets {
+		add(KindSecret, s.Name)
+	}
+	return ids
+}
+
+// replicas builds a workload status; ready means fully rolled out.
+func replicas(desired *int32, ready, updated int32) graph.Status {
+	d := int32(1) // Kubernetes defaults spec.replicas to 1
+	if desired != nil {
+		d = *desired
+	}
+	return graph.Status{
+		Ready:    ready == d && updated == d,
+		Replicas: &graph.Replicas{Desired: d, Ready: ready, Updated: updated},
+	}
+}
+
+func mapDeployment(d *appsv1.Deployment) (graph.Node, []graph.Edge) {
+	n := baseNode(KindDeployment, d)
+	n.Status = replicas(d.Spec.Replicas, d.Status.ReadyReplicas, d.Status.UpdatedReplicas)
+	for _, c := range d.Status.Conditions {
+		if c.Type == appsv1.DeploymentProgressing && c.Reason == "ProgressDeadlineExceeded" {
+			n.Status.Reason = c.Reason
+		}
+	}
+	return n, ownerEdges(n.ID, d)
+}
+
+func mapReplicaSet(rs *appsv1.ReplicaSet) (graph.Node, []graph.Edge) {
+	n := baseNode(KindReplicaSet, rs)
+	// A ReplicaSet has no rollout of its own, so all its pods count as updated.
+	n.Status = replicas(rs.Spec.Replicas, rs.Status.ReadyReplicas, rs.Status.Replicas)
+	return n, ownerEdges(n.ID, rs)
+}
+
+func mapStatefulSet(ss *appsv1.StatefulSet) (graph.Node, []graph.Edge) {
+	n := baseNode(KindStatefulSet, ss)
+	n.Status = replicas(ss.Spec.Replicas, ss.Status.ReadyReplicas, ss.Status.UpdatedReplicas)
+	return n, ownerEdges(n.ID, ss)
+}
+
+func mapDaemonSet(ds *appsv1.DaemonSet) (graph.Node, []graph.Edge) {
+	n := baseNode(KindDaemonSet, ds)
+	desired := ds.Status.DesiredNumberScheduled
+	n.Status = replicas(&desired, ds.Status.NumberReady, ds.Status.UpdatedNumberScheduled)
+	return n, ownerEdges(n.ID, ds)
+}
+
+func mapJob(job *batchv1.Job) (graph.Node, []graph.Edge) {
+	n := baseNode(KindJob, job)
+	n.Status.Phase = "Running"
+	for _, c := range job.Status.Conditions {
+		if c.Status != corev1.ConditionTrue {
+			continue
+		}
+		switch c.Type { //nolint:exhaustive // only terminal conditions matter
+		case batchv1.JobComplete:
+			n.Status.Phase, n.Status.Ready = "Complete", true
+		case batchv1.JobFailed:
+			n.Status.Phase, n.Status.Reason = "Failed", c.Reason
+		}
+	}
+	return n, ownerEdges(n.ID, job)
+}
+
+func mapService(svc *corev1.Service) (graph.Node, []graph.Edge) {
+	n := baseNode(KindService, svc)
+	n.Status = graph.Status{Phase: string(svc.Spec.Type), Ready: true}
+	return n, ownerEdges(n.ID, svc)
+}
+
+func mapIngress(ing *networkingv1.Ingress) (graph.Node, []graph.Edge) {
+	n := baseNode(KindIngress, ing)
+	n.Status = graph.Status{Ready: len(ing.Status.LoadBalancer.Ingress) > 0}
+
+	edges := ownerEdges(n.ID, ing)
+	seen := map[string]bool{}
+	route := func(b *networkingv1.IngressBackend) {
+		if b == nil || b.Service == nil {
+			return
+		}
+		e := graph.NewEdge(graph.EdgeRoutes, n.ID, graph.ID(KindService, ing.Namespace, b.Service.Name))
+		if !seen[e.ID] {
+			seen[e.ID] = true
+			edges = append(edges, e)
+		}
+	}
+	route(ing.Spec.DefaultBackend)
+	for _, r := range ing.Spec.Rules {
+		if r.HTTP == nil {
+			continue
+		}
+		for _, p := range r.HTTP.Paths {
+			route(&p.Backend)
+		}
+	}
+	return n, edges
+}
+
+func mapPVC(pvc *corev1.PersistentVolumeClaim) (graph.Node, []graph.Edge) {
+	n := baseNode(KindPVC, pvc)
+	n.Status = graph.Status{Phase: string(pvc.Status.Phase), Ready: pvc.Status.Phase == corev1.ClaimBound}
+	return n, ownerEdges(n.ID, pvc)
+}
+
+// mapMetadata maps a metadata-only object (ConfigMap, Secret).
+func mapMetadata(kind string) func(*metav1.PartialObjectMetadata) (graph.Node, []graph.Edge) {
+	return func(m *metav1.PartialObjectMetadata) (graph.Node, []graph.Edge) {
+		n := baseNode(kind, m)
+		n.Status.Ready = true
+		return n, ownerEdges(n.ID, m)
+	}
+}
