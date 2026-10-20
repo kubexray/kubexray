@@ -1,9 +1,10 @@
 // Package graph is kubexray's model of a cluster: a set of nodes and edges
 // streamed to the UI as snapshots and deltas (see docs/adr/0003).
 //
-// The model is an allow-list. Only the fields declared here ever leave the
-// backend, so anything sensitive on a Kubernetes object (Secret data, env
-// values, annotations) is excluded by construction.
+// The model is an allow-list: only the fields declared here ever leave the
+// backend, so Secret data, env values and annotations are excluded by
+// construction. Labels are the one free-form field and are passed through
+// as-is; replay export anonymises them separately.
 package graph
 
 import (
@@ -116,9 +117,9 @@ type Message struct {
 	Type  MessageType `json:"type"`
 	Seq   uint64      `json:"seq"`
 	TS    time.Time   `json:"ts"`
-	Nodes []Node      `json:"nodes,omitempty"` // snapshot
-	Edges []Edge      `json:"edges,omitempty"` // snapshot
-	Ops   []Op        `json:"ops,omitempty"`   // delta
+	Nodes []Node      `json:"nodes,omitzero"`  // snapshot; always present, possibly []
+	Edges []Edge      `json:"edges,omitzero"`  // snapshot; always present, possibly []
+	Ops   []Op        `json:"ops,omitzero"`    // delta
 	Error string      `json:"error,omitempty"` // error
 }
 

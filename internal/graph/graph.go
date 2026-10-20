@@ -16,6 +16,12 @@ import (
 // flushed, so a client that applies a snapshot followed by every later delta
 // always ends up in sync.
 //
+// Edges are owned by whoever added them: removing a node only hides its edges
+// from clients, and they reappear if the node comes back. An edge is deleted
+// only by RemoveEdge.
+//
+// Messages returned by Flush and Snapshot are copies and safe to modify.
+//
 // It is safe for concurrent use.
 type Graph struct {
 	mu  sync.Mutex
@@ -34,6 +40,7 @@ type Graph struct {
 	sentNodes map[string]Node
 	sentEdges map[string]Edge
 	seq       uint64
+	flushedAt time.Time
 }
 
 // New returns an empty graph.
@@ -71,7 +78,8 @@ func (g *Graph) UpsertNode(n Node) {
 	}
 }
 
-// RemoveNode removes a node and every edge touching it.
+// RemoveNode removes a node. Its edges are hidden from clients until the node
+// returns or the edges are removed.
 func (g *Graph) RemoveNode(id string) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
@@ -82,13 +90,16 @@ func (g *Graph) RemoveNode(id string) {
 	delete(g.nodes, id)
 	g.dirtyNodes[id] = struct{}{}
 	for edgeID := range g.byNode[id] {
-		g.removeEdgeLocked(edgeID)
+		g.dirtyEdges[edgeID] = struct{}{}
 	}
 }
 
-// UpsertEdge adds an edge. It is held back from clients until both endpoints
-// exist.
+// UpsertEdge adds an edge. Its ID is derived from Type, From and To; any ID
+// set by the caller is ignored. It is held back from clients until both
+// endpoints exist.
 func (g *Graph) UpsertEdge(e Edge) {
+	e = NewEdge(e.Type, e.From, e.To)
+
 	g.mu.Lock()
 	defer g.mu.Unlock()
 
@@ -106,10 +117,6 @@ func (g *Graph) RemoveEdge(id string) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 
-	g.removeEdgeLocked(id)
-}
-
-func (g *Graph) removeEdgeLocked(id string) {
 	e, ok := g.edges[id]
 	if !ok {
 		return
@@ -151,7 +158,8 @@ func (g *Graph) Flush() (Message, bool) {
 		prev, sent := g.sentNodes[id]
 		switch {
 		case exists && (!sent || !prev.Equal(n)):
-			nodeUpserts = append(nodeUpserts, Op{Op: OpUpsertNode, Node: &n})
+			c := n.clone()
+			nodeUpserts = append(nodeUpserts, Op{Op: OpUpsertNode, Node: &c})
 			g.sentNodes[id] = n
 		case !exists && sent:
 			nodeRemoves = append(nodeRemoves, Op{Op: OpRemoveNode, ID: id})
@@ -181,7 +189,8 @@ func (g *Graph) Flush() (Message, bool) {
 		return Message{}, false
 	}
 	g.seq++
-	return Message{V: SchemaVersion, Type: MessageDelta, Seq: g.seq, TS: g.now(), Ops: ops}, true
+	g.flushedAt = g.now()
+	return Message{V: SchemaVersion, Type: MessageDelta, Seq: g.seq, TS: g.flushedAt, Ops: ops}, true
 }
 
 func (g *Graph) hasNode(id string) bool {
@@ -189,16 +198,30 @@ func (g *Graph) hasNode(id string) bool {
 	return ok
 }
 
-// Snapshot returns the graph as of the last Flush, sorted by ID. Its Seq is
-// that of the last delta, so the next delta a client should apply is Seq+1.
-// Returned nodes share label maps with the graph and must not be modified.
+// Snapshot returns the graph as of the last Flush, sorted by ID. Its Seq and
+// TS are those of the last delta, so the next delta a client should apply is
+// Seq+1.
 func (g *Graph) Snapshot() Message {
 	g.mu.Lock()
-	defer g.mu.Unlock()
+	nodes := make([]Node, 0, len(g.sentNodes))
+	for _, n := range g.sentNodes {
+		nodes = append(nodes, n.clone())
+	}
+	edges := slices.Collect(maps.Values(g.sentEdges))
+	if edges == nil {
+		edges = []Edge{}
+	}
+	msg := Message{V: SchemaVersion, Type: MessageSnapshot, Seq: g.seq, TS: g.flushedAt}
+	if g.seq == 0 {
+		msg.TS = g.now()
+	}
+	g.mu.Unlock()
 
-	nodes := slices.SortedFunc(maps.Values(g.sentNodes), func(a, b Node) int { return cmp.Compare(a.ID, b.ID) })
-	edges := slices.SortedFunc(maps.Values(g.sentEdges), func(a, b Edge) int { return cmp.Compare(a.ID, b.ID) })
-	return Message{V: SchemaVersion, Type: MessageSnapshot, Seq: g.seq, TS: g.now(), Nodes: nodes, Edges: edges}
+	// Sort outside the lock so large snapshots don't block writers.
+	slices.SortFunc(nodes, func(a, b Node) int { return cmp.Compare(a.ID, b.ID) })
+	slices.SortFunc(edges, func(a, b Edge) int { return cmp.Compare(a.ID, b.ID) })
+	msg.Nodes, msg.Edges = nodes, edges
+	return msg
 }
 
 func sortOps(ops []Op) []Op {

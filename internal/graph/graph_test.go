@@ -126,7 +126,7 @@ func TestEdgeHeldBackUntilBothEndpointsExist(t *testing.T) {
 	assertOps(t, ops(t, g), "+n:a", "+e:"+e.ID)
 }
 
-func TestRemoveNodeRemovesItsEdges(t *testing.T) {
+func TestRemoveNodeHidesItsEdges(t *testing.T) {
 	t.Parallel()
 	g := newTestGraph()
 	e := NewEdge(EdgeOwns, "rs", "a")
@@ -138,9 +138,35 @@ func TestRemoveNodeRemovesItsEdges(t *testing.T) {
 	g.RemoveNode("a")
 	assertOps(t, ops(t, g), "-e:"+e.ID, "-n:a")
 
-	// The edge is gone for good, not just hidden: re-adding the node doesn't bring it back.
+	// The edge belongs to whoever added it, so it returns with the node
+	// (e.g. an informer relist deleting and re-adding the same object).
 	g.UpsertNode(pod("a"))
-	assertOps(t, ops(t, g), "+n:a")
+	assertOps(t, ops(t, g), "+n:a", "+e:"+e.ID)
+}
+
+func TestRemoveAndReaddNodeWithinBatchKeepsEdges(t *testing.T) {
+	t.Parallel()
+	g := newTestGraph()
+	e := NewEdge(EdgeOwns, "rs", "a")
+	g.UpsertNode(pod("rs"))
+	g.UpsertNode(pod("a"))
+	g.UpsertEdge(e)
+	ops(t, g)
+
+	g.RemoveNode("a")
+	g.UpsertNode(pod("a"))
+	assertOps(t, ops(t, g))
+}
+
+func TestUpsertEdgeIgnoresCallerID(t *testing.T) {
+	t.Parallel()
+	g := newTestGraph()
+	g.UpsertNode(pod("a"))
+	g.UpsertNode(pod("b"))
+	g.UpsertNode(pod("c"))
+	g.UpsertEdge(Edge{Type: EdgeOwns, From: "a", To: "b"})
+	g.UpsertEdge(Edge{ID: "bogus", Type: EdgeOwns, From: "a", To: "c"})
+	assertOps(t, ops(t, g), "+n:a", "+n:b", "+n:c", "+e:owns:a:b", "+e:owns:a:c")
 }
 
 func TestRemoveEdge(t *testing.T) {
@@ -239,6 +265,30 @@ func TestSnapshotPlusDeltasConverges(t *testing.T) {
 	}
 }
 
+func TestOutputMutationDoesNotLeakIntoGraph(t *testing.T) {
+	t.Parallel()
+	g := newTestGraph()
+	n := pod("a")
+	n.Labels = map[string]string{"app": "api"}
+	n.Status.Replicas = &Replicas{Desired: 1}
+	g.UpsertNode(n)
+
+	msg, _ := g.Flush()
+	msg.Ops[0].Node.Labels["app"] = "changed"
+	msg.Ops[0].Node.Status.Replicas.Desired = 5
+	snap := g.Snapshot()
+	snap.Nodes[0].Labels["app"] = "changed"
+	snap.Nodes[0].Status.Replicas.Desired = 5
+
+	got := g.Snapshot().Nodes[0]
+	if got.Labels["app"] != "api" || got.Status.Replicas.Desired != 1 {
+		t.Errorf("stored node was mutated through returned messages: %+v", got)
+	}
+	// Re-upserting the original must still be recognised as unchanged.
+	g.UpsertNode(n)
+	assertOps(t, ops(t, g))
+}
+
 func TestCallerMutationDoesNotLeakIntoGraph(t *testing.T) {
 	t.Parallel()
 	g := newTestGraph()
@@ -287,6 +337,30 @@ func TestNodeEqual(t *testing.T) {
 				t.Errorf("Equal = %v, want %v", got, tt.equal)
 			}
 		})
+	}
+}
+
+func TestEmptySnapshotJSONHasEmptyLists(t *testing.T) {
+	t.Parallel()
+	got, err := json.Marshal(newTestGraph().Snapshot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `{"v":1,"type":"snapshot","seq":0,"ts":"2026-10-20T12:00:00Z","nodes":[],"edges":[]}`
+	if string(got) != want {
+		t.Errorf("JSON =\n%s\nwant\n%s", got, want)
+	}
+}
+
+func TestSnapshotTimestampIsLastFlush(t *testing.T) {
+	t.Parallel()
+	g := newTestGraph()
+	g.UpsertNode(pod("a"))
+	g.Flush()
+	g.now = func() time.Time { return t0.Add(time.Minute) }
+
+	if ts := g.Snapshot().TS; !ts.Equal(t0) {
+		t.Errorf("snapshot TS = %v, want last flush time %v", ts, t0)
 	}
 }
 
