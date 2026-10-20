@@ -6,6 +6,7 @@ Short documents capturing significant decisions, their context and consequences.
 |---|---|---|
 | [0001](0001-record-architecture-decisions.md) | Record architecture decisions | Accepted |
 | [0002](0002-technology-stack.md) | Technology stack | Accepted |
+| [0003](0003-graph-delta-schema.md) | Graph delta schema | Accepted |
 
 ## Template
 
