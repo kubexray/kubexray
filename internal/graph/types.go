@@ -28,7 +28,7 @@ const (
 
 // Node is one Kubernetes object as shown on the map.
 type Node struct {
-	ID        string            `json:"id"` // metadata.uid
+	ID        string            `json:"id"` // Kind/namespace/name, see ID
 	Kind      string            `json:"kind"`
 	Namespace string            `json:"ns,omitempty"`
 	Name      string            `json:"name"`
@@ -36,6 +36,15 @@ type Node struct {
 	Labels    map[string]string `json:"labels,omitempty"`
 	Status    Status            `json:"status"`
 	Created   time.Time         `json:"created"`
+}
+
+// ID returns the node ID for an object (ADR-0004). Cluster-scoped objects
+// have an empty namespace.
+func ID(kind, namespace, name string) string {
+	if namespace == "" {
+		return kind + "/" + name
+	}
+	return kind + "/" + namespace + "/" + name
 }
 
 // Status is a kind-specific summary; fields that don't apply stay empty.
