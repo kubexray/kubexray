@@ -66,7 +66,7 @@ Delta operations replace whole items. There is no field-level patching:
 { "op": "removeEdge", "id": "<edge id>" }
 ```
 
-Within one delta, operations are ordered so the client never sees an edge without both endpoints: node upserts, then edge upserts, then edge removes, then node removes. An edge whose endpoint does not exist yet (for example, a Service seen before its Pods) is held back and sent once both ends exist. Removing a node also removes its edges.
+Within one delta, operations are ordered so the client never sees an edge without both endpoints: node upserts, then edge upserts, then edge removes, then node removes. An edge is only sent while both of its endpoints exist: an edge seen before its endpoint (for example, a Service before its Pods) is held back, and removing a node hides its edges (clients receive `removeEdge`). Edges are owned by the code that added them and are only deleted explicitly, so a node that disappears and comes back (for example, during an informer relist) gets its edges back.
 
 Whole-item replacement keeps the client simple and idempotent; applying the same op twice is harmless. Nodes are small, so the bandwidth cost is low.
 
