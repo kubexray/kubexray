@@ -2,6 +2,7 @@ package cluster
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"maps"
 	"slices"
@@ -271,4 +272,36 @@ func TestStripObject(t *testing.T) {
 	if got.Labels["app"] != "api" {
 		t.Error("labels must be kept")
 	}
+}
+
+func TestStartReturnsContextErrorWhenCancelled(t *testing.T) {
+	t.Parallel()
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	scheme := metadatafake.NewTestScheme()
+	if err := metav1.AddMetaToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	w := New(kubefake.NewClientset(), metadatafake.NewSimpleMetadataClient(scheme), graph.New(), slog.New(slog.DiscardHandler))
+	if err := w.Start(ctx); !errors.Is(err, context.Canceled) {
+		t.Errorf("Start = %v, want context.Canceled", err)
+	}
+}
+
+func TestPodStatusUpdateKeepsSelection(t *testing.T) {
+	t.Parallel()
+	ctx := t.Context()
+	c := startWatcher(t, []runtime.Object{apiPod("p", map[string]string{"app": "api"}), apiService()})
+	const edge = "selects:Service/shop/api:Pod/shop/p"
+	c.eventually(t, "pod selected", func(_ map[string]graph.Node, edges []string) bool { return hasEdge(edges, edge) })
+
+	p := apiPod("p", map[string]string{"app": "api"})
+	p.Status.Phase = corev1.PodRunning
+	if _, err := c.client.CoreV1().Pods("shop").UpdateStatus(ctx, p, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	c.eventually(t, "status applied, still selected", func(nodes map[string]graph.Node, edges []string) bool {
+		return nodes["Pod/shop/p"].Status.Phase == "Running" && hasEdge(edges, edge)
+	})
 }

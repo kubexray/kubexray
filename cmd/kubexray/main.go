@@ -71,6 +71,9 @@ func run() error {
 
 	g := graph.New()
 	if err := cluster.New(client, metaClient, g, log).Start(ctx); err != nil {
+		if errors.Is(err, context.Canceled) {
+			return nil // interrupted during startup
+		}
 		return err
 	}
 	return dumpGraph(ctx, g, os.Stdout, flushInterval)

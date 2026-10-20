@@ -45,11 +45,19 @@ func baseNode(kind string, m metav1.Object) graph.Node {
 	return n
 }
 
+// clusterScoped lists the mapped kinds that have no namespace. Owner
+// references don't say whether the owner is namespaced, so this decides.
+var clusterScoped = map[string]bool{KindNamespace: true, KindNode: true}
+
 // ownerEdges links an object to each of its owners.
 func ownerEdges(id string, m metav1.Object) []graph.Edge {
 	edges := make([]graph.Edge, 0, len(m.GetOwnerReferences()))
 	for _, ref := range m.GetOwnerReferences() {
-		edges = append(edges, graph.NewEdge(graph.EdgeOwns, graph.ID(ref.Kind, m.GetNamespace(), ref.Name), id))
+		ns := m.GetNamespace()
+		if clusterScoped[ref.Kind] {
+			ns = "" // e.g. a static pod owned by its Node
+		}
+		edges = append(edges, graph.NewEdge(graph.EdgeOwns, graph.ID(ref.Kind, ns, ref.Name), id))
 	}
 	return edges
 }
@@ -70,8 +78,8 @@ func mapNode(node *corev1.Node) (graph.Node, []graph.Edge) {
 			}
 		}
 	}
-	if node.Spec.Unschedulable {
-		n.Status.Reason = "SchedulingDisabled"
+	if node.Spec.Unschedulable && n.Status.Reason == "" {
+		n.Status.Reason = "SchedulingDisabled" // a NotReady reason is more important
 	}
 	return n, nil
 }
@@ -100,6 +108,19 @@ func podStatus(pod *corev1.Pod) graph.Status {
 		}
 	}
 
+	// Init containers run first, so a failing one explains everything after it.
+	var initProblem string
+	for _, cs := range pod.Status.InitContainerStatuses {
+		s.Restarts += cs.RestartCount
+		switch {
+		case initProblem != "":
+		case cs.State.Waiting != nil && !isStarting(cs.State.Waiting.Reason):
+			initProblem = "Init:" + cs.State.Waiting.Reason
+		case cs.State.Terminated != nil && cs.State.Terminated.ExitCode != 0:
+			initProblem = "Init:" + cs.State.Terminated.Reason
+		}
+	}
+
 	var waiting, terminated, lastTerminated string
 	for _, cs := range pod.Status.ContainerStatuses {
 		s.Restarts += cs.RestartCount
@@ -117,6 +138,8 @@ func podStatus(pod *corev1.Pod) graph.Status {
 	switch {
 	case pod.DeletionTimestamp != nil:
 		s.Reason = "Terminating"
+	case initProblem != "":
+		s.Reason = initProblem // e.g. Init:CrashLoopBackOff
 	case waiting != "" && !isStarting(waiting):
 		s.Reason = waiting // e.g. CrashLoopBackOff, ImagePullBackOff
 	case terminated != "":

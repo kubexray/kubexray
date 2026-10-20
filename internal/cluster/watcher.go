@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"sync"
 
 	corev1 "k8s.io/api/core/v1"
@@ -67,36 +68,41 @@ func (w *Watcher) Start(ctx context.Context) error {
 	w.pods = podInformer.Lister()
 	w.services = serviceInformer.Lister()
 
-	err := errors.Join(
-		register(w, core.Namespaces().Informer(), mapNamespace),
-		register(w, core.Nodes().Informer(), mapNode),
-		register(w, core.PersistentVolumeClaims().Informer(), mapPVC),
-		register(w, apps.Deployments().Informer(), mapDeployment),
-		register(w, apps.ReplicaSets().Informer(), mapReplicaSet),
-		register(w, apps.StatefulSets().Informer(), mapStatefulSet),
-		register(w, apps.DaemonSets().Informer(), mapDaemonSet),
-		register(w, w.typed.Batch().V1().Jobs().Informer(), mapJob),
-		register(w, w.typed.Networking().V1().Ingresses().Informer(), mapIngress),
-		register(w, w.meta.ForResource(corev1.SchemeGroupVersion.WithResource("configmaps")).Informer(), mapMetadata(KindConfigMap)),
-		register(w, w.meta.ForResource(corev1.SchemeGroupVersion.WithResource("secrets")).Informer(), mapMetadata(KindSecret)),
-		handle(podInformer.Informer(), w.upsertPod, w.removePod),
-		handle(serviceInformer.Informer(), w.upsertService, w.removeService),
-	)
-	if err != nil {
+	var syncs []cache.InformerSynced
+	var errs []error
+	track := func(reg cache.ResourceEventHandlerRegistration, err error) {
+		if err != nil {
+			errs = append(errs, err)
+			return
+		}
+		syncs = append(syncs, reg.HasSynced)
+	}
+	track(register(w, KindNamespace, core.Namespaces().Informer(), mapNamespace))
+	track(register(w, KindNode, core.Nodes().Informer(), mapNode))
+	track(register(w, KindPVC, core.PersistentVolumeClaims().Informer(), mapPVC))
+	track(register(w, KindDeployment, apps.Deployments().Informer(), mapDeployment))
+	track(register(w, KindReplicaSet, apps.ReplicaSets().Informer(), mapReplicaSet))
+	track(register(w, KindStatefulSet, apps.StatefulSets().Informer(), mapStatefulSet))
+	track(register(w, KindDaemonSet, apps.DaemonSets().Informer(), mapDaemonSet))
+	track(register(w, KindJob, w.typed.Batch().V1().Jobs().Informer(), mapJob))
+	track(register(w, KindIngress, w.typed.Networking().V1().Ingresses().Informer(), mapIngress))
+	track(register(w, KindConfigMap, w.meta.ForResource(corev1.SchemeGroupVersion.WithResource("configmaps")).Informer(), mapMetadata(KindConfigMap)))
+	track(register(w, KindSecret, w.meta.ForResource(corev1.SchemeGroupVersion.WithResource("secrets")).Informer(), mapMetadata(KindSecret)))
+	track(handle(podInformer.Informer(), w.upsertPod, w.removePod))
+	track(handle(serviceInformer.Informer(), w.upsertService, w.removeService))
+	if err := errors.Join(errs...); err != nil {
 		return fmt.Errorf("registering informers: %w", err)
 	}
 
 	w.typed.Start(ctx.Done())
 	w.meta.Start(ctx.Done())
-	for typ, ok := range w.typed.WaitForCacheSync(ctx.Done()) {
-		if !ok {
-			return fmt.Errorf("cache for %v did not sync", typ)
+	// Wait for every handler to process the initial list, not just for the
+	// caches to fill, so the first snapshot is complete.
+	if !cache.WaitForCacheSync(ctx.Done(), syncs...) {
+		if err := ctx.Err(); err != nil {
+			return err
 		}
-	}
-	for gvr, ok := range w.meta.WaitForCacheSync(ctx.Done()) {
-		if !ok {
-			return fmt.Errorf("cache for %v did not sync", gvr)
-		}
+		return errors.New("informer caches did not sync")
 	}
 	w.log.Info("cluster caches synced")
 	return nil
@@ -104,9 +110,9 @@ func (w *Watcher) Start(ctx context.Context) error {
 
 // register wires an informer to a mapping function for objects whose node
 // and edges depend only on the object itself.
-func register[T metav1.Object](w *Watcher, inf cache.SharedIndexInformer, mapFn func(T) (graph.Node, []graph.Edge)) error {
+func register[T metav1.Object](w *Watcher, kind string, inf cache.SharedIndexInformer, mapFn func(T) (graph.Node, []graph.Edge)) (cache.ResourceEventHandlerRegistration, error) {
 	return handle(inf,
-		func(obj T) {
+		func(_, obj T) {
 			n, edges := mapFn(obj)
 			w.mu.Lock()
 			defer w.mu.Unlock()
@@ -114,29 +120,31 @@ func register[T metav1.Object](w *Watcher, inf cache.SharedIndexInformer, mapFn 
 			w.setEdges(n.ID, edges)
 		},
 		func(obj T) {
-			n, _ := mapFn(obj)
 			w.mu.Lock()
 			defer w.mu.Unlock()
-			w.removeNode(n.ID)
+			w.removeNode(graph.ID(kind, obj.GetNamespace(), obj.GetName()))
 		},
 	)
 }
 
-// handle adds event handlers that call upsert on add/update and remove on
-// delete, and strips fields kubexray must not keep in memory.
-func handle[T metav1.Object](inf cache.SharedIndexInformer, upsert, remove func(T)) error {
+// handle adds event handlers that call upsert on add/update (old is the zero
+// value on add) and remove on delete, and strips fields kubexray must not keep
+// in memory.
+func handle[T metav1.Object](inf cache.SharedIndexInformer, upsert func(old, obj T), remove func(T)) (cache.ResourceEventHandlerRegistration, error) {
 	if err := inf.SetTransform(stripObject); err != nil {
-		return err
+		return nil, err
 	}
-	_, err := inf.AddEventHandler(cache.ResourceEventHandlerFuncs{
+	return inf.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj any) {
 			if o, ok := obj.(T); ok {
-				upsert(o)
+				var zero T
+				upsert(zero, o)
 			}
 		},
-		UpdateFunc: func(_, obj any) {
+		UpdateFunc: func(oldObj, obj any) {
+			old, _ := oldObj.(T)
 			if o, ok := obj.(T); ok {
-				upsert(o)
+				upsert(old, o)
 			}
 		},
 		DeleteFunc: func(obj any) {
@@ -148,7 +156,6 @@ func handle[T metav1.Object](inf cache.SharedIndexInformer, upsert, remove func(
 			}
 		},
 	})
-	return err
 }
 
 // stripObject drops annotations (which may hold last-applied-configuration
@@ -223,17 +230,28 @@ func selector(svc *corev1.Service) labels.Selector {
 	return labels.SelectorFromSet(svc.Spec.Selector)
 }
 
-func (w *Watcher) upsertPod(pod *corev1.Pod) {
+// The pod and service handlers read the other kind's cache while holding
+// w.mu. Caches are updated before their handlers run, so whichever handler
+// runs last sees the latest state of both and its edges win.
+
+func (w *Watcher) upsertPod(old, pod *corev1.Pod) {
 	n, edges := mapPod(pod)
-	services, err := w.services.Services(pod.Namespace).List(labels.Everything())
-	if err != nil {
-		w.log.Error("listing services", "namespace", pod.Namespace, "err", err)
-	}
 
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.graph.UpsertNode(n)
 	w.setEdges(n.ID, edges)
+
+	// Status updates are by far the most common pod event; selection only
+	// depends on labels.
+	if old != nil && maps.Equal(old.Labels, pod.Labels) {
+		return
+	}
+	services, err := w.services.Services(pod.Namespace).List(labels.Everything())
+	if err != nil {
+		w.log.Error("listing services", "namespace", pod.Namespace, "err", err)
+		return
+	}
 	podLabels := labels.Set(pod.Labels)
 	for _, svc := range services {
 		svcID := graph.ID(KindService, svc.Namespace, svc.Name)
@@ -244,37 +262,40 @@ func (w *Watcher) upsertPod(pod *corev1.Pod) {
 
 func (w *Watcher) removePod(pod *corev1.Pod) {
 	id := graph.ID(KindPod, pod.Namespace, pod.Name)
-	services, err := w.services.Services(pod.Namespace).List(labels.Everything())
-	if err != nil {
-		w.log.Error("listing services", "namespace", pod.Namespace, "err", err)
-	}
 
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.removeNode(id)
+	services, err := w.services.Services(pod.Namespace).List(labels.Everything())
+	if err != nil {
+		w.log.Error("listing services", "namespace", pod.Namespace, "err", err)
+		return
+	}
 	for _, svc := range services {
 		svcID := graph.ID(KindService, svc.Namespace, svc.Name)
 		w.setEdge(selectsKey(svcID), graph.NewEdge(graph.EdgeSelects, svcID, id), false)
 	}
 }
 
-func (w *Watcher) upsertService(svc *corev1.Service) {
+func (w *Watcher) upsertService(_, svc *corev1.Service) {
 	n, edges := mapService(svc)
-	var selects []graph.Edge
-	if sel := selector(svc); sel != nil {
-		pods, err := w.pods.Pods(svc.Namespace).List(sel)
-		if err != nil {
-			w.log.Error("listing pods", "namespace", svc.Namespace, "err", err)
-		}
-		for _, pod := range pods {
-			selects = append(selects, graph.NewEdge(graph.EdgeSelects, n.ID, graph.ID(KindPod, pod.Namespace, pod.Name)))
-		}
-	}
 
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.graph.UpsertNode(n)
 	w.setEdges(n.ID, edges)
+
+	var selects []graph.Edge
+	if sel := selector(svc); sel != nil {
+		pods, err := w.pods.Pods(svc.Namespace).List(sel)
+		if err != nil {
+			w.log.Error("listing pods", "namespace", svc.Namespace, "err", err)
+			return // keep the current edges rather than wiping them
+		}
+		for _, pod := range pods {
+			selects = append(selects, graph.NewEdge(graph.EdgeSelects, n.ID, graph.ID(KindPod, pod.Namespace, pod.Name)))
+		}
+	}
 	w.setEdges(selectsKey(n.ID), selects)
 }
 

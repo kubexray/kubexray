@@ -359,3 +359,60 @@ func TestMapMetadata(t *testing.T) {
 	}
 	assertEdges(t, edges, "owns:Certificate/shop/web:Secret/shop/tls")
 }
+
+func TestOwnerEdgesToClusterScopedOwner(t *testing.T) {
+	t.Parallel()
+	_, edges := mapPod(&corev1.Pod{ObjectMeta: meta("kube-system", "etcd-node1", owner(KindNode, "node1"))})
+	assertEdges(t, edges, "owns:Node/node1:Pod/kube-system/etcd-node1")
+}
+
+func TestCordonedNotReadyNodeKeepsNotReadyReason(t *testing.T) {
+	t.Parallel()
+	n, _ := mapNode(&corev1.Node{
+		Spec: corev1.NodeSpec{Unschedulable: true},
+		Status: corev1.NodeStatus{Conditions: []corev1.NodeCondition{
+			{Type: corev1.NodeReady, Status: corev1.ConditionFalse, Reason: "KubeletNotReady"},
+		}},
+	})
+	if n.Status.Reason != "KubeletNotReady" {
+		t.Errorf("Reason = %q, want KubeletNotReady", n.Status.Reason)
+	}
+}
+
+func TestInitContainerStatus(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name     string
+		init     corev1.ContainerStatus
+		reason   string
+		restarts int32
+	}{
+		{
+			name:   "crash looping",
+			init:   corev1.ContainerStatus{State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "CrashLoopBackOff"}}, RestartCount: 3},
+			reason: "Init:CrashLoopBackOff", restarts: 3,
+		},
+		{
+			name:   "failed",
+			init:   corev1.ContainerStatus{State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{Reason: "Error", ExitCode: 1}}},
+			reason: "Init:Error",
+		},
+		{
+			name: "completed successfully",
+			init: corev1.ContainerStatus{State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{Reason: "Completed"}}},
+		},
+		{
+			name: "still starting",
+			init: corev1.ContainerStatus{State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "PodInitializing"}}},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			s := podStatus(&corev1.Pod{Status: corev1.PodStatus{InitContainerStatuses: []corev1.ContainerStatus{tt.init}}})
+			if s.Reason != tt.reason || s.Restarts != tt.restarts {
+				t.Errorf("status = %+v, want reason=%q restarts=%d", s, tt.reason, tt.restarts)
+			}
+		})
+	}
+}
