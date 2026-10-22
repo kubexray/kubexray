@@ -41,7 +41,7 @@ Workloads (Deployment, StatefulSet, DaemonSet, ReplicaSet, Job) and Pods get an 
 }
 ```
 
-- `containers` covers init containers too (marked `"init": true`). For workloads it comes from the pod template.
+- `containers` covers init containers (marked `"init": true`) and, for pods, ephemeral containers added by `kubectl debug` (marked `"ephemeral": true`). For workloads it comes from the pod template.
 - `revision` is the Deployment revision annotation, so a rollback can be named ("revision 14 → 13").
 - **Not included:** commands, args, environment variables (plain values or references), probes' commands, security contexts. These can contain secrets or are too detailed to be useful here.
 
@@ -54,7 +54,8 @@ Every node gets an optional `change` describing the most recent **non-status** w
 ```
 
 - Chosen from `managedFields` entries whose subresource is not `status`, latest `time` first. Entries without a timestamp (seen for `scale`) are ignored here, so the same object always maps to the same node; scaling is still caught by the change log as a replica count change, timed when kubexray observes it.
-- Known controllers (`kube-controller-manager`, `kube-scheduler`, `kubelet`) are only used if no other manager has written the object, so a human or GitOps change isn't hidden by controller follow-up writes.
+- Controllers (`kube-scheduler`, `kubelet`, any `*-controller-manager`, and distributions that embed them such as `k3s` and `rke2`) are only used if no other manager has written the object, so a human or GitOps change isn't hidden by controller follow-up writes.
+- Timestamps have one-second precision; ties are broken by manager name so attribution is stable.
 - `by` is the raw manager name (truncated to 64 characters). `tool` is a normalized family: `kubectl`, `helm`, `argocd`, `flux`, `controller`, or `other`. `via` is the kubectl subcommand when it can be inferred (`patch`, `apply`, `edit`, `scale`).
 
 ### 3. Origin: `origin`
@@ -81,7 +82,7 @@ ConfigMaps and Secrets stay metadata-only. Their `change` shows when they were l
 
 The informer transform (`stripObject`) changes from "drop all annotations and managedFields" to:
 
-- annotations: keep only the allow-listed keys above; drop everything else, including `last-applied-configuration`;
+- annotations: keep only the allow-listed keys above, with values capped at 64 bytes; drop everything else, including `last-applied-configuration`;
 - managedFields: keep only `manager`, `operation`, `subresource` and `time` of each entry; drop `fieldsV1` (the bulky field sets).
 
 ## Alternatives considered
