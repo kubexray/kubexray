@@ -1,9 +1,11 @@
 package cluster
 
 import (
+	"slices"
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -64,6 +66,22 @@ func TestLastChange(t *testing.T) {
 		},
 		{"only untimed entries", withFields(untimed), nil},
 		{
+			name: "k3s follow-up writes don't hide people",
+			meta: withFields(entry("kubectl", "", 0), entry("k3s", "", 5*time.Second)),
+			want: &graph.Change{At: base, By: "kubectl", Tool: "kubectl"},
+		},
+		{
+			// Second precision means ties happen; the result must not depend on list order.
+			name: "ties are broken by manager name",
+			meta: withFields(entry("kubectl-patch", "", 0), entry("helm", "", 0)),
+			want: &graph.Change{At: base, By: "helm", Tool: "helm"},
+		},
+		{
+			name: "ties are broken by manager name, reversed order",
+			meta: withFields(entry("helm", "", 0), entry("kubectl-patch", "", 0)),
+			want: &graph.Change{At: base, By: "helm", Tool: "helm"},
+		},
+		{
 			name: "long manager names are truncated",
 			meta: withFields(entry(strings.Repeat("x", 100), "", 0)),
 			want: &graph.Change{At: base, By: strings.Repeat("x", 64), Tool: "other"},
@@ -77,6 +95,18 @@ func TestLastChange(t *testing.T) {
 				t.Errorf("lastChange = %+v, want %+v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestCappedKeepsRunesWhole(t *testing.T) {
+	t.Parallel()
+	s := strings.Repeat("x", 63) + "é" // "é" spans bytes 63 and 64
+	got := capped(s)
+	if got != strings.Repeat("x", 63) || !utf8.ValidString(got) {
+		t.Errorf("capped = %q (valid UTF-8: %v)", got, utf8.ValidString(got))
+	}
+	if capped("short") != "short" {
+		t.Error("short strings must be unchanged")
 	}
 }
 
@@ -98,6 +128,8 @@ func TestToolOf(t *testing.T) {
 		{"kustomize-controller", update, "flux", ""},
 		{"helm-controller", update, "flux", ""}, // Flux's, not Helm's
 		{"kube-controller-manager", update, "controller", ""},
+		{"cloud-controller-manager", update, "controller", ""},
+		{"k3s", update, "controller", ""},
 		{"kubelet", update, "controller", ""},
 		{"terraform-provider-kubernetes", update, "other", ""},
 		{"Go-http-client", update, "other", ""},
@@ -165,6 +197,18 @@ func TestDeploymentSpec(t *testing.T) {
 	}}
 	if n.Spec == nil || !n.Spec.Equal(want) {
 		t.Errorf("spec = %+v\nwant   %+v", n.Spec, want)
+	}
+}
+
+func TestEphemeralContainersAreIncluded(t *testing.T) {
+	t.Parallel()
+	n, _ := mapPod(&corev1.Pod{Spec: corev1.PodSpec{
+		Containers:          []corev1.Container{{Name: "api", Image: "nginx"}},
+		EphemeralContainers: []corev1.EphemeralContainer{{EphemeralContainerCommon: corev1.EphemeralContainerCommon{Name: "debugger", Image: "busybox"}}},
+	}})
+	want := []graph.Container{{Name: "api", Image: "nginx"}, {Name: "debugger", Image: "busybox", Ephemeral: true}}
+	if !slices.Equal(n.Spec.Containers, want) {
+		t.Errorf("containers = %+v, want %+v", n.Spec.Containers, want)
 	}
 }
 

@@ -173,17 +173,15 @@ func stripObject(obj any) (any, error) {
 			if kept == nil {
 				kept = map[string]string{}
 			}
-			kept[k] = v
+			kept[k] = capped(v)
 		}
 	}
 	m.SetAnnotations(kept)
 
-	if fields := m.GetManagedFields(); len(fields) > 0 {
-		slim := make([]metav1.ManagedFieldsEntry, len(fields))
-		for i, e := range fields {
-			slim[i] = metav1.ManagedFieldsEntry{Manager: e.Manager, Operation: e.Operation, Subresource: e.Subresource, Time: e.Time}
-		}
-		m.SetManagedFields(slim)
+	// The object belongs to the informer, so entries are slimmed in place.
+	fields := m.GetManagedFields()
+	for i, e := range fields {
+		fields[i] = metav1.ManagedFieldsEntry{Manager: capped(e.Manager), Operation: e.Operation, Subresource: e.Subresource, Time: e.Time}
 	}
 	return obj, nil
 }

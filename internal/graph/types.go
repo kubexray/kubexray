@@ -52,11 +52,12 @@ type Spec struct {
 
 // Container is one container of a pod or pod template.
 type Container struct {
-	Name     string    `json:"name"`
-	Image    string    `json:"image"`
-	Init     bool      `json:"init,omitempty"`
-	Requests Resources `json:"requests,omitzero"`
-	Limits   Resources `json:"limits,omitzero"`
+	Name      string    `json:"name"`
+	Image     string    `json:"image"`
+	Init      bool      `json:"init,omitempty"`
+	Ephemeral bool      `json:"ephemeral,omitempty"` // added by kubectl debug
+	Requests  Resources `json:"requests,omitzero"`
+	Limits    Resources `json:"limits,omitzero"`
 }
 
 // Resources holds CPU and memory quantities in Kubernetes notation.

@@ -56,9 +56,10 @@ kubexray answers all three, free and open source, from a single binary on your l
 - [x] Shared informers for Namespaces, Nodes, Pods, Deployments, ReplicaSets, StatefulSets, DaemonSets, Jobs, Services, Ingresses, PVCs, ConfigMaps and Secrets (metadata only).
 - [x] Graph model: objects become nodes; owner references, selectors, volume and env references, and ingress routes become edges.
 - [x] Versioned delta schema ([ADR-0003](docs/adr/0003-graph-delta-schema.md)) shared by the live stream, rewind and replay files.
-- [x] Read-only; annotations and managed fields stripped before caching.
-- [ ] **Change facts** in the model: container images, replica counts, resource requests and limits, and *when* a ConfigMap or Secret changed (never its contents).
-- [ ] **Who made the change:** the tool behind each change (kubectl, Helm, Argo CD, Flux, a controller) and, where present, the Helm release revision or the GitOps commit. Read from a small allow-list of safe fields; everything else is still discarded.
+- [x] Read-only; objects cut down before caching: annotations reduced to a small allow-list, managed fields to who wrote what and when ([ADR-0005](docs/adr/0005-change-facts-and-attribution.md)).
+- [x] **Change facts** in the model: container images, replica counts, resource requests and limits, and *when* a ConfigMap or Secret changed (never its contents).
+- [x] **Who made the change:** the tool behind each change (kubectl, Helm, Argo CD, Flux, a controller) and the Helm release, Argo CD app or Flux source an object belongs to.
+- [ ] **Which commit:** the GitOps revision behind a change, from Argo CD `Application` and Flux `Kustomization` status (follow-up ADR).
 
 ### Recorder & rewind
 - [ ] Recorder: a ring buffer of snapshots and deltas with a configurable window (default 1 hour), with keyframes for fast seeking.

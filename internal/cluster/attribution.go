@@ -1,7 +1,9 @@
 package cluster
 
 import (
+	"cmp"
 	"strings"
+	"unicode/utf8"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -21,13 +23,34 @@ var keptAnnotations = []string{annotationRevision, annotationHelmRelease, annota
 
 // controllers are field managers whose writes are follow-ups to someone
 // else's change; they're only blamed when nobody else has written the object.
+// Distributions that embed the controllers (k3s, RKE2) write under their own
+// name.
 var controllers = map[string]bool{
-	"kube-controller-manager": true,
-	"kube-scheduler":          true,
-	"kubelet":                 true,
+	"kube-scheduler": true,
+	"kubelet":        true,
+	"k3s":            true,
+	"rke2":           true,
 }
 
-const maxManagerLen = 64
+func isController(manager string) bool {
+	return controllers[manager] || strings.HasSuffix(manager, "-controller-manager")
+}
+
+// maxValueLen caps free-form strings kept from objects (manager names,
+// allow-listed annotation values) so a hostile value can't bloat every update.
+const maxValueLen = 64
+
+// capped shortens s to at most maxValueLen bytes without splitting a UTF-8 rune.
+func capped(s string) string {
+	n := maxValueLen
+	if len(s) <= n {
+		return s
+	}
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
+	}
+	return s[:n]
+}
 
 // lastChange attributes the most recent non-status write, from managedFields.
 func lastChange(m metav1.Object) *graph.Change {
@@ -39,10 +62,10 @@ func lastChange(m metav1.Object) *graph.Change {
 			continue // status is bookkeeping; untimed entries can't be ordered
 		}
 		target := &best
-		if controllers[e.Manager] {
+		if isController(e.Manager) {
 			target = &bestController
 		}
-		if *target == nil || e.Time.After((*target).Time.Time) {
+		if *target == nil || newer(e, *target) {
 			*target = e
 		}
 	}
@@ -52,12 +75,17 @@ func lastChange(m metav1.Object) *graph.Change {
 	if best == nil {
 		return nil
 	}
-	by := best.Manager
-	if len(by) > maxManagerLen {
-		by = by[:maxManagerLen]
-	}
 	tool, via := toolOf(best.Manager, best.Operation)
-	return &graph.Change{At: best.Time.UTC(), By: by, Tool: tool, Via: via}
+	return &graph.Change{At: best.Time.UTC(), By: capped(best.Manager), Tool: tool, Via: via}
+}
+
+// newer orders entries by time. Timestamps only have second precision, so
+// ties are broken by manager name to keep the result stable.
+func newer(a, b *metav1.ManagedFieldsEntry) bool {
+	if !a.Time.Equal(b.Time) {
+		return a.Time.After(b.Time.Time)
+	}
+	return cmp.Compare(a.Manager, b.Manager) < 0
 }
 
 // toolOf normalises a field manager name into a tool family and, for kubectl,
@@ -76,7 +104,7 @@ func toolOf(manager string, op metav1.ManagedFieldsOperationType) (tool, via str
 		return "argocd", ""
 	case manager == "helm" || strings.HasPrefix(manager, "helm-"):
 		return "helm", ""
-	case controllers[manager]:
+	case isController(manager):
 		return "controller", ""
 	default:
 		return "other", ""
@@ -111,12 +139,19 @@ func originOf(m metav1.Object) *graph.Origin {
 // podSpec extracts the allow-listed desired state of a pod or pod template:
 // images and resources, never commands, args or environment.
 func podSpec(m metav1.Object, ps *corev1.PodSpec) *graph.Spec {
-	containers := make([]graph.Container, 0, len(ps.InitContainers)+len(ps.Containers))
+	containers := make([]graph.Container, 0, len(ps.InitContainers)+len(ps.Containers)+len(ps.EphemeralContainers))
 	for _, c := range ps.InitContainers {
-		containers = append(containers, container(c, true))
+		c := container(c)
+		c.Init = true
+		containers = append(containers, c)
 	}
 	for _, c := range ps.Containers {
-		containers = append(containers, container(c, false))
+		containers = append(containers, container(c))
+	}
+	for _, c := range ps.EphemeralContainers { // added by kubectl debug
+		ec := container(corev1.Container(c.EphemeralContainerCommon))
+		ec.Ephemeral = true
+		containers = append(containers, ec)
 	}
 	return &graph.Spec{
 		Generation: m.GetGeneration(),
@@ -125,11 +160,10 @@ func podSpec(m metav1.Object, ps *corev1.PodSpec) *graph.Spec {
 	}
 }
 
-func container(c corev1.Container, init bool) graph.Container {
+func container(c corev1.Container) graph.Container {
 	return graph.Container{
 		Name:     c.Name,
 		Image:    c.Image,
-		Init:     init,
 		Requests: resources(c.Resources.Requests),
 		Limits:   resources(c.Resources.Limits),
 	}

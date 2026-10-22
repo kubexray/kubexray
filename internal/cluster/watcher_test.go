@@ -7,6 +7,7 @@ import (
 	"maps"
 	"reflect"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -287,6 +288,27 @@ func TestStripObject(t *testing.T) {
 	}
 	if got.Labels["app"] != "api" {
 		t.Error("labels must be kept")
+	}
+}
+
+func TestStripObjectCapsAnnotationValues(t *testing.T) {
+	t.Parallel()
+	huge := strings.Repeat("a", 256*1024)
+	out, _ := stripObject(&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Annotations: map[string]string{"meta.helm.sh/release-name": huge}}})
+	if v := out.(*corev1.Pod).Annotations["meta.helm.sh/release-name"]; len(v) != maxValueLen {
+		t.Errorf("kept annotation is %d bytes, want capped at %d", len(v), maxValueLen)
+	}
+}
+
+func TestStripObjectIsIdempotent(t *testing.T) {
+	t.Parallel()
+	at := metav1.Now()
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{ManagedFields: []metav1.ManagedFieldsEntry{{Manager: "kubectl", Time: &at, FieldsV1: metav1.NewFieldsV1(`{}`)}}}}
+	once, _ := stripObject(pod)
+	first := slices.Clone(once.(*corev1.Pod).ManagedFields)
+	twice, _ := stripObject(once)
+	if !reflect.DeepEqual(first, twice.(*corev1.Pod).ManagedFields) {
+		t.Error("stripping twice changed the result")
 	}
 }
 
