@@ -77,7 +77,7 @@ func (r *Recorder) Keyframe(snapshot graph.Message, raw []byte) error {
 	if cur := r.current(); cur != nil && snapshot.Seq != cur.lastSeq() {
 		return fmt.Errorf("%w: keyframe at seq %d, last recorded %d", graph.ErrGap, snapshot.Seq, cur.lastSeq())
 	}
-	r.segments = append(r.segments, &segment{keyframe: entry{snapshot.Seq, snapshot.TS, raw}, bytes: len(raw)})
+	r.segments = append(r.segments, &segment{keyframe: entry{snapshot.Seq, r.monotonic(snapshot.TS), raw}, bytes: len(raw)})
 	r.bytes += len(raw)
 	r.prune(snapshot.TS)
 	return nil
@@ -97,7 +97,7 @@ func (r *Recorder) Record(delta graph.Message, raw []byte) error {
 	if delta.Seq != cur.lastSeq()+1 {
 		return fmt.Errorf("%w: delta seq %d after %d", graph.ErrGap, delta.Seq, cur.lastSeq())
 	}
-	cur.deltas = append(cur.deltas, entry{delta.Seq, delta.TS, raw})
+	cur.deltas = append(cur.deltas, entry{delta.Seq, r.monotonic(delta.TS), raw})
 	cur.bytes += len(raw)
 	r.bytes += len(raw)
 	r.prune(delta.TS)
@@ -105,13 +105,46 @@ func (r *Recorder) Record(delta graph.Message, raw []byte) error {
 }
 
 // NeedsKeyframe reports whether a new segment should start: there is none
-// yet, or the current one has changes and is older than KeyframeEvery. Quiet
-// clusters don't get redundant keyframes.
+// yet, or the current one has been collecting changes for KeyframeEvery. Age
+// counts from the first change, so a quiet cluster doesn't get a full
+// snapshot for every isolated change.
 func (r *Recorder) NeedsKeyframe(now time.Time) bool {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	cur := r.current()
-	return cur == nil || (len(cur.deltas) > 0 && now.Sub(cur.keyframe.ts) >= r.opts.KeyframeEvery)
+	return cur == nil || (len(cur.deltas) > 0 && now.Sub(cur.deltas[0].ts) >= r.opts.KeyframeEvery)
+}
+
+// Prune drops history that has fallen out of the window. Recording prunes as
+// it goes; calling Prune covers quiet periods with nothing to record.
+func (r *Recorder) Prune(now time.Time) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.prune(now)
+}
+
+// Reset discards all history; recording restarts with the next keyframe.
+func (r *Recorder) Reset() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.segments, r.bytes = nil, 0
+}
+
+// monotonic keeps the history index ordered even if the wall clock steps
+// back (NTP): a timestamp is never earlier than the last one recorded.
+func (r *Recorder) monotonic(ts time.Time) time.Time {
+	cur := r.current()
+	if cur == nil {
+		return ts
+	}
+	last := cur.keyframe.ts
+	if n := len(cur.deltas); n > 0 {
+		last = cur.deltas[n-1].ts
+	}
+	if ts.Before(last) {
+		return last
+	}
+	return ts
 }
 
 func (r *Recorder) current() *segment {
@@ -187,6 +220,9 @@ func (r *Recorder) At(t time.Time) (graph.Message, error) {
 // keyframe at or before from, then every delta up to and including to. The
 // returned slices must not be modified.
 func (r *Recorder) Messages(from, to time.Time) ([][]byte, error) {
+	if to.Before(from) {
+		return nil, fmt.Errorf("recorder: range ends (%v) before it starts (%v)", to, from)
+	}
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 

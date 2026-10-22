@@ -2,7 +2,6 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"errors"
 	"flag"
@@ -28,6 +27,9 @@ import (
 // flushInterval is how often changes are batched into a delta (ADR-0003).
 const flushInterval = 100 * time.Millisecond
 
+// maxHistoryMB bounds --history-max-mb (64 GiB) well below int overflow.
+const maxHistoryMB = 64 << 10
+
 func main() {
 	if err := run(); err != nil {
 		fmt.Fprintln(os.Stderr, "kubexray:", err)
@@ -50,6 +52,12 @@ func run() error {
 	}
 	if !*dump {
 		return errors.New("the UI is not implemented yet; use --dump to stream the graph as JSON (see ROADMAP.md)")
+	}
+	if *history <= 0 {
+		return fmt.Errorf("--history must be positive, got %v", *history)
+	}
+	if *historyMB <= 0 || *historyMB > maxHistoryMB {
+		return fmt.Errorf("--history-max-mb must be between 1 and %d, got %d", maxHistoryMB, *historyMB)
 	}
 
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
@@ -85,21 +93,16 @@ func run() error {
 		MaxBytes:      *historyMB << 20,
 		KeyframeEvery: recorder.DefaultOptions.KeyframeEvery,
 	})
-	return recorder.Pump(ctx, g, rec, flushInterval, ndjson(os.Stdout))
+	return recorder.Pump(ctx, g, rec, flushInterval, log, ndjson(os.Stdout))
 }
 
-// ndjson writes each message as one line, flushing so a reader sees changes
-// as they happen.
+// ndjson writes each message as one line, as soon as it is produced.
 func ndjson(w io.Writer) recorder.Emit {
-	bw := bufio.NewWriter(w)
 	return func(_ graph.Message, raw []byte) error {
-		if _, err := bw.Write(raw); err != nil {
-			return err
-		}
-		if err := bw.WriteByte('\n'); err != nil {
-			return err
-		}
-		return bw.Flush()
+		// raw is shared with the recorder: the full slice expression makes
+		// append copy instead of writing into its spare capacity.
+		_, err := w.Write(append(raw[:len(raw):len(raw)], '\n'))
+		return err
 	}
 }
 

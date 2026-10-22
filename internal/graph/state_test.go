@@ -83,6 +83,42 @@ func TestSnapshotPlusDeltasAlwaysConverges(t *testing.T) {
 	}
 }
 
+func TestStateRejectsMalformedOpsWithoutChangingAnything(t *testing.T) {
+	t.Parallel()
+	good := pod("a")
+	for _, bad := range []Op{
+		{Op: OpUpsertNode},
+		{Op: OpUpsertNode, Node: &Node{}},
+		{Op: OpUpsertEdge},
+		{Op: OpRemoveNode},
+		{Op: OpRemoveEdge},
+		{Op: "bogus", ID: "x"},
+	} {
+		s, _ := NewState(Message{Type: MessageSnapshot, Seq: 1})
+		err := s.Apply(Message{Type: MessageDelta, Seq: 2, Ops: []Op{{Op: OpUpsertNode, Node: &good}, bad}})
+		if err == nil {
+			t.Errorf("Apply accepted %+v", bad)
+		}
+		if s.Seq != 1 || len(s.Nodes) != 0 {
+			t.Errorf("rejected message still changed the state: seq %d, %d nodes", s.Seq, len(s.Nodes))
+		}
+	}
+}
+
+func TestFlushAndSnapshotAgree(t *testing.T) {
+	t.Parallel()
+	g := newTestGraph()
+	g.UpsertNode(pod("a"))
+	delta, changed, snap := g.FlushAndSnapshot()
+	if !changed || snap.Seq != delta.Seq || len(snap.Nodes) != 1 {
+		t.Errorf("delta seq %d changed=%v, snapshot seq %d with %d nodes", delta.Seq, changed, snap.Seq, len(snap.Nodes))
+	}
+	_, changed, snap = g.FlushAndSnapshot()
+	if changed || snap.Seq != delta.Seq {
+		t.Errorf("idle flush: changed=%v, snapshot seq %d, want unchanged at %d", changed, snap.Seq, delta.Seq)
+	}
+}
+
 func TestStateSnapshotOfEmptyState(t *testing.T) {
 	t.Parallel()
 	s, _ := NewState(Message{Type: MessageSnapshot, TS: time.Unix(0, 0)})

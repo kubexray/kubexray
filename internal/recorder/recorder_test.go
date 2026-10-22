@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"slices"
 	"sync"
 	"testing"
@@ -149,12 +150,66 @@ func TestNeedsKeyframe(t *testing.T) {
 	if r.NeedsKeyframe(at(60)) {
 		t.Error("quiet cluster asked for a redundant keyframe")
 	}
-	record(t, r, delta(1, at(10), add("a")))
-	if r.NeedsKeyframe(at(29)) {
+	// Age counts from the first change, not the keyframe: after a quiet
+	// minute, one change must not trigger a full snapshot right away.
+	record(t, r, delta(1, at(60), add("a")))
+	if r.NeedsKeyframe(at(61)) {
+		t.Error("isolated change after a quiet period triggered a keyframe")
+	}
+	if r.NeedsKeyframe(at(89)) {
 		t.Error("asked for a keyframe before KeyframeEvery")
 	}
-	if !r.NeedsKeyframe(at(30)) {
-		t.Error("no keyframe after KeyframeEvery with changes")
+	if !r.NeedsKeyframe(at(90)) {
+		t.Error("no keyframe KeyframeEvery after the first change")
+	}
+}
+
+func TestMessagesRejectsReversedRange(t *testing.T) {
+	t.Parallel()
+	r := New(DefaultOptions)
+	keyframe(t, r, snapshot(0, at(0), "a"))
+	if _, err := r.Messages(at(5), at(4)); err == nil {
+		t.Error("Messages accepted a range that ends before it starts")
+	}
+}
+
+func TestClockSteppingBackKeepsHistoryOrdered(t *testing.T) {
+	t.Parallel()
+	r := New(DefaultOptions)
+	keyframe(t, r, snapshot(0, at(0), "a"))
+	record(t, r, delta(1, at(10), add("b")))
+	record(t, r, delta(2, at(8), add("c"))) // NTP stepped the clock back 2s
+
+	// The late delta is filed at +10s, so asking for +10s sees both changes.
+	assertAt(t, r, at(10), "a", "b", "c")
+	_, to, _ := r.Bounds()
+	if !to.Equal(at(10)) {
+		t.Errorf("Bounds end = %v, want +10s", to.Sub(t0))
+	}
+}
+
+func TestPruneDuringQuietPeriods(t *testing.T) {
+	t.Parallel()
+	r := New(Options{Window: time.Minute, MaxBytes: 1 << 20, KeyframeEvery: time.Second})
+	keyframe(t, r, snapshot(0, at(0), "a"))
+	record(t, r, delta(1, at(1), add("b")))
+	keyframe(t, r, snapshot(1, at(2), "a", "b"))
+
+	r.Prune(at(3600)) // an hour of nothing
+	from, _, _ := r.Bounds()
+	if !from.Equal(at(2)) {
+		t.Errorf("oldest kept = %v, want the newest segment (+2s) only", from.Sub(t0))
+	}
+	assertAt(t, r, at(3600), "a", "b") // the current state is still there
+}
+
+func TestReset(t *testing.T) {
+	t.Parallel()
+	r := New(DefaultOptions)
+	keyframe(t, r, snapshot(0, at(0), "a"))
+	r.Reset()
+	if _, _, ok := r.Bounds(); ok || r.Size() != 0 || !r.NeedsKeyframe(at(1)) {
+		t.Error("Reset left history behind")
 	}
 }
 
@@ -245,69 +300,141 @@ func TestConcurrentReadersAndWriter(t *testing.T) {
 	wg.Wait()
 }
 
-// The pump end to end: a real graph, a short interval, and a recorder that
-// must be able to rebuild what the graph holds.
-func TestPumpRecordsAndEmits(t *testing.T) {
+// collect is an Emit that keeps what it receives.
+type collect struct {
+	mu   sync.Mutex
+	msgs []graph.Message
+}
+
+func (c *collect) emit(m graph.Message, raw []byte) error {
+	var back graph.Message
+	if err := json.Unmarshal(raw, &back); err != nil {
+		return fmt.Errorf("decoding message %d: %w", m.Seq, err)
+	}
+	if back.Seq != m.Seq || back.Type != m.Type {
+		return fmt.Errorf("raw doesn't match message %d", m.Seq)
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.msgs = append(c.msgs, m)
+	return nil
+}
+
+func (c *collect) all() []graph.Message {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return slices.Clone(c.msgs)
+}
+
+// The pump step by step, with an explicit clock: no sleeps, no flakiness.
+func TestPumpSteps(t *testing.T) {
 	t.Parallel()
 	g := graph.New()
 	g.UpsertNode(node("a"))
-	r := New(Options{Window: time.Hour, MaxBytes: 1 << 20, KeyframeEvery: 20 * time.Millisecond})
+	r := New(Options{Window: time.Hour, MaxBytes: 1 << 20, KeyframeEvery: 30 * time.Second})
+	var out collect
+	p := pump{g: g, rec: r, log: slog.New(slog.DiscardHandler), emit: out.emit}
 
-	var mu sync.Mutex
-	var emitted []graph.Message
-	ctx, cancel := context.WithCancel(t.Context())
-	done := make(chan error, 1)
-	go func() {
-		done <- Pump(ctx, g, r, 5*time.Millisecond, func(m graph.Message, raw []byte) error {
-			var back graph.Message
-			if err := json.Unmarshal(raw, &back); err != nil || back.Seq != m.Seq {
-				t.Errorf("raw doesn't match message %d: %v", m.Seq, err)
-			}
-			mu.Lock()
-			emitted = append(emitted, m)
-			mu.Unlock()
-			return nil
-		})
-	}()
-
-	time.Sleep(20 * time.Millisecond)
+	if err := p.start(); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
 	g.UpsertNode(node("b"))
-	time.Sleep(40 * time.Millisecond) // long enough for a delta and a keyframe
+	if err := p.step(now); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.step(now.Add(time.Second)); err != nil { // nothing changed
+		t.Fatal(err)
+	}
 	g.RemoveNode("a")
-	time.Sleep(20 * time.Millisecond)
-	cancel()
-	if err := <-done; err != nil {
-		t.Fatalf("Pump: %v", err)
+	if err := p.step(now.Add(31 * time.Second)); err != nil { // due for a keyframe
+		t.Fatal(err)
 	}
 
-	mu.Lock()
-	defer mu.Unlock()
-	if len(emitted) < 3 || emitted[0].Type != graph.MessageSnapshot {
-		t.Fatalf("emitted %d messages, want a snapshot followed by deltas", len(emitted))
+	msgs := out.all()
+	if len(msgs) != 3 || msgs[0].Type != graph.MessageSnapshot ||
+		msgs[1].Seq != msgs[0].Seq+1 || msgs[2].Seq != msgs[1].Seq+1 {
+		t.Fatalf("emitted %d messages, want a snapshot and two consecutive deltas", len(msgs))
 	}
-	for i, m := range emitted[1:] {
-		if m.Type != graph.MessageDelta || m.Seq != emitted[i].Seq+1 {
-			t.Errorf("message %d: type %s seq %d after seq %d", i+1, m.Type, m.Seq, emitted[i].Seq)
-		}
+	if n, _ := r.Messages(now.Add(time.Hour), now.Add(time.Hour)); len(n) != 1 {
+		t.Errorf("latest moment needs %d messages, want just the new keyframe", len(n))
 	}
-
 	_, to, _ := r.Bounds()
 	got, err := r.At(to)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := ids(g.Snapshot()); !slices.Equal(ids(got), want) {
-		t.Errorf("recorder rebuilt %v, graph has %v", ids(got), want)
-	}
 	if !slices.Equal(ids(got), []string{"b"}) {
-		t.Errorf("final state = %v, want [b]", ids(got))
+		t.Errorf("recorder rebuilt %v, want [b]", ids(got))
+	}
+}
+
+// A history problem must not stop the live stream.
+func TestPumpSurvivesHistoryErrors(t *testing.T) {
+	t.Parallel()
+	g := graph.New()
+	r := New(DefaultOptions)
+	var out collect
+	p := pump{g: g, rec: r, log: slog.New(slog.DiscardHandler), emit: out.emit}
+	if err := p.start(); err != nil {
+		t.Fatal(err)
+	}
+	// Someone else flushed: the recorder sees a gap on the next delta.
+	g.UpsertNode(node("a"))
+	g.Flush()
+	g.UpsertNode(node("b"))
+	if err := p.step(time.Now()); err != nil {
+		t.Fatalf("step = %v, want the stream to continue", err)
+	}
+	if msgs := out.all(); len(msgs) != 2 {
+		t.Errorf("emitted %d messages, want the delta to still go out", len(msgs))
+	}
+	if !r.NeedsKeyframe(time.Now()) {
+		t.Error("history was not reset after the gap")
+	}
+	if err := p.step(time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, ok := r.Bounds(); !ok {
+		t.Error("history did not restart with a keyframe")
+	}
+}
+
+func TestPumpRunsUntilCancelled(t *testing.T) {
+	t.Parallel()
+	g := graph.New()
+	var out collect
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan error, 1)
+	go func() {
+		done <- Pump(ctx, g, New(DefaultOptions), time.Millisecond, slog.New(slog.DiscardHandler), out.emit)
+	}()
+	waitFor := func(n int, what string) {
+		t.Helper()
+		deadline := time.Now().Add(5 * time.Second)
+		for len(out.all()) < n {
+			if time.Now().After(deadline) {
+				t.Fatalf("pump never emitted %s", what)
+			}
+			time.Sleep(time.Millisecond)
+		}
+	}
+	// Change the graph only after the first snapshot; earlier changes are
+	// folded into it rather than sent as a delta.
+	waitFor(1, "the first snapshot")
+	g.UpsertNode(node("a"))
+	waitFor(2, "the change")
+	cancel()
+	if err := <-done; err != nil {
+		t.Errorf("Pump = %v", err)
 	}
 }
 
 func TestPumpStopsOnEmitError(t *testing.T) {
 	t.Parallel()
 	boom := errors.New("client went away")
-	err := Pump(t.Context(), graph.New(), New(DefaultOptions), time.Millisecond, func(graph.Message, []byte) error { return boom })
+	err := Pump(t.Context(), graph.New(), New(DefaultOptions), time.Millisecond, slog.New(slog.DiscardHandler),
+		func(graph.Message, []byte) error { return boom })
 	if !errors.Is(err, boom) {
 		t.Errorf("Pump = %v, want the emit error", err)
 	}

@@ -1,7 +1,6 @@
 package graph
 
 import (
-	"cmp"
 	"errors"
 	"fmt"
 	"maps"
@@ -47,18 +46,21 @@ func (s *State) Apply(m Message) error {
 	if m.Seq != s.Seq+1 {
 		return fmt.Errorf("%w: at seq %d, got %d", ErrGap, s.Seq, m.Seq)
 	}
+	// Messages may come from untrusted replay files: check every op before
+	// changing anything, so a bad message leaves the state untouched.
+	for i, op := range m.Ops {
+		if err := validOp(op); err != nil {
+			return fmt.Errorf("graph: seq %d op %d: %w", m.Seq, i, err)
+		}
+	}
 	for _, op := range m.Ops {
 		switch op.Op {
 		case OpUpsertNode:
-			if op.Node != nil {
-				s.Nodes[op.Node.ID] = *op.Node
-			}
+			s.Nodes[op.Node.ID] = *op.Node
 		case OpRemoveNode:
 			delete(s.Nodes, op.ID)
 		case OpUpsertEdge:
-			if op.Edge != nil {
-				s.Edges[op.Edge.ID] = *op.Edge
-			}
+			s.Edges[op.Edge.ID] = *op.Edge
 		case OpRemoveEdge:
 			delete(s.Edges, op.ID)
 		}
@@ -67,15 +69,33 @@ func (s *State) Apply(m Message) error {
 	return nil
 }
 
+func validOp(op Op) error {
+	switch op.Op {
+	case OpUpsertNode:
+		if op.Node == nil || op.Node.ID == "" {
+			return errors.New("upsertNode without a node")
+		}
+	case OpUpsertEdge:
+		if op.Edge == nil || op.Edge.ID == "" {
+			return errors.New("upsertEdge without an edge")
+		}
+	case OpRemoveNode, OpRemoveEdge:
+		if op.ID == "" {
+			return fmt.Errorf("%s without an id", op.Op)
+		}
+	default:
+		return fmt.Errorf("unknown op %q", op.Op)
+	}
+	return nil
+}
+
 // Snapshot returns the state as a snapshot message, sorted by ID.
 func (s *State) Snapshot() Message {
-	nodes := slices.SortedFunc(maps.Values(s.Nodes), func(a, b Node) int { return cmp.Compare(a.ID, b.ID) })
-	edges := slices.SortedFunc(maps.Values(s.Edges), func(a, b Edge) int { return cmp.Compare(a.ID, b.ID) })
-	if nodes == nil {
-		nodes = []Node{}
+	m := Message{
+		V: SchemaVersion, Type: MessageSnapshot, Seq: s.Seq, TS: s.TS,
+		Nodes: slices.AppendSeq(make([]Node, 0, len(s.Nodes)), maps.Values(s.Nodes)),
+		Edges: slices.AppendSeq(make([]Edge, 0, len(s.Edges)), maps.Values(s.Edges)),
 	}
-	if edges == nil {
-		edges = []Edge{}
-	}
-	return Message{V: SchemaVersion, Type: MessageSnapshot, Seq: s.Seq, TS: s.TS, Nodes: nodes, Edges: edges}
+	sortSnapshot(&m)
+	return m
 }
