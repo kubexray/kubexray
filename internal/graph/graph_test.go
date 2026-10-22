@@ -289,6 +289,48 @@ func TestOutputMutationDoesNotLeakIntoGraph(t *testing.T) {
 	assertOps(t, ops(t, g))
 }
 
+func TestCloneCopiesChangeFacts(t *testing.T) {
+	t.Parallel()
+	n := pod("a")
+	n.Spec = &Spec{Containers: []Container{{Name: "api", Image: "nginx:1.27"}}}
+	n.Change = &Change{At: t0, By: "kubectl", Tool: "kubectl"}
+	n.Origin = &Origin{Tool: "helm", Name: "shop"}
+
+	c := n.clone()
+	c.Spec.Containers[0].Image = "changed"
+	c.Change.By = "changed"
+	c.Origin.Name = "changed"
+	if n.Spec.Containers[0].Image != "nginx:1.27" || n.Change.By != "kubectl" || n.Origin.Name != "shop" {
+		t.Errorf("clone shares state with the original: %+v %+v %+v", n.Spec, n.Change, n.Origin)
+	}
+}
+
+func TestNodeJSONWithChangeFacts(t *testing.T) {
+	t.Parallel()
+	n := Node{
+		ID: "Deployment/shop/api", Kind: "Deployment", Namespace: "shop", Name: "api", Created: t0,
+		Spec: &Spec{Generation: 7, Revision: "14", Containers: []Container{
+			{Name: "api", Image: "nginx:1.27-alpine", Requests: Resources{CPU: "100m", Memory: "128Mi"}, Limits: Resources{Memory: "256Mi"}},
+			{Name: "setup", Image: "busybox", Init: true},
+		}},
+		Change: &Change{At: t0, By: "kubectl-patch", Tool: "kubectl", Via: "patch"},
+		Origin: &Origin{Tool: "helm", Name: "shop"},
+	}
+	got, err := json.Marshal(n)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `{"id":"Deployment/shop/api","kind":"Deployment","ns":"shop","name":"api","status":{"ready":false},"created":"2026-10-20T12:00:00Z",` +
+		`"spec":{"generation":7,"revision":"14","containers":[` +
+		`{"name":"api","image":"nginx:1.27-alpine","requests":{"cpu":"100m","memory":"128Mi"},"limits":{"memory":"256Mi"}},` +
+		`{"name":"setup","image":"busybox","init":true}]},` +
+		`"change":{"at":"2026-10-20T12:00:00Z","by":"kubectl-patch","tool":"kubectl","via":"patch"},` +
+		`"origin":{"tool":"helm","name":"shop"}}`
+	if string(got) != want {
+		t.Errorf("JSON =\n%s\nwant\n%s", got, want)
+	}
+}
+
 func TestCallerMutationDoesNotLeakIntoGraph(t *testing.T) {
 	t.Parallel()
 	g := newTestGraph()
@@ -314,6 +356,9 @@ func TestNodeEqual(t *testing.T) {
 		Labels:  map[string]string{"app": "api"},
 		Status:  Status{Replicas: &Replicas{Desired: 3, Ready: 3}},
 		Created: t0,
+		Spec:    &Spec{Generation: 2, Containers: []Container{{Name: "api", Image: "nginx:1.27"}}},
+		Change:  &Change{At: t0, By: "kubectl-patch", Tool: "kubectl", Via: "patch"},
+		Origin:  &Origin{Tool: "helm", Name: "shop"},
 	}
 	tests := []struct {
 		name   string
@@ -327,6 +372,27 @@ func TestNodeEqual(t *testing.T) {
 		{"replicas changed", func(n *Node) { n.Status.Replicas = &Replicas{Desired: 3, Ready: 2} }, false},
 		{"replicas removed", func(n *Node) { n.Status.Replicas = nil }, false},
 		{"parent changed", func(n *Node) { n.Parent = "ns" }, false},
+		{"same spec, different slice", func(n *Node) {
+			n.Spec = &Spec{Generation: 2, Containers: []Container{{Name: "api", Image: "nginx:1.27"}}}
+		}, true},
+		{"image changed", func(n *Node) {
+			n.Spec = &Spec{Generation: 2, Containers: []Container{{Name: "api", Image: "nginx:1.72"}}}
+		}, false},
+		{"limit changed", func(n *Node) {
+			n.Spec = &Spec{Generation: 2, Containers: []Container{{Name: "api", Image: "nginx:1.27", Limits: Resources{Memory: "1Gi"}}}}
+		}, false},
+		{"spec removed", func(n *Node) { n.Spec = nil }, false},
+		{"same change, different location", func(n *Node) {
+			n.Change = &Change{At: t0.In(time.FixedZone("x", 3600)), By: "kubectl-patch", Tool: "kubectl", Via: "patch"}
+		}, true},
+		{"change by someone else", func(n *Node) {
+			n.Change = &Change{At: t0, By: "helm", Tool: "helm"}
+		}, false},
+		{"change later", func(n *Node) {
+			n.Change = &Change{At: t0.Add(time.Second), By: "kubectl-patch", Tool: "kubectl", Via: "patch"}
+		}, false},
+		{"origin changed", func(n *Node) { n.Origin = &Origin{Tool: "argocd", Name: "shop"} }, false},
+		{"origin removed", func(n *Node) { n.Origin = nil }, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
