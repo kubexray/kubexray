@@ -31,6 +31,8 @@ func TestRunWithoutACluster(t *testing.T) {
 	}{
 		{[]string{"--history", "0s"}, "--history must be positive", ""},
 		{[]string{"--port", "1", "extra"}, `unknown command "extra"`, ""},
+		{[]string{"--context", "prod", "why", "deploy/api"}, "put flags after the command", ""},
+		{[]string{"-help"}, "", "flight recorder"},
 		{[]string{"version"}, "", "kubexray "},
 		{[]string{"help"}, "", "flight recorder"},
 		{[]string{"bogus"}, `unknown command "bogus"`, ""},

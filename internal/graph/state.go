@@ -89,6 +89,12 @@ func validOp(op Op) error {
 	return nil
 }
 
+// Clone returns a copy that can be read while the original keeps changing.
+// Nodes are values, and stored nodes are never modified in place.
+func (s *State) Clone() *State {
+	return &State{Seq: s.Seq, TS: s.TS, Nodes: maps.Clone(s.Nodes), Edges: maps.Clone(s.Edges)}
+}
+
 // Snapshot returns the state as a snapshot message, sorted by ID.
 func (s *State) Snapshot() Message {
 	m := Message{

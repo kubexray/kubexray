@@ -5,12 +5,12 @@ coverage.out
 .idea/
 .vscode/
 node_modules/
-dist/
+/dist/
 .env
 .env.*
 *.kubeconfig
 kubeconfig
 
-# Built UI (make web); the placeholder is served when it is missing
+# Built UI, embedded into the binary; a placeholder is served when it is missing
 /internal/web/dist/*
 !/internal/web/dist/.keep

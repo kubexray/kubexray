@@ -23,8 +23,14 @@ type IncidentsMessage struct {
 	Incidents []cause.Incident `json:"incidents"`
 }
 
-// errTooManyClients is returned when the client limit is reached.
-var errTooManyClients = errors.New("too many clients")
+var (
+	errTooManyClients = errors.New("too many clients")
+	errNotSynced      = errors.New("not synced yet; try again in a moment")
+)
+
+// incidentsRecheck is how often incidents are re-analyzed when nothing has
+// changed, so problems that outlast the grace period still get reported.
+const incidentsRecheck = 5 * time.Second
 
 // Hub fans the pump's messages out to WebSocket clients. It keeps the graph
 // state as of the last message it broadcast, so a joining client gets a
@@ -34,11 +40,15 @@ type Hub struct {
 	maxClients int
 	queue      int // per-client send queue length
 
+	ready chan struct{} // closed on the first snapshot
+
 	mu        sync.Mutex
 	state     *graph.State
 	clients   map[*client]struct{}
 	incidents []byte // encoded IncidentsMessage, or nil before the first
 	payload   []byte // incidents without the timestamp, to detect changes
+	analyzed  uint64 // state seq at the last analysis
+	lastRun   time.Time
 }
 
 // client is one subscriber. send is closed when the hub drops it.
@@ -49,8 +59,11 @@ type client struct {
 // NewHub returns a hub allowing maxClients subscribers, each with a send
 // queue of queue messages.
 func NewHub(maxClients, queue int) *Hub {
-	return &Hub{maxClients: maxClients, queue: queue, clients: map[*client]struct{}{}}
+	return &Hub{maxClients: maxClients, queue: queue, clients: map[*client]struct{}{}, ready: make(chan struct{})}
 }
+
+// Ready is closed once the hub has its first snapshot and can serve clients.
+func (h *Hub) Ready() <-chan struct{} { return h.ready }
 
 // Emit receives each message from the pump (it satisfies recorder.Emit). It
 // never fails: a client that can't keep up is dropped, not waited for.
@@ -62,6 +75,9 @@ func (h *Hub) Emit(msg graph.Message, raw []byte) error {
 		st, err := graph.NewState(msg)
 		if err != nil {
 			return err
+		}
+		if h.state == nil {
+			close(h.ready)
 		}
 		h.state = st
 	case graph.MessageDelta:
@@ -106,7 +122,7 @@ func (h *Hub) subscribe() (*client, [][]byte, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if h.state == nil {
-		return nil, nil, errors.New("hub: not synced yet")
+		return nil, nil, errNotSynced
 	}
 	if len(h.clients) >= h.maxClients {
 		return nil, nil, errTooManyClients
@@ -130,15 +146,20 @@ func (h *Hub) unsubscribe(c *client) {
 	h.drop(c)
 }
 
-// UpdateIncidents runs the cause engine on the current state and broadcasts
-// the result if it changed.
+// UpdateIncidents runs the cause engine and broadcasts the result if it
+// changed. It analyzes a copy of the state outside the lock, so a slow
+// analysis on a big cluster never holds up the live stream, and skips the
+// work when nothing changed recently.
 func (h *Hub) UpdateIncidents(now time.Time) error {
 	h.mu.Lock()
-	defer h.mu.Unlock()
-	if h.state == nil {
+	if h.state == nil || (h.state.Seq == h.analyzed && h.incidents != nil && now.Sub(h.lastRun) < incidentsRecheck) {
+		h.mu.Unlock()
 		return nil
 	}
-	incidents := cause.Analyze(h.state, cause.DefaultOptions(now))
+	st := h.state.Clone()
+	h.mu.Unlock()
+
+	incidents := cause.Analyze(st, cause.DefaultOptions(now))
 	if incidents == nil {
 		incidents = []cause.Incident{}
 	}
@@ -146,12 +167,16 @@ func (h *Hub) UpdateIncidents(now time.Time) error {
 	if err != nil {
 		return err
 	}
-	if h.incidents != nil && bytes.Equal(payload, h.payload) {
-		return nil
-	}
 	raw, err := json.Marshal(IncidentsMessage{V: graph.SchemaVersion, Type: MessageIncidents, TS: now, Incidents: incidents})
 	if err != nil {
 		return err
+	}
+
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.analyzed, h.lastRun = st.Seq, now
+	if h.incidents != nil && bytes.Equal(payload, h.payload) {
+		return nil
 	}
 	h.incidents, h.payload = raw, payload
 	h.broadcast(raw)
@@ -163,7 +188,7 @@ func (h *Hub) explain(id string, now time.Time) (cause.Incident, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if h.state == nil {
-		return cause.Incident{}, errors.New("hub: not synced yet")
+		return cause.Incident{}, errNotSynced
 	}
 	return cause.Explain(h.state, id, cause.DefaultOptions(now))
 }

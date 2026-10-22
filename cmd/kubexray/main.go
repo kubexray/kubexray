@@ -13,7 +13,9 @@ import (
 	"os/exec"
 	"os/signal"
 	"runtime"
+	"slices"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -64,7 +66,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 	defer stop()
 
 	// No command, or only flags: start the UI.
-	if len(args) == 0 || strings.HasPrefix(args[0], "-") && args[0] != "-h" && args[0] != "--help" && args[0] != "--version" && args[0] != "-version" {
+	if len(args) == 0 || (strings.HasPrefix(args[0], "-") && !slices.Contains(helpAndVersion, args[0])) {
 		return ui(ctx, args, stdout, stderr)
 	}
 	switch cmd, rest := args[0], args[1:]; cmd {
@@ -77,7 +79,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 	case "version", "--version", "-version":
 		_, err := fmt.Fprintln(stdout, version.String())
 		return err
-	case "help", "-h", "--help":
+	case "help", "-h", "-help", "--help":
 		_, err := fmt.Fprint(stdout, usage)
 		return err
 	default:
@@ -85,6 +87,11 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return fmt.Errorf("unknown command %q", cmd)
 	}
 }
+
+var (
+	helpAndVersion = []string{"-h", "-help", "--help", "-version", "--version"}
+	commands       = []string{"why", "changes", "dump", "version", "help"}
+)
 
 // connection holds the flags every command that reads a cluster shares.
 type connection struct {
@@ -285,6 +292,9 @@ func ui(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 	if fs.NArg() > 0 {
+		if slices.Contains(commands, fs.Arg(0)) {
+			return fmt.Errorf("put flags after the command, e.g. kubexray %s ... --context <name>", fs.Arg(0))
+		}
 		_, _ = fmt.Fprint(stderr, usage)
 		return fmt.Errorf("unknown command %q", fs.Arg(0))
 	}
@@ -294,32 +304,54 @@ func ui(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	}
 
 	log := slog.New(slog.NewTextHandler(stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	hub := server.NewHub(server.MaxClients, server.ClientQueue)
+	srv, err := server.New(hub, rec, web.Assets(), log)
+	if err != nil {
+		return err
+	}
+	// Bind first, so a busy --port fails before a long cluster sync.
+	ln, err := srv.Listen(ctx, *port)
+	if err != nil {
+		return fmt.Errorf("listening: %w", err)
+	}
 	g, _, err := conn.sync(ctx, log, stderr)
 	if err != nil {
+		_ = ln.Close()
 		if errors.Is(err, context.Canceled) {
 			return nil
 		}
 		return err
 	}
-	hub := server.NewHub(16, 256)
-	srv, err := server.New(hub, rec, web.Assets(), log)
-	if err != nil {
-		return err
+
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	var wg sync.WaitGroup
+	errs := make(chan error, 2)
+	run := func(f func() error) {
+		wg.Go(func() {
+			if err := f(); err != nil {
+				errs <- err
+			}
+			cancel() // either one stopping stops both
+		})
 	}
-	ln, err := srv.Listen(ctx, *port)
-	if err != nil {
-		return fmt.Errorf("listening: %w", err)
-	}
-	_, _ = fmt.Fprintf(stdout, "kubexray is running at %s   (Ctrl-C to stop)\n", srv.URL())
-	if !*noBrowser {
-		if err := openBrowser(ctx, srv.URL()); err != nil {
-			_, _ = fmt.Fprintf(stderr, "Couldn't open the browser (%v); open the link above.\n", err)
+	run(func() error { return recorder.Pump(ctx, g, rec, flushInterval, log, hub.Emit) })
+	run(func() error { return srv.Serve(ctx, ln) })
+
+	// Open the browser only once the first snapshot is ready to stream.
+	select {
+	case <-hub.Ready():
+		_, _ = fmt.Fprintf(stdout, "kubexray is running at %s   (Ctrl-C to stop)\n", srv.URL())
+		if !*noBrowser {
+			if err := openBrowser(ctx, srv.URL()); err != nil {
+				_, _ = fmt.Fprintf(stderr, "Couldn't open the browser (%v); open the link above.\n", err)
+			}
 		}
+	case <-ctx.Done():
 	}
 
-	errs := make(chan error, 2)
-	go func() { errs <- srv.Serve(ctx, ln) }()
-	go func() { errs <- recorder.Pump(ctx, g, rec, flushInterval, log, hub.Emit) }()
+	wg.Wait() // let the server shut down gracefully
+	close(errs)
 	return <-errs
 }
 

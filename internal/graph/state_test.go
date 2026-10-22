@@ -127,3 +127,16 @@ func TestStateSnapshotOfEmptyState(t *testing.T) {
 		t.Error("empty snapshot must have empty, non-nil lists")
 	}
 }
+
+func TestStateCloneIsIndependent(t *testing.T) {
+	t.Parallel()
+	s, _ := NewState(Message{Type: MessageSnapshot, Seq: 1, Nodes: []Node{pod("a")}})
+	c := s.Clone()
+	n := pod("b")
+	if err := s.Apply(Message{Type: MessageDelta, Seq: 2, Ops: []Op{{Op: OpUpsertNode, Node: &n}}}); err != nil {
+		t.Fatal(err)
+	}
+	if len(c.Nodes) != 1 || c.Seq != 1 {
+		t.Errorf("clone changed with the original: %d nodes, seq %d", len(c.Nodes), c.Seq)
+	}
+}

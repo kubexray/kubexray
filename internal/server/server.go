@@ -32,10 +32,13 @@ import (
 	"github.com/kubexray/kubexray/internal/recorder"
 )
 
+// Client limits (ADR-0007).
 const (
-	cookieName      = "kubexray_session"
-	maxClients      = 16
-	clientQueue     = 256
+	MaxClients  = 16  // WebSocket clients at once
+	ClientQueue = 256 // messages queued per client before it's dropped
+)
+
+const (
 	maxClientFrame  = 4 << 10
 	writeTimeout    = 10 * time.Second
 	pingInterval    = 30 * time.Second
@@ -50,9 +53,10 @@ type Server struct {
 	log    *slog.Logger
 	now    func() time.Time
 
-	token string
-	host  string // 127.0.0.1:<port>, set by Listen
-	csp   string
+	token  string
+	host   string // 127.0.0.1:<port>, set by Listen
+	csp    string
+	cookie string // session cookie name, set by Listen
 }
 
 // New returns a server for the hub and recorder fed by the pump.
@@ -73,6 +77,13 @@ func (s *Server) Listen(ctx context.Context, port int) (net.Listener, error) {
 	}
 	s.host = ln.Addr().String()
 	s.csp = csp(s.host)
+	// Browsers scope cookies by host, not port, so two kubexray instances
+	// would overwrite each other's session; the port in the name prevents
+	// that. Other servers on 127.0.0.1 still receive the cookie: abusing that
+	// needs a malicious local process, which the threat model treats as a
+	// compromised workstation.
+	_, p, _ := net.SplitHostPort(s.host)
+	s.cookie = "kubexray_session_" + p
 	return ln, nil
 }
 
@@ -176,14 +187,14 @@ func (s *Server) session(next http.Handler) http.Handler {
 			// browsers drop Secure cookies there. Loopback-only, HttpOnly and
 			// SameSite=Strict carry the protection (ADR-0007).
 			http.SetCookie(w, &http.Cookie{ //nolint:gosec // see above
-				Name: cookieName, Value: s.token, Path: "/",
+				Name: s.cookie, Value: s.token, Path: "/",
 				HttpOnly: true, SameSite: http.SameSiteStrictMode,
 			})
 			// Drop the token from the address bar and history.
 			http.Redirect(w, r, "/", http.StatusSeeOther)
 			return
 		}
-		c, err := r.Cookie(cookieName)
+		c, err := r.Cookie(s.cookie)
 		if err != nil || !s.valid(c.Value) {
 			http.Error(w, "Open kubexray with the link it printed in your terminal.", http.StatusUnauthorized)
 			return
@@ -317,6 +328,8 @@ func (s *Server) why(w http.ResponseWriter, r *http.Request) {
 	}
 	inc, err := s.hub.explain(id, s.now())
 	switch {
+	case errors.Is(err, errNotSynced):
+		http.Error(w, err.Error(), http.StatusServiceUnavailable)
 	case errors.Is(err, cause.ErrNotAnApp):
 		http.Error(w, err.Error(), http.StatusUnprocessableEntity)
 	case err != nil:

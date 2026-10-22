@@ -123,7 +123,7 @@ func (f *fixture) do(r req) response {
 		hr.Host = r.host
 	}
 	if r.cookie {
-		hr.AddCookie(&http.Cookie{Name: cookieName, Value: f.srv.token}) //nolint:gosec // a client-side test cookie
+		hr.AddCookie(&http.Cookie{Name: f.srv.cookie, Value: f.srv.token}) //nolint:gosec // a client-side test cookie
 	}
 	if r.origin != "" {
 		hr.Header.Set("Origin", r.origin)
@@ -145,7 +145,7 @@ func (f *fixture) status(r req) int { return f.do(r).code }
 // dial opens the stream; it returns the HTTP status when the upgrade fails.
 func (f *fixture) dial(origin string) (*websocket.Conn, int, error) {
 	h := http.Header{}
-	h.Set("Cookie", cookieName+"="+f.srv.token)
+	h.Set("Cookie", f.srv.cookie+"="+f.srv.token)
 	if origin != "" {
 		h.Set("Origin", origin)
 	}
@@ -205,7 +205,8 @@ func TestTokenExchangeSetsAStrictHttpOnlyCookie(t *testing.T) {
 		t.Fatalf("cookies = %v", cookies)
 	}
 	c := cookies[0]
-	if c.Name != cookieName || !c.HttpOnly || c.SameSite != http.SameSiteStrictMode || c.Path != "/" {
+	_, port, _ := net.SplitHostPort(f.host)
+	if c.Name != "kubexray_session_"+port || !c.HttpOnly || c.SameSite != http.SameSiteStrictMode || c.Path != "/" {
 		t.Errorf("cookie = %+v; want HttpOnly, SameSite=Strict, Path=/", c)
 	}
 }
@@ -289,6 +290,11 @@ func TestClientLimit(t *testing.T) {
 func TestStreamSendsSnapshotIncidentsThenChanges(t *testing.T) {
 	t.Parallel()
 	f := start(t, 4)
+	select {
+	case <-f.hub.Ready():
+	default:
+		t.Fatal("hub not ready after its first snapshot")
+	}
 	if err := f.hub.UpdateIncidents(time.Now()); err != nil {
 		t.Fatal(err)
 	}
@@ -326,11 +332,26 @@ func TestIncidentsAreSentOnlyWhenTheyChange(t *testing.T) {
 	if len(first) != 2 {
 		t.Fatalf("a new client gets %d messages, want snapshot and incidents", len(first))
 	}
-	_ = f.hub.UpdateIncidents(time.Now().Add(time.Second))
+	// Re-analyzed after the recheck interval, but unchanged: nothing sent.
+	_ = f.hub.UpdateIncidents(time.Now().Add(2 * incidentsRecheck))
 	select {
 	case m := <-c.send:
 		t.Errorf("unchanged incidents were sent again: %s", m)
 	default:
+	}
+	// A change shows up even before the recheck interval.
+	f.g.RemoveNode("Pod/shop/api-x")
+	delta, _ := f.g.Flush()
+	f.emit(delta, false)
+	<-c.send // the delta
+	_ = f.hub.UpdateIncidents(time.Now().Add(2*incidentsRecheck + time.Second))
+	select {
+	case m := <-c.send:
+		if !strings.Contains(string(m), `"incidents":[`) {
+			t.Errorf("expected new incidents, got %s", m)
+		}
+	default:
+		t.Error("changed incidents were not sent")
 	}
 }
 
@@ -363,6 +384,14 @@ func TestHubRejectsOutOfOrderMessages(t *testing.T) {
 	}
 	if _, _, err := h.subscribe(); err == nil {
 		t.Error("subscribe before the first snapshot succeeded")
+	}
+	select {
+	case <-h.Ready():
+		t.Error("hub ready before its first snapshot")
+	default:
+	}
+	if _, err := h.explain("x", time.Now()); !errors.Is(err, errNotSynced) {
+		t.Errorf("explain before sync = %v, want errNotSynced", err)
 	}
 }
 
