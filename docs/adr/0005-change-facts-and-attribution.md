@@ -1,6 +1,6 @@
 # 0005. Change facts and attribution
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-10-22
 - Extends: [0003](0003-graph-delta-schema.md) (additive fields, schema version stays 1)
 
@@ -53,7 +53,7 @@ Every node gets an optional `change` describing the most recent **non-status** w
 "change": { "at": "2026-10-22T20:27:43Z", "by": "kubectl-patch", "tool": "kubectl", "via": "patch" }
 ```
 
-- Chosen from `managedFields` entries whose subresource is not `status`, latest `time` first. If the latest entry has no timestamp (for example `scale`), the time we observed the update is used.
+- Chosen from `managedFields` entries whose subresource is not `status`, latest `time` first. Entries without a timestamp (seen for `scale`) are ignored here, so the same object always maps to the same node; scaling is still caught by the change log as a replica count change, timed when kubexray observes it.
 - Known controllers (`kube-controller-manager`, `kube-scheduler`, `kubelet`) are only used if no other manager has written the object, so a human or GitOps change isn't hidden by controller follow-up writes.
 - `by` is the raw manager name (truncated to 64 characters). `tool` is a normalized family: `kubectl`, `helm`, `argocd`, `flux`, `controller`, or `other`. `via` is the kubectl subcommand when it can be inferred (`patch`, `apply`, `edit`, `scale`).
 
