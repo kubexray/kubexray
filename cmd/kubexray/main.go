@@ -3,7 +3,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -21,11 +20,15 @@ import (
 
 	"github.com/kubexray/kubexray/internal/cluster"
 	"github.com/kubexray/kubexray/internal/graph"
+	"github.com/kubexray/kubexray/internal/recorder"
 	"github.com/kubexray/kubexray/internal/version"
 )
 
 // flushInterval is how often changes are batched into a delta (ADR-0003).
 const flushInterval = 100 * time.Millisecond
+
+// maxHistoryMB bounds --history-max-mb (64 GiB) well below int overflow.
+const maxHistoryMB = 64 << 10
 
 func main() {
 	if err := run(); err != nil {
@@ -39,6 +42,8 @@ func run() error {
 	kubeconfig := flag.String("kubeconfig", "", "path to kubeconfig (default: $KUBECONFIG or ~/.kube/config)")
 	kubeContext := flag.String("context", "", "kubeconfig context to use (default: current context)")
 	dump := flag.Bool("dump", false, "stream the cluster graph to stdout as NDJSON: a snapshot, then deltas")
+	history := flag.Duration("history", recorder.DefaultOptions.Window, "how far back to keep history for rewind")
+	historyMB := flag.Int("history-max-mb", recorder.DefaultOptions.MaxBytes>>20, "memory budget for history, in MiB")
 	flag.Parse()
 
 	if *showVersion {
@@ -47,6 +52,12 @@ func run() error {
 	}
 	if !*dump {
 		return errors.New("the UI is not implemented yet; use --dump to stream the graph as JSON (see ROADMAP.md)")
+	}
+	if *history <= 0 {
+		return fmt.Errorf("--history must be positive, got %v", *history)
+	}
+	if *historyMB <= 0 || *historyMB > maxHistoryMB {
+		return fmt.Errorf("--history-max-mb must be between 1 and %d, got %d", maxHistoryMB, *historyMB)
 	}
 
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
@@ -76,7 +87,23 @@ func run() error {
 		}
 		return err
 	}
-	return dumpGraph(ctx, g, os.Stdout, flushInterval)
+
+	rec := recorder.New(recorder.Options{
+		Window:        *history,
+		MaxBytes:      *historyMB << 20,
+		KeyframeEvery: recorder.DefaultOptions.KeyframeEvery,
+	})
+	return recorder.Pump(ctx, g, rec, flushInterval, log, ndjson(os.Stdout))
+}
+
+// ndjson writes each message as one line, as soon as it is produced.
+func ndjson(w io.Writer) recorder.Emit {
+	return func(_ graph.Message, raw []byte) error {
+		// raw is shared with the recorder: the full slice expression makes
+		// append copy instead of writing into its spare capacity.
+		_, err := w.Write(append(raw[:len(raw):len(raw)], '\n'))
+		return err
+	}
 }
 
 // loadConfig resolves the kubeconfig the way kubectl does and returns the
@@ -98,29 +125,4 @@ func loadConfig(path, contextName string) (*rest.Config, string, error) {
 		return nil, "", fmt.Errorf("loading kubeconfig: %w", err)
 	}
 	return cfg, contextName, nil
-}
-
-// dumpGraph writes a snapshot of the synced graph, then one delta per
-// interval with changes, until ctx is cancelled.
-func dumpGraph(ctx context.Context, g *graph.Graph, w io.Writer, interval time.Duration) error {
-	enc := json.NewEncoder(w)
-	g.Flush() // fold the initial sync into the snapshot
-	if err := enc.Encode(g.Snapshot()); err != nil {
-		return err
-	}
-
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		case <-ticker.C:
-			if msg, ok := g.Flush(); ok {
-				if err := enc.Encode(msg); err != nil {
-					return err
-				}
-			}
-		}
-	}
 }

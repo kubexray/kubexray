@@ -2,7 +2,6 @@ package graph
 
 import (
 	"cmp"
-	"maps"
 	"slices"
 	"sync"
 	"time"
@@ -150,7 +149,10 @@ func (g *Graph) unindex(nodeID, edgeID string) {
 func (g *Graph) Flush() (Message, bool) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
+	return g.flushLocked()
+}
 
+func (g *Graph) flushLocked() (Message, bool) {
 	var nodeUpserts, edgeUpserts, edgeRemoves, nodeRemoves []Op
 
 	for id := range g.dirtyNodes {
@@ -203,25 +205,44 @@ func (g *Graph) hasNode(id string) bool {
 // Seq+1.
 func (g *Graph) Snapshot() Message {
 	g.mu.Lock()
+	msg := g.snapshotLocked()
+	g.mu.Unlock()
+	sortSnapshot(&msg) // outside the lock so large snapshots don't block writers
+	return msg
+}
+
+// FlushAndSnapshot flushes and takes a snapshot atomically, so the snapshot is
+// guaranteed to match the returned delta even with other callers around.
+func (g *Graph) FlushAndSnapshot() (delta Message, changed bool, snapshot Message) {
+	g.mu.Lock()
+	delta, changed = g.flushLocked()
+	snapshot = g.snapshotLocked()
+	g.mu.Unlock()
+	sortSnapshot(&snapshot)
+	return delta, changed, snapshot
+}
+
+// snapshotLocked copies the flushed state; the caller sorts it.
+func (g *Graph) snapshotLocked() Message {
 	nodes := make([]Node, 0, len(g.sentNodes))
 	for _, n := range g.sentNodes {
 		nodes = append(nodes, n.clone())
 	}
-	edges := slices.Collect(maps.Values(g.sentEdges))
-	if edges == nil {
-		edges = []Edge{}
+	edges := make([]Edge, 0, len(g.sentEdges))
+	for _, e := range g.sentEdges {
+		edges = append(edges, e)
 	}
-	msg := Message{V: SchemaVersion, Type: MessageSnapshot, Seq: g.seq, TS: g.flushedAt}
+	msg := Message{V: SchemaVersion, Type: MessageSnapshot, Seq: g.seq, TS: g.flushedAt, Nodes: nodes, Edges: edges}
 	if g.seq == 0 {
 		msg.TS = g.now()
 	}
-	g.mu.Unlock()
-
-	// Sort outside the lock so large snapshots don't block writers.
-	slices.SortFunc(nodes, func(a, b Node) int { return cmp.Compare(a.ID, b.ID) })
-	slices.SortFunc(edges, func(a, b Edge) int { return cmp.Compare(a.ID, b.ID) })
-	msg.Nodes, msg.Edges = nodes, edges
 	return msg
+}
+
+// sortSnapshot orders a snapshot's nodes and edges by ID.
+func sortSnapshot(m *Message) {
+	slices.SortFunc(m.Nodes, func(a, b Node) int { return cmp.Compare(a.ID, b.ID) })
+	slices.SortFunc(m.Edges, func(a, b Edge) int { return cmp.Compare(a.ID, b.ID) })
 }
 
 func sortOps(ops []Op) []Op {
