@@ -58,6 +58,7 @@ kubexray answers all three, free and open source, from a single binary on your l
 - [x] Versioned delta schema ([ADR-0003](docs/adr/0003-graph-delta-schema.md)) shared by the live stream, rewind and replay files.
 - [x] Read-only; annotations and managed fields stripped before caching.
 - [ ] **Change facts** in the model: container images, replica counts, resource requests and limits, and *when* a ConfigMap or Secret changed (never its contents).
+- [ ] **Who made the change:** the tool behind each change (kubectl, Helm, Argo CD, Flux, a controller) and, where present, the Helm release revision or the GitOps commit. Read from a small allow-list of safe fields; everything else is still discarded.
 
 ### Recorder & rewind
 - [ ] Recorder: a ring buffer of snapshots and deltas with a configurable window (default 1 hour), with keyframes for fast seeking.
@@ -65,8 +66,13 @@ kubexray answers all three, free and open source, from a single binary on your l
 
 ### Caused by
 - [ ] Change log: every rollout, image change, scale and config edit as a readable event (*"api: image nginx:1.27 → nginx:1.72"*).
-- [ ] Causality engine: when a workload breaks, find the most recent relevant change and build the chain from symptom to cause (Ingress → Service with 0 ready pods → failing pods → the change).
-- [ ] Incident cards: *"api is down since 14:02 · caused by rollout of api"*, with the chain highlighted on the map and a plain-English explanation.
+- [ ] Causality engine: when a workload breaks, find the most likely change and build the chain from symptom to cause (Ingress → Service with 0 ready pods → failing pods → the change). Covers the app's own changes (image, config, scale) and the ConfigMaps, Secrets and volumes it uses.
+- [ ] Honest answers: causes are labelled **likely**, come with their evidence (*"api-config edited 2m before the first crash; no other changes to api"*), and list other recent changes as alternatives.
+- [ ] Incident cards: *"api is down since 14:02 · likely caused by an edit to api-config by kubectl"*, with the chain highlighted on the map and a plain-English explanation.
+
+### Terminal
+- [ ] `kubexray why <kind>/<name>`: prints the incident chain, the likely cause, who made it, and the command to fix it.
+- [ ] `kubexray changes --since 1h`: every change in the window, newest first, with who made it.
 
 ### Web UI
 - [ ] Secure local server: listens on 127.0.0.1 only, one-time session token, strict Origin and Host checks ([threat model](docs/threat-model.md)).
@@ -75,10 +81,11 @@ kubexray answers all three, free and open source, from a single binary on your l
 
 ### Demo
 - [ ] `make demo`: creates a kind cluster, deploys the sample shop app and opens kubexray.
-- [ ] `make break`: ships a bad image to the `api` deployment, then rolls it back, so the full story plays out on screen.
+- [ ] `make break`: the official demo story. Someone edits a ConfigMap; minutes later a pod restarts and crash-loops on the bad value. kubexray links the crash to the earlier edit and names who made it, a cause nobody would connect by hand.
+- [ ] `make break SCENARIO=bad-image`: the simpler bad-rollout story, then a rollback.
 - [ ] Performance baseline: smooth with 1,000 pods, with a load generator checked into the repo.
 
-**Done when:** `make demo && make break` shows the outage, the incident card names the bad rollout as the cause, and rewinding shows the moment it broke.
+**Done when:** `make demo && make break` shows the outage; the incident card and `kubexray why` both name the ConfigMap edit and who made it as the likely cause; and rewinding shows the moment it broke.
 
 ---
 
@@ -91,8 +98,10 @@ kubexray answers all three, free and open source, from a single binary on your l
 - [ ] kubexray.com player: a static page that plays replay files. Drop a file in or open a shared link; no cluster access, no install.
 - [ ] Incident permalinks: share a replay that opens on the incident, with the chain already highlighted.
 - [ ] A recorded demo incident on the kubexray.com homepage.
+- [ ] **Post-mortem draft:** one click exports Markdown with impact, timeline, likely cause, who made the change, the fix, duration and the replay link.
+- [ ] **One cause, many symptoms:** when one change or failure breaks several apps (a node going NotReady, a shared ConfigMap edit), show one incident card listing every affected app, instead of one alert per app.
 
-**Done when:** an incident exported from `make break` plays on kubexray.com with no cluster.
+**Done when:** an incident exported from `make break` plays on kubexray.com with no cluster, its post-mortem draft is accurate, and a node failure in the demo cluster produces one grouped incident.
 
 ---
 
@@ -116,7 +125,7 @@ kubexray answers all three, free and open source, from a single binary on your l
 
 - [ ] In-cluster mode via Helm: least-privilege read-only ClusterRole, recording persisted to a volume with size-based retention.
 - [ ] Authentication for in-cluster access: bearer token or an auth proxy; no anonymous mode.
-- [ ] Notifications: post an incident with its replay link to Slack or a webhook.
+- [ ] **Alert → replay:** when Prometheus Alertmanager fires, kubexray posts the likely cause, who made the change and a replay link to Slack or a webhook.
 - [ ] Release engineering: GoReleaser (multi-arch binaries and images, Homebrew tap), cosign signatures, SBOM and provenance.
 - [ ] CI: envtest, an end-to-end run on kind, and Playwright UI screenshots.
 
