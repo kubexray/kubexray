@@ -96,6 +96,7 @@ type Status struct {
 	Reason   string    `json:"reason,omitempty"`
 	Restarts int32     `json:"restarts,omitempty"`
 	Replicas *Replicas `json:"replicas,omitempty"`
+	Since    time.Time `json:"since,omitzero"` // when readiness last changed (pods, nodes)
 }
 
 // Replicas summarises a workload's scale.
@@ -168,7 +169,7 @@ func (s Status) Equal(o Status) bool {
 	if s.Replicas != nil && *s.Replicas != *o.Replicas {
 		return false
 	}
-	return s.Phase == o.Phase && s.Ready == o.Ready && s.Reason == o.Reason && s.Restarts == o.Restarts
+	return s.Phase == o.Phase && s.Ready == o.Ready && s.Reason == o.Reason && s.Restarts == o.Restarts && s.Since.Equal(o.Since)
 }
 
 // Edge is a directed relationship between two nodes.

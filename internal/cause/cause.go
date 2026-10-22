@@ -1,0 +1,386 @@
+// Package cause finds broken apps and the change most likely to have broken
+// them (ADR-0006). It is pure logic over the graph model: no I/O, no logs, no
+// Secret or ConfigMap contents. The UI, `kubexray why` and post-mortems all
+// render its results.
+package cause
+
+import (
+	"cmp"
+	"fmt"
+	"slices"
+	"strings"
+	"time"
+
+	"github.com/kubexray/kubexray/internal/graph"
+)
+
+// Confidence is how strongly a change is tied to a symptom.
+type Confidence int
+
+// Confidence levels, from weakest to strongest (ADR-0006, section 3).
+const (
+	Possible Confidence = iota + 1
+	Likely
+	VeryLikely
+)
+
+func (c Confidence) String() string {
+	switch c {
+	case VeryLikely:
+		return "very likely"
+	case Likely:
+		return "likely"
+	case Possible:
+		return "possible"
+	default:
+		return "unknown"
+	}
+}
+
+// MarshalText encodes the confidence as its words.
+func (c Confidence) MarshalText() ([]byte, error) { return []byte(c.String()), nil }
+
+// Kind is the type of change a cause describes.
+type Kind string
+
+// Kinds of causes.
+const (
+	KindImage     Kind = "image"     // a container image changed
+	KindResources Kind = "resources" // CPU or memory requests or limits changed
+	KindTemplate  Kind = "template"  // the pod template changed in a way the model doesn't record
+	KindRestart   Kind = "restart"   // pods were restarted without changing the template
+	KindChange    Kind = "change"    // the app changed, details unknown
+	KindConfig    Kind = "config"    // a ConfigMap or Secret the app uses was edited
+	KindMissing   Kind = "missing"   // a ConfigMap, Secret or PVC the app uses doesn't exist
+	KindNode      Kind = "node"      // a node running the app's pods is unhealthy
+)
+
+// Cause is one candidate explanation for an incident.
+type Cause struct {
+	Kind       Kind          `json:"kind"`
+	Object     string        `json:"object"` // ID of what changed: the app, a ConfigMap, a Node…
+	At         time.Time     `json:"at,omitzero"`
+	By         *graph.Change `json:"by,omitempty"`
+	Origin     *graph.Origin `json:"origin,omitempty"`
+	From       string        `json:"from,omitempty"`
+	To         string        `json:"to,omitempty"`
+	Summary    string        `json:"summary"`
+	Confidence Confidence    `json:"confidence"`
+	Evidence   []string      `json:"evidence,omitempty"`
+}
+
+// Symptom describes what is wrong with an app.
+type Symptom struct {
+	Summary  string   `json:"summary"`          // e.g. "3 pods CrashLoopBackOff"
+	Reason   string   `json:"reason,omitempty"` // the most common pod reason
+	BadPods  []string `json:"badPods,omitempty"`
+	Ready    int32    `json:"ready"`
+	Desired  int32    `json:"desired"`
+	Restarts int32    `json:"restarts,omitempty"`
+}
+
+// Step is a suggested next command. kubexray never runs it.
+type Step struct {
+	Command string `json:"command"`
+	Note    string `json:"note,omitempty"`
+}
+
+// Incident is an app's health and, when it's broken, the likely causes.
+type Incident struct {
+	App       string    `json:"app"`
+	Kind      string    `json:"kind"`
+	Namespace string    `json:"namespace"`
+	Name      string    `json:"name"`
+	Healthy   bool      `json:"healthy"`
+	Since     time.Time `json:"since,omitzero"`
+	Symptom   Symptom   `json:"symptom"`
+	Impact    []string  `json:"impact,omitempty"` // e.g. "Ingress web → Service api → 0 of 3 pods ready"
+	Causes    []Cause   `json:"causes,omitempty"` // best first; empty when nothing qualifies
+	Next      []Step    `json:"next,omitempty"`
+	// LastChange is the app's most recent change, for context when it's healthy.
+	LastChange *graph.Change `json:"lastChange,omitempty"`
+}
+
+// Down reports whether the app has no ready pods at all.
+func (i Incident) Down() bool { return !i.Healthy && i.Symptom.Desired > 0 && i.Symptom.Ready == 0 }
+
+// Options tune the analysis.
+type Options struct {
+	Now      time.Time
+	Grace    time.Duration // how long a problem must last to be an incident
+	Lookback time.Duration // how far before an incident to look for causes
+	Skew     time.Duration // changes this long after the start still count (clock skew)
+}
+
+// DefaultOptions are the values from ADR-0006.
+func DefaultOptions(now time.Time) Options {
+	return Options{Now: now, Grace: 30 * time.Second, Lookback: 30 * time.Minute, Skew: 10 * time.Second}
+}
+
+// Analyze returns every app that has been broken for longer than the grace
+// period, oldest incident first.
+func Analyze(st *graph.State, opts Options) []Incident {
+	x := newIndex(st)
+	var out []Incident
+	for _, app := range x.apps() {
+		inc := x.explain(app, opts)
+		if inc.Healthy || (!inc.Since.IsZero() && opts.Now.Sub(inc.Since) < opts.Grace) {
+			continue
+		}
+		out = append(out, inc)
+	}
+	slices.SortFunc(out, func(a, b Incident) int {
+		return cmp.Or(a.Since.Compare(b.Since), cmp.Compare(a.App, b.App))
+	})
+	return out
+}
+
+// ErrNotAnApp is returned by Explain for objects that aren't apps or pods.
+var ErrNotAnApp = fmt.Errorf("not an app: kubexray explains deployments, statefulsets, daemonsets, jobs and pods")
+
+// Explain analyzes one app, healthy or not, regardless of the grace period.
+// A pod is explained through the app it belongs to.
+func Explain(st *graph.State, id string, opts Options) (Incident, error) {
+	n, ok := st.Nodes[id]
+	if !ok {
+		return Incident{}, fmt.Errorf("%s not found", id)
+	}
+	x := newIndex(st)
+	switch {
+	case n.Kind == "Pod":
+		return x.explain(st.Nodes[x.appOf(id)], opts), nil
+	case appKinds[n.Kind]:
+		return x.explain(n, opts), nil
+	default:
+		return Incident{}, ErrNotAnApp
+	}
+}
+
+var appKinds = map[string]bool{"Deployment": true, "StatefulSet": true, "DaemonSet": true, "Job": true, "ReplicaSet": true}
+
+// Pod reasons that mean the pod is failing, not just starting.
+var failingReasons = map[string]bool{
+	"CrashLoopBackOff": true, "Error": true, "OOMKilled": true,
+	"ImagePullBackOff": true, "ErrImagePull": true, "InvalidImageName": true,
+	"CreateContainerConfigError": true, "CreateContainerError": true,
+	"Evicted": true, "Unschedulable": true,
+}
+
+var pullReasons = map[string]bool{"ImagePullBackOff": true, "ErrImagePull": true, "InvalidImageName": true}
+
+func failing(p graph.Node) bool {
+	r := p.Status.Reason
+	return failingReasons[r] || strings.HasPrefix(r, "Init:") || p.Status.Phase == "Failed"
+}
+
+func terminating(p graph.Node) bool { return p.Status.Reason == "Terminating" }
+
+// bad is a pod that counts against the app: failing, or not ready.
+func bad(p graph.Node) bool { return !terminating(p) && (failing(p) || !p.Status.Ready) }
+
+// index answers questions about the graph's structure.
+type index struct {
+	st       *graph.State
+	in, out  map[string][]graph.Edge
+	podsOf   map[string][]graph.Node // app ID → its pods, sorted by name
+	appByPod map[string]string
+}
+
+func newIndex(st *graph.State) *index {
+	x := &index{st: st, in: map[string][]graph.Edge{}, out: map[string][]graph.Edge{}, podsOf: map[string][]graph.Node{}, appByPod: map[string]string{}}
+	for _, e := range st.Edges {
+		x.out[e.From] = append(x.out[e.From], e)
+		x.in[e.To] = append(x.in[e.To], e)
+	}
+	for _, n := range st.Nodes {
+		if n.Kind == "Pod" {
+			app := x.appOf(n.ID)
+			x.appByPod[n.ID] = app
+			x.podsOf[app] = append(x.podsOf[app], n)
+		}
+	}
+	for _, pods := range x.podsOf {
+		slices.SortFunc(pods, func(a, b graph.Node) int { return cmp.Compare(a.Name, b.Name) })
+	}
+	return x
+}
+
+// appOf follows owner references up from a pod to the app that runs it
+// (Pod ← ReplicaSet ← Deployment). A pod without a known owner is its own app.
+func (x *index) appOf(id string) string {
+	cur := id
+	for range 4 {
+		next := ""
+		for _, e := range x.in[cur] {
+			if o, ok := x.st.Nodes[e.From]; ok && e.Type == graph.EdgeOwns && appKinds[o.Kind] {
+				next = o.ID
+				break
+			}
+		}
+		if next == "" {
+			break
+		}
+		cur = next
+	}
+	return cur
+}
+
+// apps lists every app: workloads at the top of their ownership chain, and
+// standalone pods.
+func (x *index) apps() []graph.Node {
+	seen := map[string]bool{}
+	var apps []graph.Node
+	for _, n := range x.st.Nodes {
+		id := ""
+		switch {
+		case n.Kind == "Pod":
+			id = x.appByPod[n.ID]
+		case appKinds[n.Kind]:
+			id = x.appOf(n.ID) // a ReplicaSet owned by a Deployment isn't an app itself
+		}
+		if id != "" && !seen[id] {
+			seen[id] = true
+			apps = append(apps, x.st.Nodes[id])
+		}
+	}
+	slices.SortFunc(apps, func(a, b graph.Node) int { return cmp.Compare(a.ID, b.ID) })
+	return apps
+}
+
+// deps returns the ConfigMaps, Secrets and PVCs the app's pods use, by ID,
+// including ones that don't exist.
+func (x *index) deps(pods []graph.Node) []string {
+	var ids []string
+	for _, p := range pods {
+		for _, e := range x.out[p.ID] {
+			if e.Type == graph.EdgeMounts && !strings.HasSuffix(e.To, "/kube-root-ca.crt") && !slices.Contains(ids, e.To) {
+				ids = append(ids, e.To)
+			}
+		}
+	}
+	slices.Sort(ids)
+	return ids
+}
+
+// explain builds the incident for one app.
+func (x *index) explain(app graph.Node, opts Options) Incident {
+	pods := slices.DeleteFunc(slices.Clone(x.podsOf[app.ID]), terminating)
+	inc := Incident{App: app.ID, Kind: app.Kind, Namespace: app.Namespace, Name: app.Name, LastChange: app.Change}
+	inc.Symptom = symptom(app, pods)
+	if len(inc.Symptom.BadPods) == 0 && inc.Symptom.Ready >= inc.Symptom.Desired {
+		inc.Healthy = true
+		return inc
+	}
+	inc.Since = since(pods)
+	inc.Impact = x.impact(pods, inc.Symptom)
+
+	a := &analysis{x: x, app: app, pods: pods, inc: &inc, opts: opts}
+	inc.Causes = a.causes()
+	inc.Next = nextSteps(inc, app)
+	return inc
+}
+
+func symptom(app graph.Node, pods []graph.Node) Symptom {
+	s := Symptom{Desired: int32(len(pods))} //nolint:gosec // pod counts fit in int32
+	if r := app.Status.Replicas; r != nil {
+		s.Desired, s.Ready = r.Desired, r.Ready
+	} else {
+		for _, p := range pods {
+			if p.Status.Ready {
+				s.Ready++
+			}
+		}
+	}
+	reasons := map[string]int{}
+	for _, p := range pods {
+		s.Restarts += p.Status.Restarts
+		if bad(p) {
+			s.BadPods = append(s.BadPods, p.ID)
+			reasons[p.Status.Reason]++
+		}
+	}
+	// The most common reason, preferring real failures over "starting", then
+	// by name so the choice is stable.
+	best := ""
+	for _, r := range slices.Sorted(mapKeys(reasons)) {
+		if reasons[best] == 0 || reasons[r] > reasons[best] ||
+			(reasons[r] == reasons[best] && failingReasons[r] && !failingReasons[best]) {
+			best = r
+		}
+	}
+	s.Reason = best
+	switch {
+	case len(s.BadPods) > 0 && best != "":
+		s.Summary = fmt.Sprintf("%s %s", plural(reasons[best], "pod"), best)
+	case len(s.BadPods) > 0:
+		s.Summary = plural(len(s.BadPods), "pod") + " not ready"
+	default:
+		s.Summary = fmt.Sprintf("%d of %d pods ready", s.Ready, s.Desired)
+	}
+	return s
+}
+
+// since is when the app's trouble started: the earliest moment one of its bad
+// pods went bad.
+func since(pods []graph.Node) time.Time {
+	var t time.Time
+	for _, p := range pods {
+		if !bad(p) {
+			continue
+		}
+		at := p.Status.Since
+		if at.IsZero() {
+			at = p.Created
+		}
+		if !at.IsZero() && (t.IsZero() || at.Before(t)) {
+			t = at
+		}
+	}
+	return t
+}
+
+// impact describes the path users take to reach the app: Ingress → Service →
+// ready pods.
+func (x *index) impact(pods []graph.Node, s Symptom) []string {
+	services := map[string]bool{}
+	for _, p := range pods {
+		for _, e := range x.in[p.ID] {
+			if e.Type == graph.EdgeSelects {
+				services[e.From] = true
+			}
+		}
+	}
+	lines := make([]string, 0, len(services))
+	for _, svc := range slices.Sorted(mapKeys(services)) {
+		hops := []string{}
+		for _, e := range x.in[svc] {
+			if e.Type == graph.EdgeRoutes {
+				hops = append(hops, "Ingress "+x.st.Nodes[e.From].Name)
+			}
+		}
+		slices.Sort(hops)
+		path := ""
+		if len(hops) > 0 {
+			path = strings.Join(hops, ", ") + " → "
+		}
+		lines = append(lines, fmt.Sprintf("%sService %s → %d of %d pods ready", path, x.st.Nodes[svc].Name, s.Ready, s.Desired))
+	}
+	return lines
+}
+
+func mapKeys[V any](m map[string]V) func(func(string) bool) {
+	return func(yield func(string) bool) {
+		for k := range m {
+			if !yield(k) {
+				return
+			}
+		}
+	}
+}
+
+func plural(n int, word string) string {
+	if n == 1 {
+		return "1 " + word
+	}
+	return fmt.Sprintf("%d %ss", n, word)
+}

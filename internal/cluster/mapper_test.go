@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"slices"
 	"testing"
+	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
@@ -414,5 +415,28 @@ func TestInitContainerStatus(t *testing.T) {
 				t.Errorf("status = %+v, want reason=%q restarts=%d", s, tt.reason, tt.restarts)
 			}
 		})
+	}
+}
+
+func TestPodSinceAndUnschedulable(t *testing.T) {
+	t.Parallel()
+	when := metav1.NewTime(time.Date(2026, 10, 23, 14, 2, 11, 0, time.UTC))
+	n, _ := mapPod(&corev1.Pod{Status: corev1.PodStatus{Phase: corev1.PodPending, Conditions: []corev1.PodCondition{
+		{Type: corev1.PodReady, Status: corev1.ConditionFalse, LastTransitionTime: when},
+		{Type: corev1.PodScheduled, Status: corev1.ConditionFalse, Reason: corev1.PodReasonUnschedulable},
+	}}})
+	if !n.Status.Since.Equal(when.Time) || n.Status.Reason != "Unschedulable" {
+		t.Errorf("status = %+v, want since %v and reason Unschedulable", n.Status, when)
+	}
+}
+
+func TestNodeSince(t *testing.T) {
+	t.Parallel()
+	when := metav1.NewTime(time.Date(2026, 10, 23, 14, 0, 0, 0, time.UTC))
+	n, _ := mapNode(&corev1.Node{Status: corev1.NodeStatus{Conditions: []corev1.NodeCondition{
+		{Type: corev1.NodeReady, Status: corev1.ConditionFalse, LastTransitionTime: when},
+	}}})
+	if !n.Status.Since.Equal(when.Time) {
+		t.Errorf("Since = %v, want %v", n.Status.Since, when)
 	}
 }
