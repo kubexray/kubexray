@@ -75,6 +75,7 @@ func mapNode(node *corev1.Node) (graph.Node, []graph.Edge) {
 	for _, c := range node.Status.Conditions {
 		if c.Type == corev1.NodeReady {
 			n.Status.Ready = c.Status == corev1.ConditionTrue
+			n.Status.Since = c.LastTransitionTime.Time
 			if !n.Status.Ready {
 				n.Status.Reason = c.Reason
 			}
@@ -105,9 +106,14 @@ func mapPod(pod *corev1.Pod) (graph.Node, []graph.Edge) {
 // telling reason wins.
 func podStatus(pod *corev1.Pod) graph.Status {
 	s := graph.Status{Phase: string(pod.Status.Phase), Reason: pod.Status.Reason}
+	unschedulable := false
 	for _, c := range pod.Status.Conditions {
-		if c.Type == corev1.PodReady {
+		switch c.Type { //nolint:exhaustive // only these conditions matter
+		case corev1.PodReady:
 			s.Ready = c.Status == corev1.ConditionTrue
+			s.Since = c.LastTransitionTime.Time
+		case corev1.PodScheduled:
+			unschedulable = c.Status == corev1.ConditionFalse && c.Reason == corev1.PodReasonUnschedulable
 		}
 	}
 
@@ -143,6 +149,8 @@ func podStatus(pod *corev1.Pod) graph.Status {
 		s.Reason = "Terminating"
 	case initProblem != "":
 		s.Reason = initProblem // e.g. Init:CrashLoopBackOff
+	case unschedulable:
+		s.Reason = corev1.PodReasonUnschedulable
 	case waiting != "" && !isStarting(waiting):
 		s.Reason = waiting // e.g. CrashLoopBackOff, ImagePullBackOff
 	case terminated != "":

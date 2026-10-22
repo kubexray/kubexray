@@ -67,13 +67,13 @@ kubexray answers all three, free and open source, from a single binary on your l
 
 ### Caused by
 - [ ] Change log: every rollout, image change, scale and config edit as a readable event (*"api: image nginx:1.27 → nginx:1.72"*).
-- [ ] Causality engine: when a workload breaks, find the most likely change and build the chain from symptom to cause (Ingress → Service with 0 ready pods → failing pods → the change). Covers the app's own changes (image, config, scale) and the ConfigMaps, Secrets and volumes it uses.
-- [ ] Honest answers: causes are labelled **likely**, come with their evidence (*"api-config edited 2m before the first crash; no other changes to api"*), and list other recent changes as alternatives.
+- [x] Causality engine: when a workload breaks, find the most likely change and build the chain from symptom to cause (Ingress → Service with 0 ready pods → failing pods → the change). Covers the app's own changes (image, config, scale) and the ConfigMaps, Secrets and volumes it uses.
+- [x] Honest answers: causes are labelled **likely**, come with their evidence (*"api-config edited 2m before the first crash; no other changes to api"*), and list other recent changes as alternatives.
 - [ ] Incident cards: *"api is down since 14:02 · likely caused by an edit to api-config by kubectl"*, with the chain highlighted on the map and a plain-English explanation.
 
 ### Terminal
-- [ ] `kubexray why <kind>/<name>`: prints the incident chain, the likely cause, who made it, and the command to fix it.
-- [ ] `kubexray changes --since 1h`: every change in the window, newest first, with who made it.
+- [x] `kubexray why <kind>/<name>`: prints the incident chain, the likely cause, who made it, and the command to fix it.
+- [x] `kubexray changes --since 1h`: every change in the window, newest first, with who made it.
 
 ### Web UI
 - [ ] Secure local server: listens on 127.0.0.1 only, one-time session token, strict Origin and Host checks ([threat model](docs/threat-model.md)).

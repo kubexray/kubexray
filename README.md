@@ -9,7 +9,7 @@
 
 See what changed. See what broke. Share what happened.
 
-> **Status:** early development. The cluster recorder works today (`kubexray --dump`); the UI, rewind and incident detection are in progress. See the [roadmap](ROADMAP.md).
+> **Status:** early development. `kubexray why` and `kubexray changes` work today; the web UI and rewind are in progress. See the [roadmap](ROADMAP.md).
 
 ## Why
 
@@ -36,11 +36,30 @@ Dashboards tell you a pod is crashing. During an incident you need to know more:
 
 ## Try it
 
-Requires Go and access to a cluster. Make sure your kubeconfig points where you expect; kubexray logs the context and API server before connecting.
+Requires Go and access to a cluster. kubexray uses your kubeconfig like kubectl does, prints which cluster it's reading before it connects, and only reads.
 
 ```sh
 make build
-./bin/kubexray --dump --context <your-context>   # streams the cluster graph as JSON lines
+./bin/kubexray why deploy/checkout -n shop
+```
+
+```text
+checkout (Deployment, shop) is degraded: 2 of 3 pods ready, since 00:10:47 (50s ago)
+  impact            Service checkout → 2 of 3 pods ready
+  symptom           1 pod CrashLoopBackOff
+  likely cause      ConfigMap checkout-config was edited by kubectl patch at 00:09:47 (1m ago)
+  evidence          1 pod started after the edit is failing
+                    2 pods started before it are healthy
+                    no other changes to checkout or what it uses in the 30 minutes before
+  next              kubectl -n shop logs checkout-5d6d48b89-4cpfx --previous   # why the last attempt failed
+                    kubectl -n shop rollout restart deployment/checkout        # after fixing checkout-config
+```
+
+Other commands:
+
+```sh
+./bin/kubexray changes -n shop --since 1h   # recent changes and who made them
+./bin/kubexray dump                         # the live cluster graph as JSON lines
 ```
 
 ## Documentation
