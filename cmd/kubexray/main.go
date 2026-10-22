@@ -2,8 +2,8 @@
 package main
 
 import (
+	"bufio"
 	"context"
-	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -21,6 +21,7 @@ import (
 
 	"github.com/kubexray/kubexray/internal/cluster"
 	"github.com/kubexray/kubexray/internal/graph"
+	"github.com/kubexray/kubexray/internal/recorder"
 	"github.com/kubexray/kubexray/internal/version"
 )
 
@@ -39,6 +40,8 @@ func run() error {
 	kubeconfig := flag.String("kubeconfig", "", "path to kubeconfig (default: $KUBECONFIG or ~/.kube/config)")
 	kubeContext := flag.String("context", "", "kubeconfig context to use (default: current context)")
 	dump := flag.Bool("dump", false, "stream the cluster graph to stdout as NDJSON: a snapshot, then deltas")
+	history := flag.Duration("history", recorder.DefaultOptions.Window, "how far back to keep history for rewind")
+	historyMB := flag.Int("history-max-mb", recorder.DefaultOptions.MaxBytes>>20, "memory budget for history, in MiB")
 	flag.Parse()
 
 	if *showVersion {
@@ -76,7 +79,28 @@ func run() error {
 		}
 		return err
 	}
-	return dumpGraph(ctx, g, os.Stdout, flushInterval)
+
+	rec := recorder.New(recorder.Options{
+		Window:        *history,
+		MaxBytes:      *historyMB << 20,
+		KeyframeEvery: recorder.DefaultOptions.KeyframeEvery,
+	})
+	return recorder.Pump(ctx, g, rec, flushInterval, ndjson(os.Stdout))
+}
+
+// ndjson writes each message as one line, flushing so a reader sees changes
+// as they happen.
+func ndjson(w io.Writer) recorder.Emit {
+	bw := bufio.NewWriter(w)
+	return func(_ graph.Message, raw []byte) error {
+		if _, err := bw.Write(raw); err != nil {
+			return err
+		}
+		if err := bw.WriteByte('\n'); err != nil {
+			return err
+		}
+		return bw.Flush()
+	}
 }
 
 // loadConfig resolves the kubeconfig the way kubectl does and returns the
@@ -98,29 +122,4 @@ func loadConfig(path, contextName string) (*rest.Config, string, error) {
 		return nil, "", fmt.Errorf("loading kubeconfig: %w", err)
 	}
 	return cfg, contextName, nil
-}
-
-// dumpGraph writes a snapshot of the synced graph, then one delta per
-// interval with changes, until ctx is cancelled.
-func dumpGraph(ctx context.Context, g *graph.Graph, w io.Writer, interval time.Duration) error {
-	enc := json.NewEncoder(w)
-	g.Flush() // fold the initial sync into the snapshot
-	if err := enc.Encode(g.Snapshot()); err != nil {
-		return err
-	}
-
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		case <-ticker.C:
-			if msg, ok := g.Flush(); ok {
-				if err := enc.Encode(msg); err != nil {
-					return err
-				}
-			}
-		}
-	}
 }
