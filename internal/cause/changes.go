@@ -47,7 +47,7 @@ func Changes(st *graph.State, since time.Time, includeControllers bool) []Change
 			summary += fmt.Sprintf(": resources %s → %s", from, to)
 		}
 		by := n.Change
-		if by != nil && by.At.Sub(cur.Created).Abs() > 10*time.Second {
+		if by != nil && by.At.Sub(cur.Created).Abs() > attributionSlack {
 			by = nil // a later write (a scale, say) isn't who rolled this out
 		}
 		out = append(out, Change{At: cur.Created, Object: n.ID, Kind: n.Kind, Name: n.Name, NS: n.Namespace, By: by, Origin: n.Origin, Summary: summary})
@@ -61,7 +61,7 @@ func Changes(st *graph.State, since time.Time, includeControllers bool) []Change
 		if c.Tool == "controller" && !includeControllers {
 			continue
 		}
-		if t, ok := rolledOut[n.ID]; ok && c.At.Sub(t).Abs() <= 10*time.Second {
+		if t, ok := rolledOut[n.ID]; ok && c.At.Sub(t).Abs() <= attributionSlack {
 			continue // already listed as the rollout
 		}
 		summary := "changed"

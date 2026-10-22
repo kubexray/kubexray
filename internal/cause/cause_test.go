@@ -418,3 +418,162 @@ func TestConfidenceText(t *testing.T) {
 		}
 	}
 }
+
+// Review regressions.
+
+func TestRecoveredPodIsHealthy(t *testing.T) {
+	t.Parallel()
+	c := newCluster()
+	d := c.deployment("1", "shop/api:3", 1, 1, nil)
+	rs := c.replicaSet(d.ID, "api-1", mins(-60*24*7), spec("1", "shop/api:3"))
+	// Crashed once a week ago; the mapper keeps "Error" as its reason.
+	c.pod(rs.ID, "api-1-a", mins(-60*24*7), true, "Error", mins(-60*24*6))
+	p := c.st.Nodes["Pod/shop/api-1-a"]
+	p.Status.Restarts = 1
+	c.add(p)
+
+	if incs := Analyze(c.st, DefaultOptions(mins(0))); len(incs) != 0 {
+		t.Errorf("a recovered pod made a healthy app an incident: %+v", incs)
+	}
+}
+
+func TestFinishedPodsDontCount(t *testing.T) {
+	t.Parallel()
+	c := newCluster()
+	// A completed Job.
+	job := c.add(graph.Node{ID: "Job/shop/backup", Kind: "Job", Namespace: "shop", Name: "backup", Status: graph.Status{Phase: "Complete", Ready: true}})
+	c.pod(job.ID, "backup-x", mins(-10), false, "Completed", mins(-9))
+	done := c.st.Nodes["Pod/shop/backup-x"]
+	done.Status.Phase = "Succeeded"
+	c.add(done)
+	// A Deployment with a leftover evicted pod and its healthy replacement.
+	d := c.deployment("1", "shop/api:3", 1, 1, nil)
+	rs := c.replicaSet(d.ID, "api-1", mins(-60), spec("1", "shop/api:3"))
+	c.pod(rs.ID, "api-1-evicted", mins(-60), false, "Evicted", mins(-5))
+	ev := c.st.Nodes["Pod/shop/api-1-evicted"]
+	ev.Status.Phase = "Failed"
+	c.add(ev)
+	c.pod(rs.ID, "api-1-new", mins(-5), true, "", mins(-5))
+
+	if incs := Analyze(c.st, DefaultOptions(mins(0))); len(incs) != 0 {
+		t.Errorf("finished pods made incidents: %+v", incs)
+	}
+}
+
+func TestFailedJobIsAnIncident(t *testing.T) {
+	t.Parallel()
+	c := newCluster()
+	job := c.add(graph.Node{ID: "Job/shop/migrate", Kind: "Job", Namespace: "shop", Name: "migrate", Status: graph.Status{Phase: "Failed", Reason: "BackoffLimitExceeded"}})
+	c.pod(job.ID, "migrate-x", mins(-5), false, "Error", mins(-4))
+	failed := c.st.Nodes["Pod/shop/migrate-x"]
+	failed.Status.Phase = "Failed"
+	c.add(failed)
+	c.add(graph.Node{ID: "Secret/shop/db", Kind: "Secret", Namespace: "shop", Name: "db", Change: by("kubectl-edit", "kubectl", "edit", mins(-6))})
+	c.edge(graph.EdgeMounts, "Pod/shop/migrate-x", "Secret/shop/db")
+
+	inc := analyze(t, c, mins(0))
+	if inc.Symptom.Summary != "1 pod Error" {
+		t.Errorf("symptom = %+v", inc.Symptom)
+	}
+	if hasStep(inc.Next, "rollout restart") {
+		t.Errorf("next = %+v; Jobs don't support rollout restart", inc.Next)
+	}
+}
+
+func TestExplainReplicaSetResolvesToItsDeployment(t *testing.T) {
+	t.Parallel()
+	inc, err := Explain(badImage(nil).st, "ReplicaSet/shop/api-2", DefaultOptions(mins(4)))
+	if err != nil || inc.App != "Deployment/shop/api" || len(inc.Causes) == 0 {
+		t.Errorf("Explain(rs) = %+v, %v", inc, err)
+	}
+}
+
+func TestLaterScaleDoesntMakeAnOldRolloutFresh(t *testing.T) {
+	t.Parallel()
+	c := newCluster()
+	d := c.deployment("2", "nginx:1.72", 5, 3, by("kubectl-edit", "kubectl", "edit", mins(-5))) // a scale
+	c.replicaSet(d.ID, "api-1", mins(-300), spec("1", "nginx:1.27"))
+	rs := c.replicaSet(d.ID, "api-2", mins(-180), spec("2", "nginx:1.72"))
+	c.pod(rs.ID, "api-2-a", mins(-180), true, "", mins(-180))
+	c.pod(rs.ID, "api-2-b", mins(-4), false, "CrashLoopBackOff", mins(-3.5))
+
+	for _, cs := range analyze(t, c, mins(0)).Causes {
+		if cs.Kind == KindImage {
+			t.Errorf("a 3-hour-old rollout was blamed: %+v", cs)
+		}
+	}
+}
+
+func TestCordonedNodeIsNotACause(t *testing.T) {
+	t.Parallel()
+	c := badImage(nil)
+	c.add(graph.Node{ID: "Node/worker-1", Kind: "Node", Name: "worker-1", Status: graph.Status{Ready: true, Reason: "SchedulingDisabled", Since: mins(2)}})
+	for _, cs := range analyze(t, c, mins(4)).Causes {
+		if cs.Kind == KindNode {
+			t.Errorf("cordoned node blamed: %+v", cs)
+		}
+	}
+}
+
+func TestCrashLoopStartIsWhenThePodStarted(t *testing.T) {
+	t.Parallel()
+	c := newCluster()
+	d := c.deployment("2", "shop/api:4", 1, 0, by("kubectl-set", "kubectl", "set", mins(0)))
+	c.replicaSet(d.ID, "api-1", mins(-300), spec("1", "shop/api:3"))
+	rs := c.replicaSet(d.ID, "api-2", mins(0), spec("2", "shop/api:4"))
+	// An hour of crash-looping: Ready flipped on every restart.
+	c.pod(rs.ID, "api-2-a", mins(0), false, "CrashLoopBackOff", mins(57))
+	p := c.st.Nodes["Pod/shop/api-2-a"]
+	p.Status.Restarts = 14
+	c.add(p)
+
+	inc := analyze(t, c, mins(60))
+	if !inc.Since.Equal(mins(0)) {
+		t.Errorf("since = %v, want when the pod started", inc.Since)
+	}
+	assertTop(t, inc, KindImage, Possible)
+}
+
+func TestMissingOptionalReferenceWithRunningPodsIsOnlyPossible(t *testing.T) {
+	t.Parallel()
+	c := newCluster()
+	d := c.deployment("1", "shop/api:3", 1, 0, nil)
+	rs := c.replicaSet(d.ID, "api-1", mins(-5), spec("1", "shop/api:3"))
+	c.pod(rs.ID, "api-1-a", mins(-5), false, "", mins(-4)) // running, readiness failing
+	c.edge(graph.EdgeMounts, "Pod/shop/api-1-a", "ConfigMap/shop/optional-flags")
+
+	top := assertTop(t, analyze(t, c, mins(0)), KindMissing, Possible)
+	if len(top.Evidence) > 1 {
+		t.Errorf("evidence = %v; pods that started weren't stopped by it", top.Evidence)
+	}
+}
+
+func TestTiesGoToTheChangeClosestToTheStart(t *testing.T) {
+	t.Parallel()
+	c := newCluster()
+	d := c.deployment("1", "shop/api:3", 1, 0, nil)
+	rs := c.replicaSet(d.ID, "api-1", mins(-600), spec("1", "shop/api:3"))
+	c.pod(rs.ID, "api-1-a", mins(-600), false, "CrashLoopBackOff", mins(0))
+	for name, at := range map[string]time.Time{"before": mins(0).Add(-3 * time.Second), "after": mins(0).Add(9 * time.Second)} {
+		id := "ConfigMap/shop/" + name
+		c.add(graph.Node{ID: id, Kind: "ConfigMap", Namespace: "shop", Name: name, Change: by("kubectl-patch", "kubectl", "patch", at)})
+		c.edge(graph.EdgeMounts, "Pod/shop/api-1-a", id)
+	}
+	if top := assertTop(t, analyze(t, c, mins(2)), KindConfig, Possible); top.Object != "ConfigMap/shop/before" {
+		t.Errorf("top = %s; the edit 3s before the start is closer than the one 9s after", top.Object)
+	}
+}
+
+func TestNoCauseMessageUsesTheLookback(t *testing.T) {
+	t.Parallel()
+	c := newCluster()
+	d := c.deployment("1", "shop/api:3", 1, 0, nil)
+	rs := c.replicaSet(d.ID, "api-1", mins(-600), spec("1", "shop/api:3"))
+	c.pod(rs.ID, "api-1-a", mins(-600), false, "CrashLoopBackOff", mins(0))
+	opts := DefaultOptions(mins(2))
+	opts.Lookback = 2 * time.Hour
+	inc, _ := Explain(c.st, "Deployment/shop/api", opts)
+	if inc.NoCause != "nothing about api or what it uses changed in the 2 hours before it broke" {
+		t.Errorf("NoCause = %q", inc.NoCause)
+	}
+}

@@ -7,6 +7,7 @@ package cause
 import (
 	"cmp"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 	"time"
@@ -94,8 +95,9 @@ type Incident struct {
 	Healthy   bool      `json:"healthy"`
 	Since     time.Time `json:"since,omitzero"`
 	Symptom   Symptom   `json:"symptom"`
-	Impact    []string  `json:"impact,omitempty"` // e.g. "Ingress web → Service api → 0 of 3 pods ready"
-	Causes    []Cause   `json:"causes,omitempty"` // best first; empty when nothing qualifies
+	Impact    []string  `json:"impact,omitempty"`  // e.g. "Ingress web → Service api → 0 of 3 pods ready"
+	Causes    []Cause   `json:"causes,omitempty"`  // best first; empty when nothing qualifies
+	NoCause   string    `json:"noCause,omitempty"` // said when Causes is empty
 	Next      []Step    `json:"next,omitempty"`
 	// LastChange is the app's most recent change, for context when it's healthy.
 	LastChange *graph.Change `json:"lastChange,omitempty"`
@@ -146,14 +148,11 @@ func Explain(st *graph.State, id string, opts Options) (Incident, error) {
 		return Incident{}, fmt.Errorf("%s not found", id)
 	}
 	x := newIndex(st)
-	switch {
-	case n.Kind == "Pod":
-		return x.explain(st.Nodes[x.appOf(id)], opts), nil
-	case appKinds[n.Kind]:
-		return x.explain(n, opts), nil
-	default:
+	if n.Kind != "Pod" && !appKinds[n.Kind] {
 		return Incident{}, ErrNotAnApp
 	}
+	// Explain pods and ReplicaSets through the app that runs them.
+	return x.explain(st.Nodes[x.appOf(id)], opts), nil
 }
 
 var appKinds = map[string]bool{"Deployment": true, "StatefulSet": true, "DaemonSet": true, "Job": true, "ReplicaSet": true}
@@ -168,15 +167,27 @@ var failingReasons = map[string]bool{
 
 var pullReasons = map[string]bool{"ImagePullBackOff": true, "ErrImagePull": true, "InvalidImageName": true}
 
-func failing(p graph.Node) bool {
-	r := p.Status.Reason
-	return failingReasons[r] || strings.HasPrefix(r, "Init:") || p.Status.Phase == "Failed"
-}
-
 func terminating(p graph.Node) bool { return p.Status.Reason == "Terminating" }
 
-// bad is a pod that counts against the app: failing, or not ready.
-func bad(p graph.Node) bool { return !terminating(p) && (failing(p) || !p.Status.Ready) }
+// bad is a pod that counts against its app: not ready. A ready pod is fine
+// even when its reason still names an old crash (the mapper keeps the last
+// termination reason of recovered pods, e.g. OOMKilled).
+func bad(p graph.Node) bool { return !p.Status.Ready }
+
+// active reports whether a pod is part of the app's current state. Finished
+// pods aren't: succeeded pods, pods shutting down, and failed or evicted pods
+// that a controller has already replaced. For Jobs and standalone pods a
+// failed pod is the outcome itself, so it stays.
+func active(app graph.Node, p graph.Node) bool {
+	switch {
+	case terminating(p), p.Status.Phase == "Succeeded":
+		return false
+	case p.Status.Phase == "Failed":
+		return app.Kind == "Job" || app.Kind == "Pod"
+	default:
+		return true
+	}
+}
 
 // index answers questions about the graph's structure.
 type index struct {
@@ -264,10 +275,10 @@ func (x *index) deps(pods []graph.Node) []string {
 
 // explain builds the incident for one app.
 func (x *index) explain(app graph.Node, opts Options) Incident {
-	pods := slices.DeleteFunc(slices.Clone(x.podsOf[app.ID]), terminating)
+	pods := slices.DeleteFunc(slices.Clone(x.podsOf[app.ID]), func(p graph.Node) bool { return !active(app, p) })
 	inc := Incident{App: app.ID, Kind: app.Kind, Namespace: app.Namespace, Name: app.Name, LastChange: app.Change}
 	inc.Symptom = symptom(app, pods)
-	if len(inc.Symptom.BadPods) == 0 && inc.Symptom.Ready >= inc.Symptom.Desired {
+	if (len(inc.Symptom.BadPods) == 0 && inc.Symptom.Ready >= inc.Symptom.Desired) || (app.Kind == "Job" && app.Status.Phase == "Complete") {
 		inc.Healthy = true
 		return inc
 	}
@@ -276,6 +287,9 @@ func (x *index) explain(app graph.Node, opts Options) Incident {
 
 	a := &analysis{x: x, app: app, pods: pods, inc: &inc, opts: opts}
 	inc.Causes = a.causes()
+	if len(inc.Causes) == 0 {
+		inc.NoCause = fmt.Sprintf("nothing about %s or what it uses changed in the %s before it broke", app.Name, duration(opts.Lookback))
+	}
 	inc.Next = nextSteps(inc, app)
 	return inc
 }
@@ -302,7 +316,7 @@ func symptom(app graph.Node, pods []graph.Node) Symptom {
 	// The most common reason, preferring real failures over "starting", then
 	// by name so the choice is stable.
 	best := ""
-	for _, r := range slices.Sorted(mapKeys(reasons)) {
+	for _, r := range slices.Sorted(maps.Keys(reasons)) {
 		if reasons[best] == 0 || reasons[r] > reasons[best] ||
 			(reasons[r] == reasons[best] && failingReasons[r] && !failingReasons[best]) {
 			best = r
@@ -320,23 +334,35 @@ func symptom(app graph.Node, pods []graph.Node) Symptom {
 	return s
 }
 
+// crashLoopSpan bounds how long a crash-looping pod is assumed to have been
+// failing since it was created.
+const crashLoopSpan = 6 * time.Hour
+
 // since is when the app's trouble started: the earliest moment one of its bad
 // pods went bad.
 func since(pods []graph.Node) time.Time {
 	var t time.Time
 	for _, p := range pods {
-		if !bad(p) {
-			continue
-		}
-		at := p.Status.Since
-		if at.IsZero() {
-			at = p.Created
-		}
-		if !at.IsZero() && (t.IsZero() || at.Before(t)) {
-			t = at
+		if bad(p) {
+			if at := wentBad(p); !at.IsZero() && (t.IsZero() || at.Before(t)) {
+				t = at
+			}
 		}
 	}
 	return t
+}
+
+// wentBad estimates when a pod went bad. Its Ready condition's transition time
+// is right for a pod that broke once, but a crash-looping pod flips Ready on
+// every restart, so that time keeps moving. A crash-looping pod created
+// shortly before is assumed to have been failing since it started, which is
+// the common case: a bad rollout or config picked up by new pods.
+func wentBad(p graph.Node) time.Time {
+	s := p.Status.Since
+	if s.IsZero() || (p.Status.Restarts > 0 && !p.Created.IsZero() && s.Sub(p.Created) <= crashLoopSpan) {
+		return p.Created
+	}
+	return s
 }
 
 // impact describes the path users take to reach the app: Ingress → Service →
@@ -351,7 +377,7 @@ func (x *index) impact(pods []graph.Node, s Symptom) []string {
 		}
 	}
 	lines := make([]string, 0, len(services))
-	for _, svc := range slices.Sorted(mapKeys(services)) {
+	for _, svc := range slices.Sorted(maps.Keys(services)) {
 		hops := []string{}
 		for _, e := range x.in[svc] {
 			if e.Type == graph.EdgeRoutes {
@@ -366,16 +392,6 @@ func (x *index) impact(pods []graph.Node, s Symptom) []string {
 		lines = append(lines, fmt.Sprintf("%sService %s → %d of %d pods ready", path, x.st.Nodes[svc].Name, s.Ready, s.Desired))
 	}
 	return lines
-}
-
-func mapKeys[V any](m map[string]V) func(func(string) bool) {
-	return func(yield func(string) bool) {
-		for k := range m {
-			if !yield(k) {
-				return
-			}
-		}
-	}
 }
 
 func plural(n int, word string) string {

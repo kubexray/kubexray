@@ -85,8 +85,9 @@ func TestWhyNoCause(t *testing.T) {
 	_ = Why(&out, cause.Incident{
 		Kind: "Deployment", Namespace: "shop", Name: "api",
 		Symptom: cause.Symptom{Summary: "1 pod CrashLoopBackOff", Ready: 1, Desired: 2, BadPods: []string{"x"}},
+		NoCause: "nothing about api or what it uses changed in the 30 minutes before it broke",
 	}, now)
-	for _, want := range []string{"is degraded", "none found", "outside the cluster"} {
+	for _, want := range []string{"is degraded", "none found: nothing about api", "outside the cluster"} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("output lacks %q:\n%s", want, out.String())
 		}

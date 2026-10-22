@@ -3,6 +3,7 @@ package cause
 import (
 	"cmp"
 	"fmt"
+	"maps"
 	"slices"
 	"strconv"
 	"strings"
@@ -38,8 +39,9 @@ func (a *analysis) inWindow(t time.Time) bool {
 func (a *analysis) causes() []Cause {
 	cs := slices.Concat(a.rollout(), a.appChange(), a.dependencies(), a.nodes())
 
+	start := a.inc.Since
 	slices.SortStableFunc(cs, func(p, q Cause) int {
-		return cmp.Or(cmp.Compare(q.Confidence, p.Confidence), q.At.Compare(p.At))
+		return cmp.Or(cmp.Compare(q.Confidence, p.Confidence), cmp.Compare(start.Sub(p.At).Abs(), start.Sub(q.At).Abs()))
 	})
 	if len(cs) == 1 {
 		cs[0].Evidence = append(cs[0].Evidence, fmt.Sprintf("no other changes to %s or what it uses in the %s before", a.app.Name, duration(a.opts.Lookback)))
@@ -121,17 +123,18 @@ func (a *analysis) rollout() []Cause {
 		return nil
 	}
 	at := cur.Created
-	// A rollback reuses an old ReplicaSet; its creation time is old, so the
-	// Deployment's own change time is when the rollout happened.
-	if c := a.app.Change; c != nil && c.At.After(at) && !a.inWindow(at) {
+	// A rollback makes an older ReplicaSet current again, so its creation time
+	// says nothing about when the rollout happened; the Deployment's own last
+	// write does. Any other later write (a scale, a label) isn't a rollout.
+	if c := a.app.Change; cur.Created.Before(prev.Created) && c != nil && c.At.After(at) {
 		at = c.At
 	}
 	if !a.inWindow(at) {
 		return nil
 	}
 	by := a.app.Change
-	if by != nil && by.At.Before(at.Add(-a.opts.Skew)) {
-		by = nil // the Deployment's last write predates this rollout
+	if by != nil && by.At.Sub(at).Abs() > attributionSlack {
+		by = nil // the Deployment's last write wasn't this rollout
 	}
 	revs := fmt.Sprintf("revision %s → %s", prev.Spec.Revision, cur.Spec.Revision)
 	base := Cause{Object: a.app.ID, At: at, By: by, Origin: a.app.Origin}
@@ -188,8 +191,8 @@ func (a *analysis) rollout() []Cause {
 	return out
 }
 
-// restartedFromOOM counts pods that recovered after being OOMKilled; their
-// reason reads OOMKilled while they're running again.
+// restartedFromOOM counts pods that recovered after being OOMKilled; they're
+// ready again, and their reason still reads OOMKilled.
 func (a *analysis) restartedFromOOM() int {
 	n := 0
 	for _, p := range a.pods {
@@ -308,7 +311,10 @@ func (a *analysis) dependencies() []Cause {
 				Kind: KindMissing, Object: id, At: a.inc.Since, Confidence: Possible,
 				Summary: fmt.Sprintf("%s %s doesn't exist, but the pods use it", kind, name),
 			}
-			stuck := configErrors + a.badWith(func(r string) bool { return r == "ContainerCreating" || r == "" })
+			// Pods that can't start without it: config errors, or stuck creating
+			// (a missing volume). Running pods that aren't ready are a different
+			// problem, and an optional reference may legitimately be missing.
+			stuck := configErrors + a.badWith(func(r string) bool { return r == "ContainerCreating" })
 			if stuck > 0 {
 				c.Confidence = VeryLikely
 				c.Evidence = []string{fmt.Sprintf("%s can't start without it", plural(stuck, "pod"))}
@@ -348,16 +354,15 @@ func (a *analysis) nodes() []Cause {
 		}
 	}
 	var out []Cause
-	for _, id := range slices.Sorted(mapKeys(seen)) {
+	for _, id := range slices.Sorted(maps.Keys(seen)) {
+		// Only NotReady counts: a cordoned node stops new pods from being
+		// scheduled there, but doesn't affect pods already running.
 		n, ok := a.x.st.Nodes[id]
-		if !ok || (n.Status.Ready && n.Status.Reason == "") {
+		if !ok || n.Status.Ready {
 			continue
 		}
 		state := "is not ready"
-		if n.Status.Ready {
-			state = "is cordoned"
-		}
-		if n.Status.Reason != "" && !n.Status.Ready {
+		if n.Status.Reason != "" {
 			state += " (" + n.Status.Reason + ")"
 		}
 		at := n.Status.Since
@@ -404,8 +409,10 @@ func nextSteps(inc Incident, app graph.Node) []Step {
 	case KindImage, KindResources, KindTemplate:
 		steps = append(steps, rollback(top, ns, app.Name))
 	case KindConfig:
-		_, name := kindName(top.Object)
-		steps = append(steps, Step{Command: fmt.Sprintf("kubectl -n %s rollout restart %s", ns, workload), Note: "after fixing " + name})
+		if rollable[app.Kind] {
+			_, name := kindName(top.Object)
+			steps = append(steps, Step{Command: fmt.Sprintf("kubectl -n %s rollout restart %s", ns, workload), Note: "after fixing " + name})
+		}
 	case KindMissing:
 		kind, name := kindName(top.Object)
 		steps = append(steps, Step{Command: fmt.Sprintf("kubectl -n %s get %s %s", ns, strings.ToLower(kind), name), Note: "create it, or remove the reference"})
@@ -416,6 +423,13 @@ func nextSteps(inc Incident, app graph.Node) []Step {
 	}
 	return steps
 }
+
+// rollable kinds support kubectl rollout restart and undo.
+var rollable = map[string]bool{"Deployment": true, "StatefulSet": true, "DaemonSet": true}
+
+// attributionSlack is how close a write must be to a rollout to be credited
+// with it. Shared with Changes so both report the same author.
+const attributionSlack = 10 * time.Second
 
 func rollback(c Cause, ns, name string) Step {
 	if o := c.Origin; o != nil {

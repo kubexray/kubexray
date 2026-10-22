@@ -63,7 +63,7 @@ func Why(w io.Writer, inc cause.Incident, now time.Time) error {
 	p.row("symptom", "%s", inc.Symptom.Summary)
 
 	if len(inc.Causes) == 0 {
-		p.row("cause", "none found: nothing about %s or what it uses changed in the last 30 minutes.", inc.Name)
+		p.row("cause", "none found: %s.", inc.NoCause)
 		p.row("", "The cause may be outside the cluster: a dependency, the network, or traffic.")
 	} else {
 		top := inc.Causes[0]
