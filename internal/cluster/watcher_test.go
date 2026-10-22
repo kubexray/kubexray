@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"maps"
+	"reflect"
 	"slices"
 	"testing"
 	"time"
@@ -255,22 +256,45 @@ func TestOwnerReferenceChangeReplacesEdges(t *testing.T) {
 
 func TestStripObject(t *testing.T) {
 	t.Parallel()
+	at := metav1.NewTime(time.Date(2026, 10, 22, 20, 27, 43, 0, time.UTC))
 	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{
-		Name:          "p",
-		Labels:        map[string]string{"app": "api"},
-		Annotations:   map[string]string{"kubectl.kubernetes.io/last-applied-configuration": `{"kind":"Secret","data":{"password":"aHVudGVyMg=="}}`},
-		ManagedFields: []metav1.ManagedFieldsEntry{{Manager: "kubectl"}},
+		Name:   "p",
+		Labels: map[string]string{"app": "api"},
+		Annotations: map[string]string{
+			"kubectl.kubernetes.io/last-applied-configuration": `{"kind":"Secret","data":{"password":"aHVudGVyMg=="}}`,
+			"deployment.kubernetes.io/revision":                "14",
+			"meta.helm.sh/release-name":                        "shop",
+			"example.com/notes":                                "anything",
+		},
+		ManagedFields: []metav1.ManagedFieldsEntry{{
+			Manager: "kubectl-patch", Operation: metav1.ManagedFieldsOperationUpdate, Time: &at,
+			FieldsType: "FieldsV1", FieldsV1: metav1.NewFieldsV1(`{"f:data":{"f:password":{}}}`),
+		}},
 	}}
 	out, err := stripObject(pod)
 	if err != nil {
 		t.Fatal(err)
 	}
 	got := out.(*corev1.Pod)
-	if got.Annotations != nil || got.ManagedFields != nil {
-		t.Errorf("annotations/managed fields not stripped: %+v", got.ObjectMeta)
+
+	wantAnnotations := map[string]string{"deployment.kubernetes.io/revision": "14", "meta.helm.sh/release-name": "shop"}
+	if !maps.Equal(got.Annotations, wantAnnotations) {
+		t.Errorf("annotations = %v, want only the allow-list %v", got.Annotations, wantAnnotations)
+	}
+	want := metav1.ManagedFieldsEntry{Manager: "kubectl-patch", Operation: metav1.ManagedFieldsOperationUpdate, Time: &at}
+	if len(got.ManagedFields) != 1 || !reflect.DeepEqual(got.ManagedFields[0], want) {
+		t.Errorf("managed fields = %+v, want only manager, operation, subresource and time", got.ManagedFields)
 	}
 	if got.Labels["app"] != "api" {
 		t.Error("labels must be kept")
+	}
+}
+
+func TestStripObjectWithoutAllowListedAnnotations(t *testing.T) {
+	t.Parallel()
+	out, _ := stripObject(&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Annotations: map[string]string{"a": "b"}}})
+	if a := out.(*corev1.Pod).Annotations; a != nil {
+		t.Errorf("annotations = %v, want nil", a)
 	}
 }
 

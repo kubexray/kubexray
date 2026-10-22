@@ -9,6 +9,7 @@ package graph
 
 import (
 	"maps"
+	"slices"
 	"time"
 )
 
@@ -36,6 +37,46 @@ type Node struct {
 	Labels    map[string]string `json:"labels,omitempty"`
 	Status    Status            `json:"status"`
 	Created   time.Time         `json:"created"`
+	Spec      *Spec             `json:"spec,omitempty"`   // workloads and pods (ADR-0005)
+	Change    *Change           `json:"change,omitempty"` // latest non-status write
+	Origin    *Origin           `json:"origin,omitempty"` // Helm, Argo CD or Flux
+}
+
+// Spec is the allow-listed desired state of a workload or pod. Commands,
+// args and environment variables are deliberately absent.
+type Spec struct {
+	Generation int64       `json:"generation,omitempty"`
+	Revision   string      `json:"revision,omitempty"` // deployment.kubernetes.io/revision
+	Containers []Container `json:"containers,omitempty"`
+}
+
+// Container is one container of a pod or pod template.
+type Container struct {
+	Name     string    `json:"name"`
+	Image    string    `json:"image"`
+	Init     bool      `json:"init,omitempty"`
+	Requests Resources `json:"requests,omitzero"`
+	Limits   Resources `json:"limits,omitzero"`
+}
+
+// Resources holds CPU and memory quantities in Kubernetes notation.
+type Resources struct {
+	CPU    string `json:"cpu,omitempty"`
+	Memory string `json:"memory,omitempty"`
+}
+
+// Change attributes the most recent write to an object.
+type Change struct {
+	At   time.Time `json:"at"`
+	By   string    `json:"by"`   // field manager, e.g. "kubectl-patch"
+	Tool string    `json:"tool"` // kubectl, helm, argocd, flux, controller or other
+	Via  string    `json:"via,omitempty"`
+}
+
+// Origin is where an object is managed from.
+type Origin struct {
+	Tool string `json:"tool"` // helm, argocd or flux
+	Name string `json:"name,omitempty"`
 }
 
 // ID returns the node ID for an object (ADR-0004). Cluster-scoped objects
@@ -72,7 +113,27 @@ func (n Node) Equal(o Node) bool {
 		n.Parent == o.Parent &&
 		maps.Equal(n.Labels, o.Labels) &&
 		n.Status.Equal(o.Status) &&
-		n.Created.Equal(o.Created)
+		n.Created.Equal(o.Created) &&
+		equalPtr(n.Spec, o.Spec, Spec.Equal) &&
+		equalPtr(n.Change, o.Change, Change.Equal) &&
+		equalPtr(n.Origin, o.Origin, func(a, b Origin) bool { return a == b })
+}
+
+// Equal reports whether two specs are identical.
+func (s Spec) Equal(o Spec) bool {
+	return s.Generation == o.Generation && s.Revision == o.Revision && slices.Equal(s.Containers, o.Containers)
+}
+
+// Equal reports whether two changes are identical.
+func (c Change) Equal(o Change) bool {
+	return c.At.Equal(o.At) && c.By == o.By && c.Tool == o.Tool && c.Via == o.Via
+}
+
+func equalPtr[T any](a, b *T, eq func(T, T) bool) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return eq(*a, *b)
 }
 
 // clone returns a deep copy, so callers can't mutate stored state.
@@ -81,6 +142,19 @@ func (n Node) clone() Node {
 	if n.Status.Replicas != nil {
 		r := *n.Status.Replicas
 		n.Status.Replicas = &r
+	}
+	if n.Spec != nil {
+		s := *n.Spec
+		s.Containers = slices.Clone(s.Containers)
+		n.Spec = &s
+	}
+	if n.Change != nil {
+		c := *n.Change
+		n.Change = &c
+	}
+	if n.Origin != nil {
+		o := *n.Origin
+		n.Origin = &o
 	}
 	return n
 }

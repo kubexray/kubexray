@@ -1,9 +1,9 @@
 // Package cluster keeps a graph.Graph in sync with a Kubernetes cluster.
 //
 // It only reads: it lists and watches objects and never writes to the API.
-// ConfigMaps and Secrets are watched as metadata only, and annotations and
-// managed fields are stripped as objects arrive, so neither Secret contents
-// nor last-applied-configuration ever stay in memory.
+// ConfigMaps and Secrets are watched as metadata only, and objects are cut
+// down as they arrive (see stripObject), so neither Secret contents nor
+// last-applied-configuration ever stay in memory.
 package cluster
 
 import (
@@ -158,13 +158,32 @@ func handle[T metav1.Object](inf cache.SharedIndexInformer, upsert func(old, obj
 	})
 }
 
-// stripObject drops annotations (which may hold last-applied-configuration
-// with embedded Secrets) and managed fields (large, unused) before objects
-// are cached.
+// stripObject reduces objects to what kubexray may keep in memory before they
+// are cached (ADR-0005): annotations are cut down to a small allow-list, which
+// drops last-applied-configuration with any Secrets embedded in it, and
+// managed fields keep who wrote the object and when, without the field sets.
 func stripObject(obj any) (any, error) {
-	if m, ok := obj.(metav1.Object); ok {
-		m.SetAnnotations(nil)
-		m.SetManagedFields(nil)
+	m, ok := obj.(metav1.Object)
+	if !ok {
+		return obj, nil
+	}
+	var kept map[string]string
+	for _, k := range keptAnnotations {
+		if v, ok := m.GetAnnotations()[k]; ok {
+			if kept == nil {
+				kept = map[string]string{}
+			}
+			kept[k] = v
+		}
+	}
+	m.SetAnnotations(kept)
+
+	if fields := m.GetManagedFields(); len(fields) > 0 {
+		slim := make([]metav1.ManagedFieldsEntry, len(fields))
+		for i, e := range fields {
+			slim[i] = metav1.ManagedFieldsEntry{Manager: e.Manager, Operation: e.Operation, Subresource: e.Subresource, Time: e.Time}
+		}
+		m.SetManagedFields(slim)
 	}
 	return obj, nil
 }

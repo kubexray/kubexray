@@ -38,6 +38,8 @@ func baseNode(kind string, m metav1.Object) graph.Node {
 		Name:      m.GetName(),
 		Labels:    m.GetLabels(),
 		Created:   m.GetCreationTimestamp().Time,
+		Change:    lastChange(m),
+		Origin:    originOf(m),
 	}
 	if ns := m.GetNamespace(); ns != "" {
 		n.Parent = graph.ID(KindNamespace, "", ns)
@@ -90,6 +92,7 @@ func mapPod(pod *corev1.Pod) (graph.Node, []graph.Edge) {
 		n.Parent = graph.ID(KindNode, "", pod.Spec.NodeName)
 	}
 	n.Status = podStatus(pod)
+	n.Spec = podSpec(pod, &pod.Spec)
 
 	edges := ownerEdges(n.ID, pod)
 	for _, id := range podDependencies(pod) {
@@ -239,6 +242,7 @@ func replicas(desired *int32, ready, updated int32) graph.Status {
 func mapDeployment(d *appsv1.Deployment) (graph.Node, []graph.Edge) {
 	n := baseNode(KindDeployment, d)
 	n.Status = replicas(d.Spec.Replicas, d.Status.ReadyReplicas, d.Status.UpdatedReplicas)
+	n.Spec = podSpec(d, &d.Spec.Template.Spec)
 	for _, c := range d.Status.Conditions {
 		if c.Type == appsv1.DeploymentProgressing && c.Reason == "ProgressDeadlineExceeded" {
 			n.Status.Reason = c.Reason
@@ -251,12 +255,14 @@ func mapReplicaSet(rs *appsv1.ReplicaSet) (graph.Node, []graph.Edge) {
 	n := baseNode(KindReplicaSet, rs)
 	// A ReplicaSet has no rollout of its own, so all its pods count as updated.
 	n.Status = replicas(rs.Spec.Replicas, rs.Status.ReadyReplicas, rs.Status.Replicas)
+	n.Spec = podSpec(rs, &rs.Spec.Template.Spec)
 	return n, ownerEdges(n.ID, rs)
 }
 
 func mapStatefulSet(ss *appsv1.StatefulSet) (graph.Node, []graph.Edge) {
 	n := baseNode(KindStatefulSet, ss)
 	n.Status = replicas(ss.Spec.Replicas, ss.Status.ReadyReplicas, ss.Status.UpdatedReplicas)
+	n.Spec = podSpec(ss, &ss.Spec.Template.Spec)
 	return n, ownerEdges(n.ID, ss)
 }
 
@@ -264,11 +270,13 @@ func mapDaemonSet(ds *appsv1.DaemonSet) (graph.Node, []graph.Edge) {
 	n := baseNode(KindDaemonSet, ds)
 	desired := ds.Status.DesiredNumberScheduled
 	n.Status = replicas(&desired, ds.Status.NumberReady, ds.Status.UpdatedNumberScheduled)
+	n.Spec = podSpec(ds, &ds.Spec.Template.Spec)
 	return n, ownerEdges(n.ID, ds)
 }
 
 func mapJob(job *batchv1.Job) (graph.Node, []graph.Edge) {
 	n := baseNode(KindJob, job)
+	n.Spec = podSpec(job, &job.Spec.Template.Spec)
 	n.Status.Phase = "Running"
 	for _, c := range job.Status.Conditions {
 		if c.Status != corev1.ConditionTrue {
