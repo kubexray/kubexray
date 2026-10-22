@@ -9,7 +9,7 @@ Short documents capturing significant decisions, their context and consequences.
 | [0003](0003-graph-delta-schema.md) | Graph delta schema | Accepted |
 | [0004](0004-node-ids-from-names.md) | Node IDs from kind, namespace and name | Accepted |
 | [0005](0005-change-facts-and-attribution.md) | Change facts and attribution | Accepted |
-| [0006](0006-likely-cause-engine.md) | Likely-cause engine | Proposed |
+| [0006](0006-likely-cause-engine.md) | Likely-cause engine | Accepted |
 
 ## Template
 

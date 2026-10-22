@@ -1,6 +1,6 @@
 # 0006. Likely-cause engine
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-10-23
 
 ## Context
