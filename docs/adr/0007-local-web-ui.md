@@ -1,6 +1,6 @@
 # 0007. Local web UI: server, security and build
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-10-23
 
 ## Context
