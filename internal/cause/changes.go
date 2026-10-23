@@ -43,8 +43,10 @@ func Changes(st *graph.State, since time.Time, includeControllers bool) []Change
 		summary := fmt.Sprintf("rolled out revision %s", cur.Spec.Revision)
 		if from, to, ok := imageDiff(prev.Spec, cur.Spec); ok {
 			summary += fmt.Sprintf(": image %s → %s", from, to)
-		} else if from, to, _, ok := resourceDiff(prev.Spec, cur.Spec); ok {
+		} else if from, to, _, _, ok := resourceDiff(prev.Spec, cur.Spec); ok {
 			summary += fmt.Sprintf(": resources %s → %s", from, to)
+		} else if what, _, ok := probeDiff(prev.Spec, cur.Spec); ok {
+			summary += ": " + what
 		}
 		by := n.Change
 		if by != nil && by.At.Sub(cur.Created).Abs() > attributionSlack {

@@ -33,6 +33,7 @@ export const Possible: Confidence = "possible";
 export const KindImage = "image"; // a container image changed
 export const KindResources = "resources"; // CPU or memory requests or limits changed
 export const KindTemplate = "template"; // the pod template changed in a way the model doesn't record
+export const KindProbe = "probe"; // a health probe was added or removed
 export const KindRestart = "restart"; // pods were restarted without changing the template
 export const KindChange = "change"; // the app changed, details unknown
 export const KindConfig = "config"; // a ConfigMap or Secret the app uses was edited
@@ -41,7 +42,7 @@ export const KindNode = "node"; // a node running the app's pods is unhealthy
 /**
  * Kinds of causes.
  */
-export type Kind = typeof KindImage | typeof KindResources | typeof KindTemplate | typeof KindRestart | typeof KindChange | typeof KindConfig | typeof KindMissing | typeof KindNode;
+export type Kind = typeof KindImage | typeof KindResources | typeof KindTemplate | typeof KindProbe | typeof KindRestart | typeof KindChange | typeof KindConfig | typeof KindMissing | typeof KindNode;
 /**
  * Cause is one candidate explanation for an incident.
  */
@@ -89,6 +90,7 @@ export interface Incident {
   impact?: string[]; // e.g. "Ingress web → Service api → 0 of 3 pods ready"
   causes?: Cause[]; // best first; empty when nothing qualifies
   noCause?: string; // said when Causes is empty
+  diagnosis?: Diagnosis; // what Kubernetes says is wrong (ADR-0009)
   next?: Step[];
   /**
    * LastChange is the app's most recent change, for context when it's healthy.
@@ -124,6 +126,19 @@ export interface Change {
   by?: graph.Change;
   origin?: graph.Origin;
   summary: string;
+}
+
+//////////
+// source: diagnosis.go
+
+/**
+ * Diagnosis explains the symptom itself, in the terms Kubernetes reports it
+ * (ADR-0009): what is wrong, as opposed to what changed. Evidence lists the
+ * facts it's based on, so it can be checked with kubectl describe.
+ */
+export interface Diagnosis {
+  summary: string;
+  evidence?: string[];
 }
 
 //////////

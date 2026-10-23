@@ -73,6 +73,8 @@ func recording(t *testing.T) [][]byte {
 	g.RemoveEdge(graph.NewEdge(graph.EdgeMounts, "Pod/payments-prod/checkout-7d9f-a", cm.ID).ID)
 	p := pod("checkout-7d9f-c", 1, false, "CrashLoopBackOff")
 	p.Status.Restarts = 3
+	p.Status.Container, p.Status.Exit = "checkout", 1
+	p.Status.Message = "Back-off pulling registry.acme.internal on ip-10-0-3-17" // Kubernetes messages name things
 	g.UpsertNode(p)
 	g.UpsertEdge(graph.NewEdge(graph.EdgeOwns, dep.ID, p.ID))
 	g.UpsertEdge(graph.NewEdge(graph.EdgeMounts, p.ID, cm.ID))

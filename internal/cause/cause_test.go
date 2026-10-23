@@ -261,6 +261,148 @@ func TestLoweredMemoryLimitThenOOMIsVeryLikely(t *testing.T) {
 	}
 }
 
+func TestRolloutToAReusedReplicaSetIsDatedByItsPods(t *testing.T) {
+	t.Parallel()
+	// The limit was lowered once, put back, and lowered again: Kubernetes
+	// reuses the 128Mi ReplicaSet from the first time.
+	c := newCluster()
+	d := c.deployment("4", "shop/api:3", 1, 0, by("kubectl-set", "kubectl", "set", mins(0)))
+	c.replicaSet(d.ID, "api-1", mins(-30), spec("3", "shop/api:3", "512Mi"))
+	rs := c.replicaSet(d.ID, "api-2", mins(-20), spec("4", "shop/api:3", "128Mi"))
+	c.pod(rs.ID, "api-2-a", mins(0), false, "OOMKilled", mins(0.5))
+
+	top := assertTop(t, analyze(t, c, mins(3)), KindResources, VeryLikely)
+	if !top.At.Equal(mins(0)) || top.By == nil || top.By.By != "kubectl-set" {
+		t.Errorf("cause at %v by %+v, want the second rollout at %v", top.At, top.By, mins(0))
+	}
+
+	// A later write that didn't create the pods (a scale, a label) isn't the rollout.
+	c.pod(rs.ID, "api-2-a", mins(-20), false, "OOMKilled", mins(-19))
+	d.Change = by("kubectl-scale", "kubectl", "scale", mins(0))
+	c.add(d)
+	if inc := analyze(t, c, mins(3)); len(inc.Causes) > 0 && inc.Causes[0].At.Equal(mins(0)) {
+		t.Errorf("a scale dated the rollout: %+v", inc.Causes[0])
+	}
+}
+
+func TestScaleFromZeroDoesntDateAnOldRollout(t *testing.T) {
+	t.Parallel()
+	// The limit was lowered long ago, while scaled to zero. Scaling up now
+	// creates pods at the time of the write, but that write isn't a rollout.
+	c := newCluster()
+	d := c.deployment("2", "shop/api:3", 2, 0, by("kubectl-scale", "kubectl", "scale", mins(0)))
+	c.replicaSet(d.ID, "api-1", mins(-300), spec("1", "shop/api:3", "512Mi"))
+	rs := c.replicaSet(d.ID, "api-2", mins(-200), spec("2", "shop/api:3", "128Mi"))
+	c.pod(rs.ID, "api-2-a", mins(0), false, "OOMKilled", mins(0.5))
+	for _, cause := range analyze(t, c, mins(3)).Causes {
+		if cause.Kind == KindResources {
+			t.Errorf("a rollout from 200 minutes ago was reported: %+v", cause)
+		}
+	}
+}
+
+func TestNamesMatchesWholeObjects(t *testing.T) {
+	t.Parallel()
+	msg := "couldn't find key password in Secret shop/db-credentials"
+	if !names(msg, "Secret shop/db-credentials") || names(msg, "Secret shop/db") || names(msg, "Secret shop/db-cred") {
+		t.Error("names matched a prefix or missed the object")
+	}
+	if !names(`Secret shop/db-x and Secret shop/db.`, "Secret shop/db") {
+		t.Error("names missed a later exact match")
+	}
+}
+
+func TestProbeCauseCountsOnlyNewPods(t *testing.T) {
+	t.Parallel()
+	// The new pod with the probe is fine; an old pod isn't ready for its own reasons.
+	c := newCluster()
+	d := c.deployment("2", "nginx:1.27", 2, 1, by("kubectl-patch", "kubectl", "patch", mins(0)))
+	probed := spec("2", "nginx:1.27")
+	probed.Containers[0].Probes.Readiness = true
+	old := c.replicaSet(d.ID, "api-1", mins(-60), spec("1", "nginx:1.27"))
+	rs := c.replicaSet(d.ID, "api-2", mins(0), probed)
+	c.pod(old.ID, "api-1-a", mins(-60), false, "", mins(0.5))
+	c.pod(rs.ID, "api-2-a", mins(0), true, "", mins(0.2))
+	for _, cause := range analyze(t, c, mins(3)).Causes {
+		if cause.Kind == KindProbe && cause.Confidence == VeryLikely {
+			t.Errorf("probe blamed for an old pod: %+v", cause)
+		}
+	}
+}
+
+func TestRaisedRequestsThenUnschedulableIsVeryLikely(t *testing.T) {
+	t.Parallel()
+	c := newCluster()
+	d := c.deployment("2", "shop/api:3", 3, 3, by("kubectl-set", "kubectl", "set", mins(0)))
+	small, big := spec("1", "shop/api:3"), spec("2", "shop/api:3")
+	small.Containers[0].Requests.Memory, big.Containers[0].Requests.Memory = "64Mi", "64Gi"
+	old := c.replicaSet(d.ID, "api-1", mins(-60), small)
+	rs := c.replicaSet(d.ID, "api-2", mins(0), big)
+	c.pod(old.ID, "api-1-a", mins(-60), true, "", mins(-60))
+	c.pod(rs.ID, "api-2-a", mins(0), false, "Unschedulable", mins(0))
+	p := c.st.Nodes["Pod/shop/api-2-a"]
+	p.Status.Message = "0/3 nodes are available: 3 Insufficient memory."
+	c.add(p)
+
+	top := assertTop(t, analyze(t, c, mins(2)), KindResources, VeryLikely)
+	if !hasLine(top.Evidence, "requests raised and 1 pod can't be scheduled") {
+		t.Errorf("evidence = %v", top.Evidence)
+	}
+}
+
+func TestReadinessProbeAddedIsVeryLikely(t *testing.T) {
+	t.Parallel()
+	c := newCluster()
+	d := c.deployment("2", "nginx:1.27", 3, 3, by("kubectl-patch", "kubectl", "patch", mins(0)))
+	probed := spec("2", "nginx:1.27")
+	probed.Containers[0].Probes.Readiness = true
+	old := c.replicaSet(d.ID, "api-1", mins(-60), spec("1", "nginx:1.27"))
+	rs := c.replicaSet(d.ID, "api-2", mins(0), probed)
+	c.pod(old.ID, "api-1-a", mins(-60), true, "", mins(-60))
+	c.pod(rs.ID, "api-2-a", mins(0), false, "", mins(0))
+
+	inc := analyze(t, c, mins(2))
+	top := assertTop(t, inc, KindProbe, VeryLikely)
+	if top.Summary != "readiness probe added to api (revision 1 → 2)" || !hasLine(top.Evidence, "1 pod is running but never ready") {
+		t.Errorf("cause = %+v", top)
+	}
+	if !hasStep(inc.Next, "rollout undo deployment/api") {
+		t.Errorf("next = %+v, want a rollback", inc.Next)
+	}
+}
+
+func TestConfigErrorNamingTheObjectIsVeryLikely(t *testing.T) {
+	t.Parallel()
+	c := newCluster()
+	d := c.deployment("1", "nginx:1.27", 2, 1, by("helm", "helm", "", mins(-60)))
+	rs := c.replicaSet(d.ID, "api-1", mins(-60), spec("1", "nginx:1.27"))
+	c.pod(rs.ID, "api-1-a", mins(-60), true, "", mins(-60))
+	c.pod(rs.ID, "api-1-b", mins(0), false, "CreateContainerConfigError", mins(0))
+	p := c.st.Nodes["Pod/shop/api-1-b"]
+	p.Status.Message = "couldn't find key password in Secret shop/db-credentials"
+	c.add(p)
+	for _, id := range []string{"Secret/shop/db-credentials", "ConfigMap/shop/api-config"} {
+		kind, name := kindName(id)
+		c.add(graph.Node{
+			ID: id, Kind: kind, Namespace: "shop", Name: name, Status: graph.Status{Ready: true}, Created: mins(-60),
+			Change: by("kubectl-edit", "kubectl", "edit", mins(-1)),
+		})
+		for _, pod := range []string{"api-1-a", "api-1-b"} {
+			c.edge(graph.EdgeMounts, "Pod/shop/"+pod, id)
+		}
+	}
+
+	inc := analyze(t, c, mins(2))
+	top := assertTop(t, inc, KindConfig, VeryLikely)
+	if top.Object != "Secret/shop/db-credentials" || !hasLine(top.Evidence, "the kubelet can't use Secret db-credentials") {
+		t.Errorf("cause = %+v", top)
+	}
+	// The ConfigMap edited at the same time isn't named: only likely.
+	if len(inc.Causes) < 2 || inc.Causes[1].Object != "ConfigMap/shop/api-config" || inc.Causes[1].Confidence != Likely {
+		t.Errorf("causes = %+v", inc.Causes)
+	}
+}
+
 func TestNodeProblemIsVeryLikely(t *testing.T) {
 	t.Parallel()
 	c := newCluster()

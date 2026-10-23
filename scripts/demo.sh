@@ -3,7 +3,8 @@
 # (.demo/kubeconfig) and never touches your usual kubectl configuration.
 #
 #   scripts/demo.sh up       create the cluster and deploy the shop app
-#   scripts/demo.sh break    break it (SCENARIO=config, the default, bad-image or node)
+#   scripts/demo.sh break    break it: SCENARIO=config (the default), bad-image, node,
+#                            oom, bad-probe, unschedulable or bad-config
 #   scripts/demo.sh fix      undo every scenario
 #   scripts/demo.sh down     delete the cluster
 set -euo pipefail
@@ -34,7 +35,7 @@ up() {
   fi
   say "Deploying the shop app…"
   kubectl apply -f "$ROOT/demo/shop.yaml" >/dev/null
-  for d in api checkout; do kubectl -n shop rollout status "deploy/$d" --timeout=180s >/dev/null; done
+  for d in api checkout reports; do kubectl -n shop rollout status "deploy/$d" --timeout=180s >/dev/null; done
   kubectl -n shop rollout status sts/db --timeout=180s >/dev/null
   say "The shop is running. Starting kubexray…"
   echo "In another terminal, break it with: make break"
@@ -71,6 +72,36 @@ break_node() {
   echo "   ./bin/kubexray incidents --kubeconfig .demo/kubeconfig"
 }
 
+break_oom() {
+  say "Someone trims reports' memory limit from 64Mi to 16Mi to save resources."
+  kubectl -n shop set resources deploy/reports --requests=memory=16Mi --limits=memory=16Mi >/dev/null
+  say "reports builds a 24 MB cache when it starts, so the new pod runs out of memory. Ask kubexray why:"
+  echo "   ./bin/kubexray why deploy/reports -n shop --kubeconfig .demo/kubeconfig"
+}
+
+break_probe() {
+  say "Someone adds a readiness probe to api on /healthz, a path nginx doesn't serve."
+  kubectl -n shop patch deploy/api --type=json -p '[{"op":"add","path":"/spec/template/spec/containers/0/readinessProbe","value":{"httpGet":{"path":"/healthz","port":80},"periodSeconds":2}}]' >/dev/null
+  say "The new pod runs but never becomes ready, so the rollout stalls. Ask kubexray why:"
+  echo "   ./bin/kubexray why deploy/api -n shop --kubeconfig .demo/kubeconfig"
+}
+
+break_unschedulable() {
+  say "Someone raises checkout's memory request to 64Gi, more than any node has."
+  kubectl -n shop set resources deploy/checkout --requests=memory=64Gi --limits=memory=64Gi >/dev/null
+  say "The new pod can't be scheduled. Ask kubexray why:"
+  echo "   ./bin/kubexray why deploy/checkout -n shop --kubeconfig .demo/kubeconfig"
+}
+
+break_bad_config() {
+  say "1. Someone renames the key in db-credentials from password to db-password. api reads password."
+  kubectl -n shop patch secret db-credentials --type=json -p '[{"op":"move","from":"/data/password","path":"/data/db-password"}]' >/dev/null
+  say "2. Running pods are fine. A pod gets replaced, as during a node drain."
+  kubectl -n shop delete "$(kubectl -n shop get pod -l app=api -o name | head -1)" --wait=false >/dev/null
+  say "The new pod can't start. Ask kubexray why:"
+  echo "   ./bin/kubexray why deploy/api -n shop --kubeconfig .demo/kubeconfig"
+}
+
 fix() {
   if [ "$(docker inspect -f '{{.State.Running}}' "$CLUSTER-worker2" 2>/dev/null)" = "false" ]; then
     say "Starting worker $CLUSTER-worker2 again…"
@@ -78,13 +109,22 @@ fix() {
     kubectl wait --for=condition=Ready "node/$CLUSTER-worker2" --timeout=180s >/dev/null ||
       say "$CLUSTER-worker2 isn't ready yet; it will catch up. Continuing."
   fi
-  say "Restoring checkout-config and api…"
+  say "Restoring the shop…"
   kubectl -n shop patch configmap checkout-config --type=merge -p '{"data":{"LOG_LEVEL":"info"}}' >/dev/null
-  kubectl -n shop rollout restart deploy/checkout >/dev/null
   if [ "$(kubectl -n shop get deploy api -o jsonpath='{.spec.template.spec.containers[0].image}')" != "nginx:1.27-alpine" ]; then
     kubectl -n shop set image deploy/api api=nginx:1.27-alpine >/dev/null
   fi
-  for d in api checkout; do kubectl -n shop rollout status "deploy/$d" --timeout=180s >/dev/null; done
+  # kubectl apply restores what the manifest sets (resources, the password
+  # key); it doesn't remove what a patch added.
+  if [ -n "$(kubectl -n shop get deploy api -o jsonpath='{.spec.template.spec.containers[0].readinessProbe}')" ]; then
+    kubectl -n shop patch deploy/api --type=json -p '[{"op":"remove","path":"/spec/template/spec/containers/0/readinessProbe"}]' >/dev/null
+  fi
+  kubectl apply -f "$ROOT/demo/shop.yaml" >/dev/null
+  if [ -n "$(kubectl -n shop get secret db-credentials -o jsonpath='{.data.db-password}')" ]; then
+    kubectl -n shop patch secret db-credentials --type=json -p '[{"op":"remove","path":"/data/db-password"}]' >/dev/null
+  fi
+  kubectl -n shop rollout restart deploy/checkout >/dev/null
+  for d in api checkout reports; do kubectl -n shop rollout status "deploy/$d" --timeout=180s >/dev/null; done
   say "Fixed."
 }
 
@@ -100,9 +140,13 @@ case "${1:-}" in
       config) break_config ;;
       bad-image) break_image ;;
       node) break_node ;;
-      *) echo "unknown SCENARIO=$SCENARIO (config, bad-image or node)" >&2; exit 1 ;;
+      oom) break_oom ;;
+      bad-probe) break_probe ;;
+      unschedulable) break_unschedulable ;;
+      bad-config) break_bad_config ;;
+      *) echo "unknown SCENARIO=$SCENARIO (config, bad-image, node, oom, bad-probe, unschedulable or bad-config)" >&2; exit 1 ;;
     esac ;;
   fix) fix ;;
   down) down ;;
-  *) sed -n '2,9p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
+  *) sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
 esac

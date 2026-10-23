@@ -1,6 +1,8 @@
 package cluster
 
 import (
+	"unicode/utf8"
+
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -102,11 +104,34 @@ func mapPod(pod *corev1.Pod) (graph.Node, []graph.Edge) {
 	return n, edges
 }
 
+// maxMessage caps the Kubernetes messages kept on a status (ADR-0009).
+const maxMessage = 300
+
+func message(m string) string {
+	if len(m) <= maxMessage {
+		return m
+	}
+	cut := maxMessage
+	for cut > 0 && !utf8.RuneStart(m[cut]) {
+		cut-- // don't split a character
+	}
+	return m[:cut] + "…"
+}
+
+// why is one container's explanation of a pod's state.
+type why struct {
+	reason, container, message string
+	exit                       int32
+}
+
 // podStatus summarises a pod the way `kubectl get pods` would: the most
-// telling reason wins.
+// telling reason wins, with the container, exit code and Kubernetes message
+// behind it. A container's own termination message is never read: the app
+// writes it (ADR-0009).
 func podStatus(pod *corev1.Pod) graph.Status {
 	s := graph.Status{Phase: string(pod.Status.Phase), Reason: pod.Status.Reason}
-	unschedulable := false
+	var unschedulable bool
+	var scheduler string
 	for _, c := range pod.Status.Conditions {
 		switch c.Type { //nolint:exhaustive // only these conditions matter
 		case corev1.PodReady:
@@ -114,53 +139,80 @@ func podStatus(pod *corev1.Pod) graph.Status {
 			s.Since = c.LastTransitionTime.Time
 		case corev1.PodScheduled:
 			unschedulable = c.Status == corev1.ConditionFalse && c.Reason == corev1.PodReasonUnschedulable
+			scheduler = c.Message
 		}
 	}
 
 	// Init containers run first, so a failing one explains everything after it.
-	var initProblem string
+	var initProblem why
 	for _, cs := range pod.Status.InitContainerStatuses {
 		s.Restarts += cs.RestartCount
 		switch {
-		case initProblem != "":
+		case initProblem.reason != "":
 		case cs.State.Waiting != nil && !isStarting(cs.State.Waiting.Reason):
-			initProblem = "Init:" + cs.State.Waiting.Reason
+			initProblem = waitingWhy(cs)
+			initProblem.reason = "Init:" + initProblem.reason
 		case cs.State.Terminated != nil && cs.State.Terminated.ExitCode != 0:
-			initProblem = "Init:" + cs.State.Terminated.Reason
+			initProblem = why{reason: "Init:" + cs.State.Terminated.Reason, container: cs.Name, exit: cs.State.Terminated.ExitCode}
 		}
 	}
 
-	var waiting, terminated, lastTerminated string
+	var waiting, terminated, last why
 	for _, cs := range pod.Status.ContainerStatuses {
 		s.Restarts += cs.RestartCount
 		switch {
-		case cs.State.Waiting != nil && (waiting == "" || isStarting(waiting)):
-			waiting = cs.State.Waiting.Reason
-		case cs.State.Terminated != nil && terminated == "":
-			terminated = cs.State.Terminated.Reason
+		case cs.State.Waiting != nil && (waiting.reason == "" || isStarting(waiting.reason)):
+			waiting = waitingWhy(cs)
+		case cs.State.Terminated != nil && terminated.reason == "":
+			terminated = why{reason: cs.State.Terminated.Reason, container: cs.Name, exit: cs.State.Terminated.ExitCode}
 		}
-		if cs.LastTerminationState.Terminated != nil && lastTerminated == "" {
-			lastTerminated = cs.LastTerminationState.Terminated.Reason
+		if t := cs.LastTerminationState.Terminated; t != nil && last.reason == "" {
+			last = why{reason: t.Reason, container: cs.Name, exit: t.ExitCode}
 		}
 	}
 
+	use := func(w why) { s.Reason, s.Container, s.Message, s.Exit = w.reason, w.container, w.message, w.exit }
 	switch {
 	case pod.DeletionTimestamp != nil:
 		s.Reason = "Terminating"
-	case initProblem != "":
-		s.Reason = initProblem // e.g. Init:CrashLoopBackOff
+	case pod.Status.Reason == "Evicted":
+		s.Message = pod.Status.Message // the kubelet's, e.g. "The node was low on resource: memory."
+	case initProblem.reason != "":
+		use(initProblem) // e.g. Init:CrashLoopBackOff
 	case unschedulable:
-		s.Reason = corev1.PodReasonUnschedulable
-	case waiting != "" && !isStarting(waiting):
-		s.Reason = waiting // e.g. CrashLoopBackOff, ImagePullBackOff
-	case terminated != "":
-		s.Reason = terminated // e.g. OOMKilled, Error, Completed
-	case waiting != "":
-		s.Reason = waiting
-	case s.Reason == "" && lastTerminated != "" && s.Restarts > 0:
-		s.Reason = lastTerminated // recovered, but say why it restarted
+		s.Reason, s.Message = corev1.PodReasonUnschedulable, scheduler
+	case waiting.reason != "" && !isStarting(waiting.reason):
+		use(waiting) // e.g. CrashLoopBackOff, ImagePullBackOff
+	case terminated.reason != "":
+		use(terminated) // e.g. OOMKilled, Error, Completed
+	case waiting.reason != "":
+		s.Reason = waiting.reason
+	case s.Reason == "" && last.reason != "" && s.Restarts > 0:
+		use(last) // recovered, but say why it restarted
 	}
+	if s.Message == "" && s.Reason == pod.Status.Reason {
+		s.Message = pod.Status.Message // the kubelet's, e.g. a node shutdown
+	}
+	s.Message = message(s.Message)
 	return s
+}
+
+// waitingWhy explains a waiting container. A crash loop's own message only
+// says it's backing off, so the last exit says more: a container that keeps
+// running out of memory is OOMKilled, not just crash-looping.
+func waitingWhy(cs corev1.ContainerStatus) why {
+	w := why{reason: cs.State.Waiting.Reason, container: cs.Name, message: cs.State.Waiting.Message}
+	t := cs.LastTerminationState.Terminated
+	if t != nil {
+		w.exit = t.ExitCode
+	}
+	if w.reason == "CrashLoopBackOff" {
+		w.message = ""
+		if t != nil && t.Reason == "OOMKilled" {
+			w.reason = t.Reason
+		}
+	}
+	return w
 }
 
 // isStarting reports whether a waiting reason is a normal part of startup
@@ -252,8 +304,15 @@ func mapDeployment(d *appsv1.Deployment) (graph.Node, []graph.Edge) {
 	n.Status = replicas(d.Spec.Replicas, d.Status.ReadyReplicas, d.Status.UpdatedReplicas)
 	n.Spec = podSpec(d, &d.Spec.Template.Spec)
 	for _, c := range d.Status.Conditions {
-		if c.Type == appsv1.DeploymentProgressing && c.Reason == "ProgressDeadlineExceeded" {
+		switch {
+		case c.Type == appsv1.DeploymentProgressing && c.Reason == "ProgressDeadlineExceeded":
 			n.Status.Reason = c.Reason
+		case c.Type == appsv1.DeploymentReplicaFailure && c.Status == corev1.ConditionTrue:
+			// Pods couldn't be created: a quota, an admission webhook, pod security.
+			n.Status.Message = message(c.Message)
+			if n.Status.Reason == "" {
+				n.Status.Reason = c.Reason
+			}
 		}
 	}
 	return n, ownerEdges(n.ID, d)

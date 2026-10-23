@@ -144,6 +144,9 @@ func (a *anonymizer) node(n *graph.Node) {
 		}
 		n.Labels = labels
 	}
+	// Kubernetes messages name nodes, volumes and keys: dropped (ADR-0009).
+	n.Status.Message = ""
+	n.Status.Container = a.replace("container", n.Status.Container, "container")
 	if n.Spec != nil {
 		spec := *n.Spec
 		spec.Containers = make([]graph.Container, len(n.Spec.Containers))

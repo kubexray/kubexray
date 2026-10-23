@@ -1,11 +1,12 @@
 import { useState } from "react";
 import { useNow } from "../lib/useNow";
 import type { Incident } from "../gen/cause";
+import type { Node } from "../gen/graph";
 import { ago, who } from "../lib/format";
 import { nodeSummary, podHealth, podText } from "../lib/health";
 import type { ClusterState } from "../lib/state";
 import { allWorkloads, type NamespaceView, workloadHealth, workloadProblem } from "../lib/view";
-import { CauseLine } from "./IncidentCard";
+import { CauseLine, DiagnosisLine } from "./IncidentCard";
 
 interface Props {
   id: string | null;
@@ -83,7 +84,7 @@ export function DetailsPanel({ id, state, view, incident, onSelect }: Props) {
       <div className="kind">{n.kind}</div>
       <div className="name">{n.name}</div>
       <div className={`state ${health}`}>{stateText}</div>
-      {incident && !incident.healthy && <Explanation incident={incident} podId={n.kind === "Pod" ? n.id : null} />}
+      {incident && !incident.healthy && <Explanation incident={incident} pod={n.kind === "Pod" ? n : null} />}
       <dl className="facts">
         {facts.map(([k, v]) => (
           <div key={k} className="fact">
@@ -109,12 +110,26 @@ export function DetailsPanel({ id, state, view, incident, onSelect }: Props) {
   );
 }
 
-function Explanation({ incident, podId }: { incident: Incident; podId: string | null }) {
+function Explanation({ incident, pod }: { incident: Incident; pod: Node | null }) {
   const top = incident.causes?.[0];
   // A healthy pod of a degraded app gets the app's story only if it's affected.
-  if (podId && !incident.symptom.badPods?.includes(podId)) return null;
+  if (pod && !incident.symptom.badPods?.includes(pod.id)) return null;
+  // The diagnosis is about the pods with the most common problem.
+  const diagnosis = pod && pod.status.reason !== incident.symptom.reason ? undefined : incident.diagnosis;
   return (
     <div className="explain">
+      {diagnosis && (
+        <>
+          <DiagnosisLine diagnosis={diagnosis} />
+          {diagnosis.evidence && (
+            <ul className="evidence">
+              {diagnosis.evidence.map((e) => (
+                <li key={e}>{e}</li>
+              ))}
+            </ul>
+          )}
+        </>
+      )}
       {top ? <CauseLine cause={top} /> : <p>No cause found: {incident.noCause}.</p>}
       {top?.evidence && (
         <ul className="evidence">

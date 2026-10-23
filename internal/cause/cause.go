@@ -48,6 +48,7 @@ const (
 	KindImage     Kind = "image"     // a container image changed
 	KindResources Kind = "resources" // CPU or memory requests or limits changed
 	KindTemplate  Kind = "template"  // the pod template changed in a way the model doesn't record
+	KindProbe     Kind = "probe"     // a health probe was added or removed
 	KindRestart   Kind = "restart"   // pods were restarted without changing the template
 	KindChange    Kind = "change"    // the app changed, details unknown
 	KindConfig    Kind = "config"    // a ConfigMap or Secret the app uses was edited
@@ -87,17 +88,18 @@ type Step struct {
 
 // Incident is an app's health and, when it's broken, the likely causes.
 type Incident struct {
-	App       string    `json:"app"`
-	Kind      string    `json:"kind"`
-	Namespace string    `json:"namespace"`
-	Name      string    `json:"name"`
-	Healthy   bool      `json:"healthy"`
-	Since     time.Time `json:"since,omitzero"`
-	Symptom   Symptom   `json:"symptom"`
-	Impact    []string  `json:"impact,omitempty"`  // e.g. "Ingress web → Service api → 0 of 3 pods ready"
-	Causes    []Cause   `json:"causes,omitempty"`  // best first; empty when nothing qualifies
-	NoCause   string    `json:"noCause,omitempty"` // said when Causes is empty
-	Next      []Step    `json:"next,omitempty"`
+	App       string     `json:"app"`
+	Kind      string     `json:"kind"`
+	Namespace string     `json:"namespace"`
+	Name      string     `json:"name"`
+	Healthy   bool       `json:"healthy"`
+	Since     time.Time  `json:"since,omitzero"`
+	Symptom   Symptom    `json:"symptom"`
+	Impact    []string   `json:"impact,omitempty"`    // e.g. "Ingress web → Service api → 0 of 3 pods ready"
+	Causes    []Cause    `json:"causes,omitempty"`    // best first; empty when nothing qualifies
+	NoCause   string     `json:"noCause,omitempty"`   // said when Causes is empty
+	Diagnosis *Diagnosis `json:"diagnosis,omitempty"` // what Kubernetes says is wrong (ADR-0009)
+	Next      []Step     `json:"next,omitempty"`
 	// LastChange is the app's most recent change, for context when it's healthy.
 	LastChange *graph.Change `json:"lastChange,omitempty"`
 }
@@ -310,6 +312,7 @@ func (x *index) explain(app graph.Node, opts Options) Incident {
 	}
 	inc.Since = since(pods)
 	inc.Impact = x.impact(pods, inc.Symptom)
+	inc.Diagnosis = x.diagnose(app, pods, inc.Symptom)
 
 	a := &analysis{x: x, app: app, pods: pods, inc: &inc, opts: opts}
 	inc.Causes = a.causes()

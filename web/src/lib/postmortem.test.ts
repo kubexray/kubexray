@@ -93,6 +93,15 @@ describe("postmortem", () => {
     expect(md).toContain("TODO: what caused it.");
   });
 
+  it("reports what Kubernetes says is wrong", () => {
+    const diagnosis = { summary: "The scheduler can't place 2 pods: no node has enough free memory for its memory request", evidence: ["memory request 64Gi"] };
+    const md = draft({ entry: { group: null, incidents: [{ ...checkout, causes: [], diagnosis }] } });
+    expect(md).toContain("checkout is degraded. The scheduler can't place 2 pods: no node has enough free memory for its memory request. kubexray found no change in the cluster that caused it.");
+    expect(md).toContain("## What Kubernetes reports\n\nThe scheduler can't place 2 pods");
+    expect(md).toContain("- memory request 64Gi");
+    expect(md).not.toContain("outside the cluster: a dependency");
+  });
+
   it("keeps cluster strings inert, and never throws on bad times", () => {
     expect(text("evil\n# heading <img src=x> [link](y) `code` | & *")).toBe("evil \\# heading \\<img src=x\\> \\[link\\](y) \\`code\\` \\| \\& \\*");
     const md = draft({

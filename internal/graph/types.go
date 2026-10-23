@@ -58,6 +58,14 @@ type Container struct {
 	Ephemeral bool      `json:"ephemeral,omitempty"` // added by kubectl debug
 	Requests  Resources `json:"requests,omitzero"`
 	Limits    Resources `json:"limits,omitzero"`
+	Probes    Probes    `json:"probes,omitzero"` // which are defined, not what they run (ADR-0009)
+}
+
+// Probes records which health probes a container defines.
+type Probes struct {
+	Liveness  bool `json:"liveness,omitempty"`
+	Readiness bool `json:"readiness,omitempty"`
+	Startup   bool `json:"startup,omitempty"`
 }
 
 // Resources holds CPU and memory quantities in Kubernetes notation.
@@ -97,6 +105,11 @@ type Status struct {
 	Restarts int32     `json:"restarts,omitempty"`
 	Replicas *Replicas `json:"replicas,omitempty"`
 	Since    time.Time `json:"since,omitzero"` // when readiness last changed (pods, nodes)
+	// Why, in the words of a Kubernetes component: the scheduler, the kubelet
+	// or a controller. Never an application's own message (ADR-0009).
+	Message   string `json:"message,omitempty"`
+	Exit      int32  `json:"exit,omitempty"`      // exit code behind the reason (pods)
+	Container string `json:"container,omitempty"` // the container the reason comes from (pods)
 }
 
 // Replicas summarises a workload's scale.
@@ -169,7 +182,8 @@ func (s Status) Equal(o Status) bool {
 	if s.Replicas != nil && *s.Replicas != *o.Replicas {
 		return false
 	}
-	return s.Phase == o.Phase && s.Ready == o.Ready && s.Reason == o.Reason && s.Restarts == o.Restarts && s.Since.Equal(o.Since)
+	return s.Phase == o.Phase && s.Ready == o.Ready && s.Reason == o.Reason && s.Restarts == o.Restarts && s.Since.Equal(o.Since) &&
+		s.Message == o.Message && s.Exit == o.Exit && s.Container == o.Container
 }
 
 // Edge is a directed relationship between two nodes.

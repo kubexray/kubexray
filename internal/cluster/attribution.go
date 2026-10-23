@@ -166,6 +166,7 @@ func container(c corev1.Container) graph.Container {
 		Image:    c.Image,
 		Requests: resources(c.Resources.Requests),
 		Limits:   resources(c.Resources.Limits),
+		Probes:   graph.Probes{Liveness: c.LivenessProbe != nil, Readiness: c.ReadinessProbe != nil, Startup: c.StartupProbe != nil},
 	}
 }
 
