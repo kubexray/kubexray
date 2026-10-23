@@ -41,13 +41,19 @@ up() {
   echo "In another terminal, break it with: make break"
 }
 
+# live_pod prints one pod of an app that isn't already being deleted (right
+# after a rollout, old pods linger while they terminate).
+live_pod() {
+  kubectl -n shop get pod -l "app=$1" -o go-template='{{range .items}}{{if not .metadata.deletionTimestamp}}{{.metadata.name}}{{"\n"}}{{end}}{{end}}' | head -1
+}
+
 break_config() {
   say "1. Someone edits checkout-config: LOG_LEVEL=verbose (checkout only accepts debug, info, warn or error)."
   kubectl -n shop patch configmap checkout-config --type=merge -p '{"data":{"LOG_LEVEL":"verbose"}}' >/dev/null
   say "2. Nothing breaks: running pods keep the config they started with. Waiting ${DELAY}s…"
   sleep "$DELAY"
   say "3. A pod gets replaced, as during a node drain or an eviction."
-  kubectl -n shop delete "$(kubectl -n shop get pod -l app=checkout -o name | head -1)" --wait=false >/dev/null
+  kubectl -n shop delete pod "$(live_pod checkout)" --wait=false >/dev/null
   say "The new pod reads the bad value and crash-loops. Ask kubexray why:"
   echo "   ./bin/kubexray why deploy/checkout -n shop --kubeconfig .demo/kubeconfig"
 }
@@ -99,7 +105,7 @@ break_bad_config() {
   say "1. Someone renames the key in db-credentials from password to db-password. api reads password."
   kubectl -n shop patch secret db-credentials --type=json -p '[{"op":"move","from":"/data/password","path":"/data/db-password"}]' >/dev/null
   say "2. Running pods are fine. A pod gets replaced, as during a node drain."
-  kubectl -n shop delete "$(kubectl -n shop get pod -l app=api -o name | head -1)" --wait=false >/dev/null
+  kubectl -n shop delete pod "$(live_pod api)" --wait=false >/dev/null
   say "The new pod can't start. Ask kubexray why:"
   echo "   ./bin/kubexray why deploy/api -n shop --kubeconfig .demo/kubeconfig"
 }
