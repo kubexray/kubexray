@@ -6,20 +6,6 @@ import type * as graph from "./graph";
 // source: api.go
 
 /**
- * MessageIncidents carries the cause engine's current incidents (ADR-0007).
- */
-export const MessageIncidents = "incidents";
-/**
- * IncidentsMessage is sent on the stream whenever the set of incidents changes.
- */
-export interface IncidentsMessage {
-  v: number /* int */;
-  type: "incidents";
-  ts: string /* RFC 3339 */;
-  incidents: cause.Incident[];
-  groups: cause.Group[]; // incidents sharing a cause (ADR-0008)
-}
-/**
  * HistoryResponse is the recorded time range (GET /api/history).
  */
 export interface HistoryResponse {

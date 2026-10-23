@@ -99,6 +99,7 @@ var (
 // connection holds the flags every command that reads a cluster shares.
 type connection struct {
 	kubeconfig, context, namespace string
+	resolved                       string // context name in use, set by sync
 }
 
 func (c *connection) flags(fs *flag.FlagSet, withNamespace bool) {
@@ -134,6 +135,7 @@ func (c *connection) sync(ctx context.Context, log *slog.Logger, stderr io.Write
 	if name == "" {
 		name = raw.CurrentContext
 	}
+	c.resolved = name
 	_, _ = fmt.Fprintf(stderr, "Reading cluster %q at %s (read-only)…\n", name, cfg.Host)
 
 	cfg.UserAgent = "kubexray/" + version.Version
@@ -235,14 +237,8 @@ func incidents(ctx context.Context, args []string, stdout, stderr io.Writer) err
 		return err
 	}
 	now := time.Now()
-	list := cause.Analyze(st, cause.DefaultOptions(now))
-	groups := cause.GroupIncidents(list)
-	if list == nil {
-		list = []cause.Incident{} // JSON lists, never null
-	}
-	if groups == nil {
-		groups = []cause.Group{}
-	}
+	m := cause.NewIncidentsMessage(st, now)
+	list, groups := m.Incidents, m.Groups
 	if *output == "json" {
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
@@ -349,7 +345,7 @@ func ui(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	if *uiDir != "" {
 		assets = os.DirFS(*uiDir)
 	}
-	srv, err := server.New(hub, rec, assets, log)
+	srv, err := server.New(hub, rec, assets, log, server.Info{Version: version.Version})
 	if err != nil {
 		return err
 	}
@@ -366,6 +362,7 @@ func ui(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		}
 		return err
 	}
+	srv.SetCluster(conn.resolved)
 
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()

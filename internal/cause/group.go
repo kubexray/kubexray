@@ -4,6 +4,8 @@ import (
 	"cmp"
 	"slices"
 	"time"
+
+	"github.com/kubexray/kubexray/internal/graph"
 )
 
 // Group is several incidents with the same likely cause (ADR-0008): a
@@ -55,6 +57,32 @@ func GroupIncidents(incidents []Incident) []Group {
 	}
 	slices.SortStableFunc(out, func(a, b Group) int { return cmp.Compare(len(b.Apps), len(a.Apps)) })
 	return out
+}
+
+// MessageIncidents is the stream and replay message carrying incidents
+// (ADR-0007, ADR-0008).
+const MessageIncidents = "incidents"
+
+// IncidentsMessage is sent whenever the set of incidents changes.
+type IncidentsMessage struct {
+	V         int        `json:"v"`
+	Type      string     `json:"type" tstype:"\"incidents\""`
+	TS        time.Time  `json:"ts"`
+	Incidents []Incident `json:"incidents"`
+	Groups    []Group    `json:"groups"` // incidents sharing a cause (ADR-0008)
+}
+
+// NewIncidentsMessage analyzes st and groups the result, as one message.
+func NewIncidentsMessage(st *graph.State, now time.Time) IncidentsMessage {
+	incidents := Analyze(st, DefaultOptions(now))
+	if incidents == nil {
+		incidents = []Incident{} // JSON lists, never null
+	}
+	groups := GroupIncidents(incidents)
+	if groups == nil {
+		groups = []Group{}
+	}
+	return IncidentsMessage{V: graph.SchemaVersion, Type: MessageIncidents, TS: now, Incidents: incidents, Groups: groups}
 }
 
 // Entry is what to show as one incident: a group, or a single incident.
