@@ -12,17 +12,6 @@ import (
 	"github.com/kubexray/kubexray/internal/graph"
 )
 
-// MessageIncidents carries the cause engine's current incidents (ADR-0007).
-const MessageIncidents = "incidents"
-
-// IncidentsMessage is sent whenever the set of incidents changes.
-type IncidentsMessage struct {
-	V         int              `json:"v"`
-	Type      string           `json:"type"`
-	TS        time.Time        `json:"ts"`
-	Incidents []cause.Incident `json:"incidents"`
-}
-
 var (
 	errTooManyClients = errors.New("too many clients")
 	errNotSynced      = errors.New("not synced yet; try again in a moment")

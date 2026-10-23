@@ -269,12 +269,6 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// HistoryResponse is the recorded time range.
-type HistoryResponse struct {
-	From time.Time `json:"from"`
-	To   time.Time `json:"to"`
-}
-
 func (s *Server) history(w http.ResponseWriter, _ *http.Request) {
 	from, to, ok := s.rec.Bounds()
 	if !ok {
@@ -282,12 +276,6 @@ func (s *Server) history(w http.ResponseWriter, _ *http.Request) {
 		return
 	}
 	writeJSON(w, HistoryResponse{From: from, To: to})
-}
-
-// AtResponse is the cluster at a past moment.
-type AtResponse struct {
-	Snapshot  json.RawMessage  `json:"snapshot"`
-	Incidents []cause.Incident `json:"incidents"`
 }
 
 func (s *Server) at(w http.ResponseWriter, r *http.Request) {

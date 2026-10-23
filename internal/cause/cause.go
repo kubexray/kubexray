@@ -15,31 +15,30 @@ import (
 	"github.com/kubexray/kubexray/internal/graph"
 )
 
-// Confidence is how strongly a change is tied to a symptom.
-type Confidence int
+// Confidence is how strongly a change is tied to a symptom (ADR-0006,
+// section 3).
+type Confidence string
 
-// Confidence levels, from weakest to strongest (ADR-0006, section 3).
+// Confidence levels, from strongest to weakest.
 const (
-	Possible Confidence = iota + 1
-	Likely
-	VeryLikely
+	VeryLikely Confidence = "very likely"
+	Likely     Confidence = "likely"
+	Possible   Confidence = "possible"
 )
 
-func (c Confidence) String() string {
+// rank orders confidence levels: higher is stronger.
+func (c Confidence) rank() int {
 	switch c {
 	case VeryLikely:
-		return "very likely"
+		return 3
 	case Likely:
-		return "likely"
+		return 2
 	case Possible:
-		return "possible"
+		return 1
 	default:
-		return "unknown"
+		return 0
 	}
 }
-
-// MarshalText encodes the confidence as its words.
-func (c Confidence) MarshalText() ([]byte, error) { return []byte(c.String()), nil }
 
 // Kind is the type of change a cause describes.
 type Kind string

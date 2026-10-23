@@ -288,6 +288,7 @@ func ui(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	hist.register(fs)
 	port := fs.Int("port", 0, "port to listen on, on 127.0.0.1 (default: a free port)")
 	noBrowser := fs.Bool("no-browser", false, "don't open the browser")
+	uiDir := fs.String("ui-dir", "", "serve the UI from this directory instead of the built-in one (for UI development)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -305,7 +306,11 @@ func ui(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 
 	log := slog.New(slog.NewTextHandler(stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
 	hub := server.NewHub(server.MaxClients, server.ClientQueue)
-	srv, err := server.New(hub, rec, web.Assets(), log)
+	assets := web.Assets()
+	if *uiDir != "" {
+		assets = os.DirFS(*uiDir)
+	}
+	srv, err := server.New(hub, rec, assets, log)
 	if err != nil {
 		return err
 	}

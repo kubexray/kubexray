@@ -20,6 +20,16 @@ updates:
     commit-message:
       prefix: "chore(ci)"
 
+  - package-ecosystem: npm
+    directory: /web
+    schedule:
+      interval: weekly
+    groups:
+      web:
+        patterns: ["*"]
+    commit-message:
+      prefix: "chore(web)"
+
   - package-ecosystem: docker
     directory: /
     schedule:
