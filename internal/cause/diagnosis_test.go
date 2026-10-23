@@ -60,6 +60,15 @@ func TestDiagnoseOutOfMemory(t *testing.T) {
 	}
 
 	assertDiagnosis(t, diagnosis(t, sick(oom, graph.Container{})), "has no memory limit, so its node ran out", "no memory limit set")
+
+	// An init container running out of memory.
+	initOOM := oom
+	initOOM.Reason = "Init:OOMKilled"
+	c = sick(initOOM, graph.Container{Init: true, Limits: graph.Resources{Memory: "32Mi"}})
+	assertDiagnosis(t, diagnosis(t, c), "The init container app runs out of memory")
+	if inc := analyze(t, c, mins(0)); !hasStep(inc.Next, "top pod") {
+		t.Errorf("next steps %+v lack kubectl top", inc.Next)
+	}
 }
 
 func TestDiagnoseCrashes(t *testing.T) {
@@ -123,6 +132,15 @@ func TestDiagnosePendingVolume(t *testing.T) {
 	assertDiagnosis(t, diagnosis(t, c), "Its volume data is Pending: no storage has been provisioned for it", "PersistentVolumeClaim data is Pending")
 }
 
+func TestWaitingVolumeIsNotBlamedForScheduling(t *testing.T) {
+	t.Parallel()
+	// A WaitForFirstConsumer volume stays Pending until its pod is placed.
+	c := sick(graph.Status{Phase: "Pending", Reason: "Unschedulable", Message: "0/3 nodes are available: 3 Insufficient memory.", Since: mins(-10)}, graph.Container{})
+	c.add(graph.Node{ID: graph.ID("PersistentVolumeClaim", "shop", "data"), Kind: "PersistentVolumeClaim", Namespace: "shop", Name: "data", Status: graph.Status{Phase: "Pending"}})
+	c.edge(graph.EdgeMounts, "Pod/shop/api-a", "PersistentVolumeClaim/shop/data")
+	assertDiagnosis(t, diagnosis(t, c), "3 nodes have too little free memory")
+}
+
 func TestDiagnoseEvicted(t *testing.T) {
 	t.Parallel()
 	// A standalone pod: a controller would have replaced evicted pods.
@@ -145,9 +163,17 @@ func TestDiagnoseConfigAndImages(t *testing.T) {
 	}
 	assertDiagnosis(t, diagnosis(t, sick(pull, graph.Container{Image: "nginx:1.72"})), "Kubernetes can't pull nginx:1.72: the image or tag doesn't exist", "2 pods ErrImagePull")
 
+	// Docker Hub's answer for a typo and for a private image alike.
 	denied := pull
 	denied.Message = "pull access denied, repository does not exist or may require authorization"
+	assertDiagnosis(t, diagnosis(t, sick(denied, graph.Container{Image: "ngnix:1.27"})), "the image doesn't exist, or the registry needs credentials; check the name, then imagePullSecrets")
+	denied.Message = "failed to authorize: failed to fetch anonymous token: unauthorized"
 	assertDiagnosis(t, diagnosis(t, sick(denied, graph.Container{Image: "acme/private:1"})), "the registry refused access; check imagePullSecrets")
+
+	// An init container that crashed once and now waits on a config error is
+	// stuck on the config, not crashing.
+	initCfg := graph.Status{Phase: "Pending", Reason: "Init:CreateContainerConfigError", Container: "app", Exit: 1, Message: "secret \"db\" not found", Since: mins(-10)}
+	assertDiagnosis(t, diagnosis(t, sick(initCfg, graph.Container{Init: true})), "Kubernetes can't create the init container app: secret \"db\" not found")
 }
 
 func TestDiagnoseRefusedPods(t *testing.T) {

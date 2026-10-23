@@ -40,26 +40,31 @@ func (x *index) diagnose(app graph.Node, pods []graph.Node, s Symptom) *Diagnosi
 	}
 	p := same[0]
 	n := len(same)
-	switch r := s.Reason; {
+	// An init container's reason reads the same, prefixed with "Init:".
+	switch r := strings.TrimPrefix(s.Reason, "Init:"); {
 	case r == "OOMKilled":
 		return outOfMemory(p, n, s.Restarts)
-	case r == "CrashLoopBackOff" || r == "Error" || strings.HasPrefix(r, "Init:") && p.Status.Exit != 0:
+	case r == "CrashLoopBackOff" || r == "Error":
 		return crashing(p, n, s.Restarts)
 	case r == "Unschedulable":
-		if d := x.pendingVolume(same); d != nil {
-			return d
+		// A volume waiting for its pod to be placed (WaitForFirstConsumer)
+		// is Pending too: only blame it if the scheduler mentions volumes.
+		if strings.Contains(p.Status.Message, "PersistentVolumeClaim") || strings.Contains(p.Status.Message, "volume") {
+			if d := x.pendingVolume(same); d != nil {
+				return d
+			}
 		}
 		return unschedulable(p, n)
 	case r == "Evicted":
 		return evicted(p, n)
-	case r == "CreateContainerConfigError" || r == "CreateContainerError" || r == "Init:CreateContainerConfigError":
+	case r == "CreateContainerConfigError" || r == "CreateContainerError":
 		return &Diagnosis{
 			Summary:  "Kubernetes can't create the " + containerName(p) + ": " + strings.TrimSuffix(p.Status.Message, "."),
 			Evidence: said("the kubelet", p.Status.Message),
 		}
-	case pullReasons[r] || pullReasons[strings.TrimPrefix(r, "Init:")]:
+	case pullReasons[r]:
 		return cantPull(p, n)
-	case r == "" || r == "ContainerCreating":
+	case s.Reason == "" || s.Reason == "ContainerCreating":
 		if d := x.pendingVolume(same); d != nil {
 			return d
 		}
@@ -294,6 +299,9 @@ func cantPull(p graph.Node, n int) *Diagnosis {
 	switch {
 	case strings.Contains(msg, "not found"), strings.Contains(msg, "manifest unknown"):
 		why = ": the image or tag doesn't exist"
+	case strings.Contains(msg, "repository does not exist or may require authorization"):
+		// Docker Hub says this both for a typo and for a private image.
+		why = ": the image doesn't exist, or the registry needs credentials; check the name, then imagePullSecrets"
 	case strings.Contains(msg, "unauthorized"), strings.Contains(msg, "denied"), strings.Contains(msg, "authentication required"):
 		why = ": the registry refused access; check imagePullSecrets"
 	case strings.Contains(msg, "invalid reference format"), p.Status.Reason == "InvalidImageName":

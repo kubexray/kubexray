@@ -285,6 +285,51 @@ func TestRolloutToAReusedReplicaSetIsDatedByItsPods(t *testing.T) {
 	}
 }
 
+func TestScaleFromZeroDoesntDateAnOldRollout(t *testing.T) {
+	t.Parallel()
+	// The limit was lowered long ago, while scaled to zero. Scaling up now
+	// creates pods at the time of the write, but that write isn't a rollout.
+	c := newCluster()
+	d := c.deployment("2", "shop/api:3", 2, 0, by("kubectl-scale", "kubectl", "scale", mins(0)))
+	c.replicaSet(d.ID, "api-1", mins(-300), spec("1", "shop/api:3", "512Mi"))
+	rs := c.replicaSet(d.ID, "api-2", mins(-200), spec("2", "shop/api:3", "128Mi"))
+	c.pod(rs.ID, "api-2-a", mins(0), false, "OOMKilled", mins(0.5))
+	for _, cause := range analyze(t, c, mins(3)).Causes {
+		if cause.Kind == KindResources {
+			t.Errorf("a rollout from 200 minutes ago was reported: %+v", cause)
+		}
+	}
+}
+
+func TestNamesMatchesWholeObjects(t *testing.T) {
+	t.Parallel()
+	msg := "couldn't find key password in Secret shop/db-credentials"
+	if !names(msg, "Secret shop/db-credentials") || names(msg, "Secret shop/db") || names(msg, "Secret shop/db-cred") {
+		t.Error("names matched a prefix or missed the object")
+	}
+	if !names(`Secret shop/db-x and Secret shop/db.`, "Secret shop/db") {
+		t.Error("names missed a later exact match")
+	}
+}
+
+func TestProbeCauseCountsOnlyNewPods(t *testing.T) {
+	t.Parallel()
+	// The new pod with the probe is fine; an old pod isn't ready for its own reasons.
+	c := newCluster()
+	d := c.deployment("2", "nginx:1.27", 2, 1, by("kubectl-patch", "kubectl", "patch", mins(0)))
+	probed := spec("2", "nginx:1.27")
+	probed.Containers[0].Probes.Readiness = true
+	old := c.replicaSet(d.ID, "api-1", mins(-60), spec("1", "nginx:1.27"))
+	rs := c.replicaSet(d.ID, "api-2", mins(0), probed)
+	c.pod(old.ID, "api-1-a", mins(-60), false, "", mins(0.5))
+	c.pod(rs.ID, "api-2-a", mins(0), true, "", mins(0.2))
+	for _, cause := range analyze(t, c, mins(3)).Causes {
+		if cause.Kind == KindProbe && cause.Confidence == VeryLikely {
+			t.Errorf("probe blamed for an old pod: %+v", cause)
+		}
+	}
+}
+
 func TestRaisedRequestsThenUnschedulableIsVeryLikely(t *testing.T) {
 	t.Parallel()
 	c := newCluster()

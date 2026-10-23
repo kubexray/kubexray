@@ -91,25 +91,8 @@ func isAre(n int) string {
 	return "are"
 }
 
-// reasons counts the bad pods' reasons.
-func (a *analysis) reasons() map[string]int {
-	r := map[string]int{}
-	for _, p := range a.pods {
-		if bad(p) {
-			r[p.Status.Reason]++
-		}
-	}
-	return r
-}
-
 func (a *analysis) badWith(match func(string) bool) int {
-	n := 0
-	for r, c := range a.reasons() {
-		if match(r) {
-			n += c
-		}
-	}
-	return n
+	return a.badWhere(func(p graph.Node) bool { return match(p.Status.Reason) })
 }
 
 // rollout finds a Deployment's latest template change by comparing its
@@ -132,7 +115,8 @@ func (a *analysis) rollout() []Cause {
 	// Going back to any template the Deployment had before reuses that
 	// ReplicaSet, creation time and all. Its pods were created by this
 	// rollout, though: a Deployment write that made them is the rollout.
-	if c := a.app.Change; c != nil && c.At.After(at) {
+	// Scaling up from zero creates pods too, but isn't a template change.
+	if c := a.app.Change; c != nil && c.At.After(at) && c.Via != "scale" && c.Tool != "controller" {
 		if first := a.firstPodOf(cur.ID); !first.IsZero() && first.Sub(c.At).Abs() <= attributionSlack {
 			at = c.At
 		}
@@ -190,7 +174,10 @@ func (a *analysis) rollout() []Cause {
 		c := base
 		c.Kind = KindProbe
 		c.Summary = fmt.Sprintf("%s (%s)", what, revs)
-		switch running := a.badWhere(func(p graph.Node) bool { return p.Status.Reason == "" && p.Status.Phase == "Running" }); {
+		// Only the new pods have the probe.
+		switch running := a.badWhere(func(p graph.Node) bool {
+			return p.Status.Reason == "" && p.Status.Phase == "Running" && a.ownedBy(p, cur.ID)
+		}); {
 		case added == "readiness" && running > 0:
 			c.Confidence = VeryLikely
 			c.Evidence = []string{fmt.Sprintf("%s running but never ready since the probe was added", plural(running, "pod")+" "+isAre(running))}
@@ -220,17 +207,40 @@ func (a *analysis) rollout() []Cause {
 	return out
 }
 
+func (a *analysis) ownedBy(p graph.Node, owner string) bool {
+	return slices.ContainsFunc(a.x.in[p.ID], func(e graph.Edge) bool { return e.Type == graph.EdgeOwns && e.From == owner })
+}
+
 // firstPodOf returns when the oldest of the app's pods owned by a ReplicaSet
 // was created.
 func (a *analysis) firstPodOf(rs string) time.Time {
 	var first time.Time
 	for _, p := range a.pods {
-		owned := slices.ContainsFunc(a.x.in[p.ID], func(e graph.Edge) bool { return e.Type == graph.EdgeOwns && e.From == rs })
-		if owned && (first.IsZero() || p.Created.Before(first)) {
+		if a.ownedBy(p, rs) && (first.IsZero() || p.Created.Before(first)) {
 			first = p.Created
 		}
 	}
 	return first
+}
+
+// names reports whether a Kubernetes message names an object exactly: "Secret
+// shop/db" isn't named by "... in Secret shop/db-credentials".
+func names(msg, ref string) bool {
+	nameChar := func(c byte) bool { return c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '-' }
+	for i := strings.Index(msg, ref); i >= 0; {
+		end := i + len(ref)
+		// Names may contain dots but don't end with one: "shop/db." ends the name.
+		rest := msg[end:]
+		if rest == "" || !nameChar(rest[0]) && (rest[0] != '.' || len(rest) == 1 || !nameChar(rest[1])) {
+			return true
+		}
+		next := strings.Index(msg[end:], ref)
+		if next < 0 {
+			break
+		}
+		i = end + next
+	}
+	return false
 }
 
 // badWhere counts bad pods matching a condition.
@@ -418,7 +428,7 @@ func (a *analysis) dependencies() []Cause {
 		// The kubelet names the object it can't use: "couldn't find key
 		// password in Secret shop/db-credentials".
 		named := a.badWhere(func(p graph.Node) bool {
-			return p.Status.Reason == "CreateContainerConfigError" && strings.Contains(p.Status.Message, kind+" "+n.Namespace+"/"+name)
+			return p.Status.Reason == "CreateContainerConfigError" && names(p.Status.Message, kind+" "+n.Namespace+"/"+name)
 		})
 		switch {
 		case named > 0:
@@ -488,7 +498,7 @@ func nextSteps(inc Incident, app graph.Node) []Step {
 	case badPod == "":
 	case r == "CrashLoopBackOff" || r == "Error" || r == "OOMKilled" || strings.HasPrefix(r, "Init:"):
 		steps = append(steps, Step{Command: fmt.Sprintf("kubectl -n %s logs %s --previous", ns, badPod), Note: "why the last attempt failed"})
-		if r == "OOMKilled" {
+		if strings.TrimPrefix(r, "Init:") == "OOMKilled" {
 			steps = append(steps, Step{Command: fmt.Sprintf("kubectl -n %s top pod %s --containers", ns, badPod), Note: "memory use now (needs metrics-server)"})
 		}
 	default:
