@@ -148,15 +148,13 @@ func (h *Hub) UpdateIncidents(now time.Time) error {
 	st := h.state.Clone()
 	h.mu.Unlock()
 
-	incidents := cause.Analyze(st, cause.DefaultOptions(now))
-	if incidents == nil {
-		incidents = []cause.Incident{}
-	}
-	payload, err := json.Marshal(incidents)
+	msg := IncidentsMessage{V: graph.SchemaVersion, Type: MessageIncidents, TS: now}
+	msg.Incidents, msg.Groups = analyze(st, now)
+	payload, err := json.Marshal([]any{msg.Incidents, msg.Groups})
 	if err != nil {
 		return err
 	}
-	raw, err := json.Marshal(IncidentsMessage{V: graph.SchemaVersion, Type: MessageIncidents, TS: now, Incidents: incidents})
+	raw, err := json.Marshal(msg)
 	if err != nil {
 		return err
 	}
@@ -170,6 +168,20 @@ func (h *Hub) UpdateIncidents(now time.Time) error {
 	h.incidents, h.payload = raw, payload
 	h.broadcast(raw)
 	return nil
+}
+
+// analyze runs the cause engine and groups the result, never returning nil
+// slices (they're JSON lists the UI iterates).
+func analyze(st *graph.State, now time.Time) ([]cause.Incident, []cause.Group) {
+	incidents := cause.Analyze(st, cause.DefaultOptions(now))
+	if incidents == nil {
+		incidents = []cause.Incident{}
+	}
+	groups := cause.GroupIncidents(incidents)
+	if groups == nil {
+		groups = []cause.Group{}
+	}
+	return incidents, groups
 }
 
 // changes lists recent changes on the current state.

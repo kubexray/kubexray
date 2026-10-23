@@ -300,11 +300,9 @@ func (s *Server) at(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	resp := AtResponse{Snapshot: raw, Incidents: []cause.Incident{}}
+	resp := AtResponse{Snapshot: raw, Incidents: []cause.Incident{}, Groups: []cause.Group{}}
 	if st, err := graph.NewState(snap); err == nil {
-		if incs := cause.Analyze(st, cause.DefaultOptions(t)); incs != nil {
-			resp.Incidents = incs
-		}
+		resp.Incidents, resp.Groups = analyze(st, t)
 	}
 	writeJSON(w, resp)
 }

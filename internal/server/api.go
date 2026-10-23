@@ -19,6 +19,7 @@ type IncidentsMessage struct {
 	Type      string           `json:"type" tstype:"\"incidents\""`
 	TS        time.Time        `json:"ts"`
 	Incidents []cause.Incident `json:"incidents"`
+	Groups    []cause.Group    `json:"groups"` // incidents sharing a cause (ADR-0008)
 }
 
 // HistoryResponse is the recorded time range (GET /api/history).
@@ -31,4 +32,5 @@ type HistoryResponse struct {
 type AtResponse struct {
 	Snapshot  json.RawMessage  `json:"snapshot" tstype:"graph.Message"`
 	Incidents []cause.Incident `json:"incidents"`
+	Groups    []cause.Group    `json:"groups"`
 }

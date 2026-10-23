@@ -82,6 +82,44 @@ func Why(w io.Writer, inc cause.Incident, now time.Time) error {
 	return p.err
 }
 
+// Incidents renders every current incident, grouping those that share a
+// cause, most severe first.
+func Incidents(w io.Writer, incidents []cause.Incident, groups []cause.Group, now time.Time) error {
+	p := &printer{w: w}
+	if len(incidents) == 0 {
+		p.line("No incidents. Every app is running as expected.")
+		return p.err
+	}
+	byApp := map[string]cause.Incident{}
+	for _, inc := range incidents {
+		byApp[inc.App] = inc
+	}
+	grouped := map[string]bool{}
+	for _, g := range groups {
+		p.line("%s: %d apps affected", describe(g.Cause, now), len(g.Apps))
+		for _, id := range g.Apps {
+			inc := byApp[id]
+			grouped[id] = true
+			p.row("", "%s/%s %s: %s", inc.Namespace, inc.Name, inc.State(), inc.Symptom.Summary)
+		}
+		p.line("")
+	}
+	for _, inc := range incidents {
+		if grouped[inc.App] {
+			continue
+		}
+		p.line("%s/%s %s: %s", inc.Namespace, inc.Name, inc.State(), inc.Symptom.Summary)
+		if len(inc.Causes) > 0 {
+			p.row(string(inc.Causes[0].Confidence)+" cause", "%s", describe(inc.Causes[0], now))
+		} else {
+			p.row("cause", "none found")
+		}
+	}
+	p.line("")
+	p.line("Run kubexray why <kind>/<name> -n <namespace> for the evidence and next steps.")
+	return p.err
+}
+
 // Changes renders recent changes, newest first.
 func Changes(w io.Writer, changes []cause.Change, now time.Time, window time.Duration) error {
 	p := &printer{w: w}

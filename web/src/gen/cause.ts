@@ -104,6 +104,10 @@ export interface Options {
   Lookback: number /* nanoseconds */; // how far before an incident to look for causes
   Skew: number /* nanoseconds */; // changes this long after the start still count (clock skew)
 }
+/**
+ * ReasonNodeNotReady marks pods that aren't ready because their node isn't.
+ */
+export const ReasonNodeNotReady = "NodeNotReady";
 
 //////////
 // source: changes.go
@@ -120,4 +124,19 @@ export interface Change {
   by?: graph.Change;
   origin?: graph.Origin;
   summary: string;
+}
+
+//////////
+// source: group.go
+
+/**
+ * Group is several incidents with the same likely cause (ADR-0008): a
+ * NotReady node, or a ConfigMap shared by several apps.
+ */
+export interface Group {
+  cause: Cause;
+  /**
+   * Apps are the affected apps' IDs, most severe first.
+   */
+  apps: string[];
 }

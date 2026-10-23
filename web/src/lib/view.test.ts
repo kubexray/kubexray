@@ -85,6 +85,18 @@ describe("buildView", () => {
   });
 });
 
+describe("pods on a failed node", () => {
+  it("are failing, with the node as the reason", () => {
+    const st = cluster(
+      [n("Node/w2", { kind: "Node", name: "w2", status: { ready: false } }), n("Deployment/shop/x"), n("Pod/shop/x-1", { parent: "Node/w2", status: { ready: false } })],
+      [e("owns", "Deployment/shop/x", "Pod/shop/x-1")],
+    );
+    const pod = allWorkloads(buildView(st))[0]!.w.pods[0]!;
+    expect(pod.status.reason).toBe("NodeNotReady");
+    expect(podHealth(pod)).toBe("crit");
+  });
+});
+
 describe("health", () => {
   it("summarizes a workload", () => {
     const w = allWorkloads(buildView(shop())).find(({ w }) => w.node.name === "api")!.w;

@@ -643,3 +643,62 @@ func TestNoCauseMessageUsesTheLookback(t *testing.T) {
 		t.Errorf("NoCause = %q", inc.NoCause)
 	}
 }
+
+func TestNodeFailureGroupsIncidents(t *testing.T) {
+	t.Parallel()
+	c := newCluster()
+	c.add(graph.Node{ID: "Node/worker-2", Kind: "Node", Name: "worker-2", Status: graph.Status{Ready: false, Reason: "NodeStatusUnknown", Since: mins(0)}})
+	for _, app := range []string{"api", "checkout", "search"} {
+		d := c.add(graph.Node{
+			ID: "Deployment/shop/" + app, Kind: "Deployment", Namespace: "shop", Name: app,
+			Status: graph.Status{Replicas: &graph.Replicas{Desired: 2, Ready: 1}},
+		})
+		c.pod(d.ID, app+"-a", mins(-60), true, "", mins(-60))
+		c.pod(d.ID, app+"-b", mins(-60), false, "", mins(0.5))
+		p := c.st.Nodes["Pod/shop/"+app+"-b"]
+		p.Parent = "Node/worker-2"
+		c.add(p)
+	}
+	// An unrelated incident with only a possible cause stays on its own.
+	other := c.add(graph.Node{
+		ID: "Deployment/shop/batch", Kind: "Deployment", Namespace: "shop", Name: "batch",
+		Status: graph.Status{Replicas: &graph.Replicas{Desired: 1}}, Change: by("kubectl-edit", "kubectl", "edit", mins(-1)),
+	})
+	c.pod(other.ID, "batch-a", mins(-60), false, "CrashLoopBackOff", mins(0.5))
+	b := c.st.Nodes["Pod/shop/batch-a"]
+	b.Parent = "Node/worker-1"
+	c.add(b)
+
+	incs := Analyze(c.st, DefaultOptions(mins(3)))
+	if len(incs) != 4 {
+		t.Fatalf("incidents = %d, want 4", len(incs))
+	}
+	groups := GroupIncidents(incs)
+	if len(groups) != 1 {
+		t.Fatalf("groups = %+v, want one", groups)
+	}
+	for _, inc := range incs {
+		if inc.Name != "batch" && inc.Symptom.Summary != "1 pod NodeNotReady" {
+			t.Errorf("%s symptom = %q, want pods on the failed node called out", inc.Name, inc.Symptom.Summary)
+		}
+	}
+	g := groups[0]
+	if g.Cause.Kind != KindNode || g.Cause.Object != "Node/worker-2" || len(g.Apps) != 3 || g.Cause.Evidence != nil {
+		t.Errorf("group = %+v", g)
+	}
+}
+
+func TestPossibleCausesNeverGroup(t *testing.T) {
+	t.Parallel()
+	at := mins(0)
+	c := Cause{Kind: KindConfig, Object: "ConfigMap/shop/shared", At: at, Confidence: Possible}
+	incs := []Incident{{App: "a", Causes: []Cause{c}}, {App: "b", Causes: []Cause{c}}}
+	if g := GroupIncidents(incs); len(g) != 0 {
+		t.Errorf("groups = %+v; possible causes must not group", g)
+	}
+	c.Confidence = Likely
+	incs = []Incident{{App: "a", Causes: []Cause{c}}, {App: "b", Causes: []Cause{c}}, {App: "c"}}
+	if g := GroupIncidents(incs); len(g) != 1 || len(g[0].Apps) != 2 {
+		t.Errorf("groups = %+v; want a and b grouped", g)
+	}
+}

@@ -2,7 +2,7 @@
 // incidents, then every change. Reconnects with backoff and resyncs from a
 // fresh snapshot after any gap.
 import { useEffect, useRef, useState } from "react";
-import type { Incident } from "../gen/cause";
+import type { Group, Incident } from "../gen/cause";
 import type { Message } from "../gen/graph";
 import type { IncidentsMessage } from "../gen/server";
 import { fetchHistory, SignedOutError } from "./api";
@@ -15,13 +15,14 @@ export interface Stream {
   status: StreamStatus;
   state: ClusterState | null;
   incidents: Incident[];
+  groups: Group[];
   events: ClusterEvent[];
 }
 
 const MAX_EVENTS = 300;
 
 export function useStream(): Stream {
-  const [stream, setStream] = useState<Stream>({ status: "connecting", state: null, incidents: [], events: [] });
+  const [stream, setStream] = useState<Stream>({ status: "connecting", state: null, incidents: [], groups: [], events: [] });
   const current = useRef<ClusterState | null>(null);
 
   useEffect(() => {
@@ -37,8 +38,8 @@ export function useStream(): Stream {
       ws.onmessage = (ev: MessageEvent<string>) => {
         const parsed = JSON.parse(ev.data) as Message | IncidentsMessage;
         if (parsed.type === "incidents") {
-          const { incidents } = parsed as IncidentsMessage;
-          setStream((s) => ({ ...s, incidents }));
+          const { incidents, groups } = parsed as IncidentsMessage;
+          setStream((s) => ({ ...s, incidents, groups: groups ?? [] }));
           return;
         }
         const msg = parsed as Message;

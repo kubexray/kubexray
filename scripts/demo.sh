@@ -3,7 +3,7 @@
 # (.demo/kubeconfig) and never touches your usual kubectl configuration.
 #
 #   scripts/demo.sh up       create the cluster and deploy the shop app
-#   scripts/demo.sh break    break it (SCENARIO=config, the default, or bad-image)
+#   scripts/demo.sh break    break it (SCENARIO=config, the default, bad-image or node)
 #   scripts/demo.sh fix      undo every scenario
 #   scripts/demo.sh down     delete the cluster
 set -euo pipefail
@@ -22,9 +22,13 @@ up() {
   need kind "brew install kind, or https://kind.sigs.k8s.io"
   need kubectl "brew install kubectl"
   mkdir -p "$ROOT/.demo"
+  if kind get clusters 2>/dev/null | grep -qx "$CLUSTER" && [ "$(kind get nodes --name "$CLUSTER" | wc -l | tr -d ' ')" -lt 3 ]; then
+    say "Recreating $CLUSTER with two workers…"
+    kind delete cluster --name "$CLUSTER" >/dev/null
+  fi
   if ! kind get clusters 2>/dev/null | grep -qx "$CLUSTER"; then
     say "Creating kind cluster $CLUSTER (about a minute)…"
-    kind create cluster --name "$CLUSTER" --kubeconfig "$KUBECONFIG" --wait 120s
+    kind create cluster --name "$CLUSTER" --config "$ROOT/demo/kind.yaml" --kubeconfig "$KUBECONFIG" --wait 180s
   else
     kind export kubeconfig --name "$CLUSTER" --kubeconfig "$KUBECONFIG" >/dev/null
   fi
@@ -54,7 +58,21 @@ break_image() {
   echo "   ./bin/kubexray why deploy/api -n shop --kubeconfig .demo/kubeconfig"
 }
 
+break_node() {
+  local node="$CLUSTER-worker2"
+  say "Worker $node fails (its container is stopped, like a machine losing power)."
+  docker stop "$node" >/dev/null
+  say "In about a minute Kubernetes marks the node NotReady and its pods not ready."
+  say "kubexray groups everything it breaks into one incident. List it with:"
+  echo "   ./bin/kubexray incidents --kubeconfig .demo/kubeconfig"
+}
+
 fix() {
+  if [ "$(docker inspect -f '{{.State.Running}}' "$CLUSTER-worker2" 2>/dev/null)" = "false" ]; then
+    say "Starting worker $CLUSTER-worker2 again…"
+    docker start "$CLUSTER-worker2" >/dev/null
+    kubectl wait --for=condition=Ready "node/$CLUSTER-worker2" --timeout=180s >/dev/null
+  fi
   say "Restoring checkout-config and api…"
   kubectl -n shop patch configmap checkout-config --type=merge -p '{"data":{"LOG_LEVEL":"info"}}' >/dev/null
   kubectl -n shop rollout restart deploy/checkout >/dev/null
@@ -76,7 +94,8 @@ case "${1:-}" in
     case "$SCENARIO" in
       config) break_config ;;
       bad-image) break_image ;;
-      *) echo "unknown SCENARIO=$SCENARIO (config or bad-image)" >&2; exit 1 ;;
+      node) break_node ;;
+      *) echo "unknown SCENARIO=$SCENARIO (config, bad-image or node)" >&2; exit 1 ;;
     esac ;;
   fix) fix ;;
   down) down ;;
