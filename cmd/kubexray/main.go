@@ -43,6 +43,7 @@ const usage = `kubexray is the flight recorder for your Kubernetes cluster.
 
 Usage:
   kubexray                     open the live map in your browser
+  kubexray incidents           list what's broken right now, and why
   kubexray why <kind>/<name>   explain why an app is broken, and what changed
   kubexray changes             list recent changes and who made them
   kubexray dump                stream the cluster graph as JSON lines
@@ -72,6 +73,8 @@ func run(args []string, stdout, stderr io.Writer) error {
 	switch cmd, rest := args[0], args[1:]; cmd {
 	case "why":
 		return why(ctx, rest, stdout, stderr)
+	case "incidents":
+		return incidents(ctx, rest, stdout, stderr)
 	case "changes":
 		return changes(ctx, rest, stdout, stderr)
 	case "dump":
@@ -90,7 +93,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 
 var (
 	helpAndVersion = []string{"-h", "-help", "--help", "-version", "--version"}
-	commands       = []string{"why", "changes", "dump", "version", "help"}
+	commands       = []string{"why", "incidents", "changes", "dump", "version", "help"}
 )
 
 // connection holds the flags every command that reads a cluster shares.
@@ -213,6 +216,42 @@ func why(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		return enc.Encode(inc)
 	}
 	return cli.Why(stdout, inc, now)
+}
+
+func incidents(ctx context.Context, args []string, stdout, stderr io.Writer) error {
+	fs := flag.NewFlagSet("incidents", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	var conn connection
+	conn.flags(fs, false)
+	output := fs.String("o", "text", "output format: text or json")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *output != "text" && *output != "json" {
+		return fmt.Errorf("-o must be text or json, got %q", *output)
+	}
+	st, _, err := conn.state(ctx, stderr)
+	if err != nil {
+		return err
+	}
+	now := time.Now()
+	list := cause.Analyze(st, cause.DefaultOptions(now))
+	groups := cause.GroupIncidents(list)
+	if list == nil {
+		list = []cause.Incident{} // JSON lists, never null
+	}
+	if groups == nil {
+		groups = []cause.Group{}
+	}
+	if *output == "json" {
+		enc := json.NewEncoder(stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(struct {
+			Incidents []cause.Incident `json:"incidents"`
+			Groups    []cause.Group    `json:"groups"`
+		}{list, groups})
+	}
+	return cli.Incidents(stdout, list, groups, now)
 }
 
 func changes(ctx context.Context, args []string, stdout, stderr io.Writer) error {

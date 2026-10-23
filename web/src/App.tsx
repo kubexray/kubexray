@@ -2,10 +2,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { DetailsPanel } from "./components/DetailsPanel";
 import { EventLog } from "./components/EventLog";
 import { Header } from "./components/Header";
-import { IncidentCard, rankIncidents } from "./components/IncidentCard";
+import { entries, IncidentCard } from "./components/IncidentCard";
 import { MapView } from "./components/MapView";
 import { Timeline } from "./components/Timeline";
-import type { Change, Incident } from "./gen/cause";
+import type { Change, Group, Incident } from "./gen/cause";
 import type { HistoryResponse } from "./gen/server";
 import { fetchAt, fetchChanges, fetchHistory, fetchWhy } from "./lib/api";
 import { changeEvents, mergeEvents } from "./lib/events";
@@ -38,6 +38,7 @@ interface Moment {
   at: string;
   state: ClusterState;
   incidents: Incident[];
+  groups: Group[];
 }
 type Past = Moment | { at: string; missing: true };
 
@@ -54,7 +55,7 @@ function usePast(at: string | null): { past: Past | null; last: Moment | null } 
       fetchAt(at, ctl.signal).then(
         (r) => {
           if (!r) return setPast({ at, missing: true });
-          const moment = { at, state: fromSnapshot(r.snapshot), incidents: r.incidents };
+          const moment = { at, state: fromSnapshot(r.snapshot), incidents: r.incidents, groups: r.groups ?? [] };
           setPast(moment);
           setLast(moment);
         },
@@ -105,6 +106,7 @@ export function App() {
   const shownMoment = past && "state" in past ? past : last;
   const state = at ? (shownMoment?.state ?? stream.state) : stream.state;
   const incidents = at ? (shownMoment?.incidents ?? stream.incidents) : stream.incidents;
+  const groups = at ? (shownMoment?.groups ?? stream.groups) : stream.groups;
   const missing = !!past && "missing" in past;
   const loading = !!at && !(past && "state" in past);
 
@@ -115,15 +117,18 @@ export function App() {
   const [hovered, setHovered] = useState<string | null>(null);
   const [open, setOpen] = useState(new Map<string, boolean>());
 
-  // Open on the most severe incident, once.
+  const list = useMemo(() => entries(incidents, groups), [incidents, groups]);
+  const topEntry = list[0];
+
+  // Open on the incident the card shows, once.
   const autoSelected = useRef(false);
   useEffect(() => {
-    const first = rankIncidents(incidents)[0];
+    const first = topEntry?.incidents[0];
     if (!autoSelected.current && first) {
       autoSelected.current = true;
       setSelected(first.app);
     }
-  }, [incidents]);
+  }, [topEntry]);
 
   const show = useCallback(
     (id: string) => {
@@ -142,8 +147,13 @@ export function App() {
   const explainable = APP_KINDS.has(state?.nodes.get(selected ?? "")?.kind ?? "");
   const why = useWhy(selected, !at && !listed && explainable);
 
-  const top = rankIncidents(incidents)[0];
-  const broken = useMemo(() => (top ? chainOf(view, top.app, "up") : null), [view, top]);
+  // The broken paths of the top incident, or of every app in its group.
+  const broken = useMemo(() => {
+    if (!topEntry) return null;
+    const ids = new Set<string>();
+    for (const inc of topEntry.incidents) for (const id of chainOf(view, inc.app, "up")) ids.add(id);
+    return ids;
+  }, [view, topEntry]);
   const lit = useMemo(() => (hovered ? chainOf(view, hovered) : null), [view, hovered]);
   const highlight = useMemo(() => ({ lit, hovered, broken, selected }), [lit, hovered, broken, selected]);
   const causeOf = useCallback(
@@ -186,7 +196,7 @@ export function App() {
       <Header view={view} status={stream.status} rewound={!!at} />
       {missing && <div className="notice">kubexray has no history for that moment. Pick a later time, or go back to live.</div>}
       <IncidentCard
-        incidents={incidents}
+        list={list}
         at={at}
         canRewindTo={(ts) => !!history && Date.parse(ts) >= Date.parse(history.from)}
         onShow={show}

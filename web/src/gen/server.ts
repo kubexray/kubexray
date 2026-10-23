@@ -17,6 +17,7 @@ export interface IncidentsMessage {
   type: "incidents";
   ts: string /* RFC 3339 */;
   incidents: cause.Incident[];
+  groups: cause.Group[]; // incidents sharing a cause (ADR-0008)
 }
 /**
  * HistoryResponse is the recorded time range (GET /api/history).
@@ -31,4 +32,5 @@ export interface HistoryResponse {
 export interface AtResponse {
   snapshot: graph.Message;
   incidents: cause.Incident[];
+  groups: cause.Group[];
 }

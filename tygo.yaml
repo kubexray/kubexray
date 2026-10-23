@@ -25,6 +25,7 @@ packages:
     exclude_files: ["server.go", "hub.go"]
     type_mappings:
       cause.Incident: "cause.Incident"
+      cause.Group: "cause.Group"
     frontmatter: |
       import type * as cause from "./cause";
       import type * as graph from "./graph";

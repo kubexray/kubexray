@@ -2,6 +2,7 @@
 // a row reading left to right (way in → load balancer → app → config and
 // storage).
 import type { Node } from "../gen/graph";
+import { ReasonNodeNotReady } from "../gen/cause";
 import { activePod, type Health, podHealth } from "./health";
 import type { ClusterState } from "./state";
 
@@ -101,7 +102,14 @@ export function buildView(state: ClusterState): NamespaceView[] {
     return w;
   };
 
-  for (const n of state.nodes.values()) {
+  // Pods on a NotReady node report nothing themselves; say why they're down.
+  // Mirrors the cause engine (internal/cause/cause.go, explain).
+  const deadNodes = new Set([...state.nodes.values()].filter((n) => n.kind === "Node" && !n.status.ready).map((n) => n.id));
+  const withNodeReason = (p: Node): Node =>
+    p.parent && deadNodes.has(p.parent) && !p.status.ready && !p.status.reason ? { ...p, status: { ...p.status, reason: ReasonNodeNotReady } } : p;
+
+  for (const raw of state.nodes.values()) {
+    const n = raw.kind === "Pod" ? withNodeReason(raw) : raw;
     if (!n.ns) continue;
     if (n.kind === "Pod") {
       const app = state.nodes.get(appOf(n.id)) ?? n;

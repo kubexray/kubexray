@@ -5,7 +5,7 @@ import type { Node } from "../gen/graph";
 
 export type Health = "ok" | "warn" | "crit" | "dying";
 
-const failing = /CrashLoop|ImagePull|ErrImage|InvalidImageName|Error|OOMKilled|Evicted|Init:|BackOff|Unschedulable|CreateContainer/;
+const failing = /CrashLoop|ImagePull|ErrImage|InvalidImageName|Error|OOMKilled|Evicted|Init:|BackOff|Unschedulable|CreateContainer|NodeNotReady/;
 
 export function podHealth(p: Node): Health {
   const s = p.status;

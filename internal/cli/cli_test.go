@@ -132,6 +132,33 @@ func TestChanges(t *testing.T) {
 	}
 }
 
+func TestIncidents(t *testing.T) {
+	t.Parallel()
+	node := cause.Cause{Kind: cause.KindNode, Object: "Node/worker-2", Summary: "node worker-2 is not ready", Confidence: cause.VeryLikely, At: now.Add(-time.Minute)}
+	incs := []cause.Incident{
+		{App: "Deployment/shop/api", Namespace: "shop", Name: "api", Symptom: cause.Symptom{Summary: "1 pod not ready", Ready: 1, Desired: 2, BadPods: []string{"x"}}, Causes: []cause.Cause{node}},
+		{App: "Deployment/shop/checkout", Namespace: "shop", Name: "checkout", Symptom: cause.Symptom{Summary: "2 pods not ready", Desired: 2, BadPods: []string{"y"}}, Causes: []cause.Cause{node}},
+		{App: "Deployment/shop/batch", Namespace: "shop", Name: "batch", Symptom: cause.Symptom{Summary: "1 pod CrashLoopBackOff", Desired: 1, BadPods: []string{"z"}}},
+	}
+	var out strings.Builder
+	_ = Incidents(&out, incs, cause.GroupIncidents(incs), now)
+	// Both entries have an app that's down; the larger one comes first.
+	want := "node worker-2 is not ready at 14:03:00 (1m ago): 2 apps affected\n" +
+		"                    shop/checkout is down: 2 pods not ready\n" +
+		"                    shop/api is degraded: 1 pod not ready\n\n" +
+		"shop/batch is down: 1 pod CrashLoopBackOff\n" +
+		"  cause             none found\n\n" +
+		"Run kubexray why <kind>/<name> -n <namespace> for the evidence and next steps.\n"
+	if out.String() != want {
+		t.Errorf("output:\n%s\nwant:\n%s", out.String(), want)
+	}
+	out.Reset()
+	_ = Incidents(&out, nil, nil, now)
+	if !strings.Contains(out.String(), "No incidents") {
+		t.Errorf("empty = %q", out.String())
+	}
+}
+
 func TestAgo(t *testing.T) {
 	t.Parallel()
 	for d, want := range map[time.Duration]string{-time.Second: "just now", 5 * time.Second: "5s ago", 90 * time.Second: "1m ago", 3 * time.Hour: "3h ago", 72 * time.Hour: "3d ago"} {

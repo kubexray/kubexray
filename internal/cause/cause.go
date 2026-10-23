@@ -177,8 +177,11 @@ var failingReasons = map[string]bool{
 	"CrashLoopBackOff": true, "Error": true, "OOMKilled": true,
 	"ImagePullBackOff": true, "ErrImagePull": true, "InvalidImageName": true,
 	"CreateContainerConfigError": true, "CreateContainerError": true,
-	"Evicted": true, "Unschedulable": true,
+	"Evicted": true, "Unschedulable": true, ReasonNodeNotReady: true,
 }
+
+// ReasonNodeNotReady marks pods that aren't ready because their node isn't.
+const ReasonNodeNotReady = "NodeNotReady"
 
 var pullReasons = map[string]bool{"ImagePullBackOff": true, "ErrImagePull": true, "InvalidImageName": true}
 
@@ -291,6 +294,14 @@ func (x *index) deps(pods []graph.Node) []string {
 // explain builds the incident for one app.
 func (x *index) explain(app graph.Node, opts Options) Incident {
 	pods := slices.DeleteFunc(slices.Clone(x.podsOf[app.ID]), func(p graph.Node) bool { return !active(app, p) })
+	// A pod on a NotReady node reports nothing itself (its kubelet is gone);
+	// say why it isn't ready. The map applies the same rule (web/src/lib/view.ts)
+	// to pods that aren't part of an incident yet.
+	for i, p := range pods {
+		if n, ok := x.st.Nodes[p.Parent]; ok && n.Kind == "Node" && !n.Status.Ready && !p.Status.Ready && p.Status.Reason == "" {
+			pods[i].Status.Reason = ReasonNodeNotReady
+		}
+	}
 	inc := Incident{App: app.ID, Kind: app.Kind, Namespace: app.Namespace, Name: app.Name, LastChange: app.Change}
 	inc.Symptom = symptom(app, pods)
 	if (len(inc.Symptom.BadPods) == 0 && inc.Symptom.Ready >= inc.Symptom.Desired) || (app.Kind == "Job" && app.Status.Phase == "Complete") {
