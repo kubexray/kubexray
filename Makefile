@@ -3,6 +3,7 @@ GOLANGCI_LINT_VERSION := v2.15.0
 GOVULNCHECK_VERSION   := v1.9.0
 GITLEAKS_VERSION      := v8.30.1
 ACTIONLINT_VERSION    := v1.7.12
+TYGO_VERSION          := v0.2.21
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo none)
@@ -19,8 +20,29 @@ help: ## Show this help
 	@grep -hE '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
 
 .PHONY: build
-build: ## Build the kubexray binary into ./bin
+build: ## Build the kubexray binary with the web UI into ./bin
+	$(MAKE) web
+	$(MAKE) go-build
+
+.PHONY: go-build
+go-build: ## Build the binary without rebuilding the UI (no Node needed)
 	CGO_ENABLED=0 go build -trimpath -ldflags '$(LDFLAGS)' -o bin/kubexray ./cmd/kubexray
+
+.PHONY: web
+web: ## Build the web UI into internal/web/dist (needs Node)
+	cd web && npm ci --no-fund --no-audit && npm run build
+
+.PHONY: web-check
+web-check: ## Type-check, lint and test the web UI
+	cd web && npm ci --no-fund --no-audit && npm run typecheck && npm run lint && npm test
+
+.PHONY: gen
+gen: ## Generate the UI's TypeScript types from Go
+	go run github.com/gzuidhof/tygo@$(TYGO_VERSION) generate
+
+.PHONY: gen-check
+gen-check: gen ## Fail if the generated TypeScript types are out of date
+	git diff --exit-code -- web/src/gen || (echo "Generated types are stale: run make gen and commit." && exit 1)
 
 .PHONY: test
 test: ## Run tests with the race detector

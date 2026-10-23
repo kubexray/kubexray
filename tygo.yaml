@@ -1,0 +1,30 @@
+# TypeScript types for the UI, generated from Go (ADR-0003): make gen
+type_mappings:
+  time.Time: "string /* RFC 3339 */"
+  time.Duration: "number /* nanoseconds */"
+
+packages:
+  - path: "github.com/kubexray/kubexray/internal/graph"
+    output_path: "web/src/gen/graph.ts"
+    enum_style: "union"
+    exclude_files: ["graph.go", "state.go"]
+
+  - path: "github.com/kubexray/kubexray/internal/cause"
+    output_path: "web/src/gen/cause.ts"
+    enum_style: "union"
+    exclude_files: ["rules.go"]
+    type_mappings:
+      graph.Change: "graph.Change"
+      graph.Origin: "graph.Origin"
+    frontmatter: |
+      import type * as graph from "./graph";
+
+  - path: "github.com/kubexray/kubexray/internal/server"
+    output_path: "web/src/gen/server.ts"
+    enum_style: "union"
+    exclude_files: ["server.go", "hub.go"]
+    type_mappings:
+      cause.Incident: "cause.Incident"
+    frontmatter: |
+      import type * as cause from "./cause";
+      import type * as graph from "./graph";

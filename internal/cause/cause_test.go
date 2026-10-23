@@ -410,12 +410,10 @@ func TestChanges(t *testing.T) {
 	}
 }
 
-func TestConfidenceText(t *testing.T) {
+func TestConfidenceRank(t *testing.T) {
 	t.Parallel()
-	for c, want := range map[Confidence]string{VeryLikely: "very likely", Likely: "likely", Possible: "possible", 0: "unknown"} {
-		if b, _ := c.MarshalText(); string(b) != want {
-			t.Errorf("%d = %q, want %q", c, b, want)
-		}
+	if VeryLikely.rank() <= Likely.rank() || Likely.rank() <= Possible.rank() || Possible.rank() <= Confidence("").rank() {
+		t.Error("confidence levels are out of order")
 	}
 }
 

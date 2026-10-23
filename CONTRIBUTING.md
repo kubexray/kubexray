@@ -4,15 +4,27 @@ Thanks for your interest! kubexray is early-stage; see [ROADMAP.md](ROADMAP.md) 
 
 ## Development setup
 
-You need Go (any recent version; the `go` command downloads the exact toolchain from `go.mod`) and Docker.
-All other tools (golangci-lint, govulncheck, gitleaks, actionlint) are pinned in the `Makefile` and run via `go run`, so there is nothing else to install.
+You need Go (any recent version; the `go` command downloads the exact toolchain from `go.mod`) and Docker. For the web UI you also need Node (the version in `web/.nvmrc`).
+All other Go tools (golangci-lint, govulncheck, gitleaks, actionlint, tygo) are pinned in the `Makefile` and run via `go run`, so there is nothing else to install.
 
 ```sh
-make help    # list targets
-make build   # build ./bin/kubexray
-make test    # unit tests with the race detector
-make check   # everything CI runs: lint, test, vuln, secrets, actionlint
-make fmt     # format code
+make help       # list targets
+make build      # build ./bin/kubexray with the web UI
+make go-build   # build without rebuilding the UI (no Node needed)
+make test       # Go unit tests with the race detector
+make check      # the Go checks CI runs: lint, test, vuln, secrets, actionlint
+make web-check  # the UI checks: types, lint, tests
+make gen        # regenerate the UI's TypeScript types after changing Go types
+make fmt        # format Go code
+```
+
+### Working on the UI
+
+The UI only works behind kubexray's server (session cookie, same-origin checks), so there is no separate dev server. Instead:
+
+```sh
+cd web && npm run watch                                    # rebuilds on every change
+./bin/kubexray --ui-dir internal/web/dist --context kind-…  # serves those files; reload the page
 ```
 
 ## Workflow

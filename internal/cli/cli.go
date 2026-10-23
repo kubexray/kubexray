@@ -67,7 +67,7 @@ func Why(w io.Writer, inc cause.Incident, now time.Time) error {
 		p.row("", "The cause may be outside the cluster: a dependency, the network, or traffic.")
 	} else {
 		top := inc.Causes[0]
-		p.row(top.Confidence.String()+" cause", "%s", describe(top, now))
+		p.row(string(top.Confidence)+" cause", "%s", describe(top, now))
 		for i, ev := range top.Evidence {
 			p.row(first(i, "evidence"), "%s", ev)
 		}

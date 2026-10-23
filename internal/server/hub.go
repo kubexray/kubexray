@@ -12,17 +12,6 @@ import (
 	"github.com/kubexray/kubexray/internal/graph"
 )
 
-// MessageIncidents carries the cause engine's current incidents (ADR-0007).
-const MessageIncidents = "incidents"
-
-// IncidentsMessage is sent whenever the set of incidents changes.
-type IncidentsMessage struct {
-	V         int              `json:"v"`
-	Type      string           `json:"type"`
-	TS        time.Time        `json:"ts"`
-	Incidents []cause.Incident `json:"incidents"`
-}
-
 var (
 	errTooManyClients = errors.New("too many clients")
 	errNotSynced      = errors.New("not synced yet; try again in a moment")
@@ -181,6 +170,20 @@ func (h *Hub) UpdateIncidents(now time.Time) error {
 	h.incidents, h.payload = raw, payload
 	h.broadcast(raw)
 	return nil
+}
+
+// changes lists recent changes on the current state.
+func (h *Hub) changes(since time.Time) ([]cause.Change, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.state == nil {
+		return nil, errNotSynced
+	}
+	list := cause.Changes(h.state, since, false)
+	if list == nil {
+		list = []cause.Change{}
+	}
+	return list, nil
 }
 
 // explain runs the cause engine for one app on the current state.

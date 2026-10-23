@@ -41,7 +41,7 @@ func (a *analysis) causes() []Cause {
 
 	start := a.inc.Since
 	slices.SortStableFunc(cs, func(p, q Cause) int {
-		return cmp.Or(cmp.Compare(q.Confidence, p.Confidence), cmp.Compare(start.Sub(p.At).Abs(), start.Sub(q.At).Abs()))
+		return cmp.Or(cmp.Compare(q.Confidence.rank(), p.Confidence.rank()), cmp.Compare(start.Sub(p.At).Abs(), start.Sub(q.At).Abs()))
 	})
 	if len(cs) == 1 {
 		cs[0].Evidence = append(cs[0].Evidence, fmt.Sprintf("no other changes to %s or what it uses in the %s before", a.app.Name, duration(a.opts.Lookback)))
