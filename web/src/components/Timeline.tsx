@@ -1,45 +1,52 @@
 import type { Incident } from "../gen/cause";
-import type { HistoryResponse } from "../gen/server";
 import type { ClusterEvent } from "../lib/events";
-import { clock } from "../lib/format";
+import { clock, duration } from "../lib/format";
 import { useNow } from "../lib/useNow";
 
 interface Props {
-  history: HistoryResponse | null;
-  at: string | null; // null: live
+  bounds: { from: string; to: string } | null;
+  /** The moment shown; null means live (live mode only). */
+  at: string | null;
+  /** Live: the right edge is now and there's a Back to live button.
+   * Replay: the right edge is the end of the file and there's Play. */
+  mode: "live" | "replay";
   events: ClusterEvent[];
   incidents: Incident[];
   onSeek: (ts: string | null) => void;
+  playing?: boolean;
+  onPlay?: () => void;
 }
 
 /** The rewind timeline: drag back through the recorded history. */
-export function Timeline({ history, at, events, incidents, onSeek }: Props) {
+export function Timeline({ bounds, at, mode, events, incidents, onSeek, playing, onPlay }: Props) {
   const now = useNow();
-  if (!history) {
+  if (!bounds) {
     return (
       <footer className="timeline">
         <span className="hint">Recording… the timeline appears once there's history to rewind.</span>
       </footer>
     );
   }
-  const from = Date.parse(history.from);
-  const to = Math.max(now, Date.parse(history.to));
+  const from = Date.parse(bounds.from);
+  const to = mode === "live" ? Math.max(now, Date.parse(bounds.to)) : Date.parse(bounds.to);
   const span = Math.max(1, to - from);
   const pos = (ts: string) => `${Math.min(100, Math.max(0, ((Date.parse(ts) - from) / span) * 100))}%`;
   const value = at ? Date.parse(at) : to;
 
   return (
     <footer className="timeline">
-      <button type="button" className={`live ${at ? "" : "on"}`} onClick={() => onSeek(null)} disabled={!at}>
-        {at ? "● Back to live" : "● Live"}
-      </button>
+      {mode === "live" ? (
+        <button type="button" className={`live ${at ? "" : "on"}`} onClick={() => onSeek(null)} disabled={!at}>
+          {at ? "● Back to live" : "● Live"}
+        </button>
+      ) : (
+        <button type="button" className="live" onClick={onPlay}>
+          {playing ? "❚❚ Pause" : "▶ Play"}
+        </button>
+      )}
       <div className="track">
         <div className="ticks" aria-hidden="true">
-          {incidents.map((inc) =>
-            inc.since ? (
-              <span key={inc.app} className="band" style={{ left: pos(inc.since), right: 0 }} />
-            ) : null,
-          )}
+          {incidents.map((inc) => (inc.since ? <span key={inc.app} className="band" style={{ left: pos(inc.since), right: 0 }} /> : null))}
           {events
             .filter((e) => e.kind !== "info")
             .map((e) => (
@@ -48,18 +55,24 @@ export function Timeline({ history, at, events, incidents, onSeek }: Props) {
         </div>
         <input
           type="range"
-          aria-label="Rewind the cluster"
+          aria-label={mode === "live" ? "Rewind the cluster" : "Move through the replay"}
           min={from}
           max={to}
           step={1000}
           value={value}
           onChange={(e) => {
             const t = Number(e.target.value);
-            onSeek(t >= to - 1000 ? null : new Date(t).toISOString());
+            onSeek(mode === "live" && t >= to - 1000 ? null : new Date(t).toISOString());
           }}
         />
       </div>
-      <span className="clock">{at ? `${clock(at)} · rewound` : `${clock(new Date(now).toISOString())} · live`}</span>
+      <span className="clock">
+        {mode === "live"
+          ? at
+            ? `${clock(at)} · rewound`
+            : `${clock(new Date(now).toISOString())} · live`
+          : `${clock(new Date(value).toISOString())} · ${duration(bounds.from, value)} of ${duration(bounds.from, to)}`}
+      </span>
     </footer>
   );
 }

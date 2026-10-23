@@ -28,6 +28,20 @@ export function fromSnapshot(msg: Message): ClusterState {
 }
 
 /**
+ * Checks a delta from an untrusted source (a replay file) before it's applied,
+ * like the Go graph.State does: every op must be complete and known.
+ */
+export function validateDelta(msg: Message): void {
+  for (const [i, op] of (msg.ops ?? []).entries()) {
+    const ok =
+      (op.op === "upsertNode" && !!op.node?.id) ||
+      (op.op === "upsertEdge" && !!op.edge?.id) ||
+      ((op.op === "removeNode" || op.op === "removeEdge") && !!op.id);
+    if (!ok) throw new Error(`seq ${msg.seq} op ${i}: invalid ${op.op} operation`);
+  }
+}
+
+/**
  * Applies a delta and returns the new state. Deltas at or below the state's
  * seq are already included (a client can join between a flush and its
  * broadcast) and are ignored.

@@ -2,6 +2,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -29,6 +30,7 @@ import (
 	"github.com/kubexray/kubexray/internal/cluster"
 	"github.com/kubexray/kubexray/internal/graph"
 	"github.com/kubexray/kubexray/internal/recorder"
+	"github.com/kubexray/kubexray/internal/replay"
 	"github.com/kubexray/kubexray/internal/server"
 	"github.com/kubexray/kubexray/internal/version"
 	"github.com/kubexray/kubexray/internal/web"
@@ -47,6 +49,7 @@ Usage:
   kubexray incidents           list what's broken right now, and why
   kubexray why <kind>/<name>   explain why an app is broken, and what changed
   kubexray changes             list recent changes and who made them
+  kubexray play <file.kxr>     watch a replay in your browser (no cluster needed)
   kubexray dump                stream the cluster graph as JSON lines
   kubexray version             print the version
 
@@ -80,6 +83,8 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return changes(ctx, rest, stdout, stderr)
 	case "dump":
 		return dump(ctx, rest, stdout, stderr)
+	case "play":
+		return play(ctx, rest, stdout, stderr)
 	case "version", "--version", "-version":
 		_, err := fmt.Fprintln(stdout, version.String())
 		return err
@@ -94,7 +99,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 
 var (
 	helpAndVersion = []string{"-h", "-help", "--help", "-version", "--version"}
-	commands       = []string{"why", "incidents", "changes", "dump", "version", "help"}
+	commands       = []string{"why", "incidents", "changes", "dump", "play", "version", "help"}
 )
 
 // connection holds the flags every command that reads a cluster shares.
@@ -411,6 +416,51 @@ func ui(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	wg.Wait() // let the server shut down gracefully
 	close(errs)
 	return <-errs
+}
+
+// play serves the replay player for one file: no cluster, no kubeconfig.
+func play(ctx context.Context, args []string, stdout, stderr io.Writer) error {
+	fs := flag.NewFlagSet("play", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	port := fs.Int("port", 0, "port to listen on, on 127.0.0.1 (default: a free port)")
+	noBrowser := fs.Bool("no-browser", false, "don't open the browser")
+	file := ""
+	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+		file, args = args[0], args[1:]
+	}
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if file == "" {
+		file = fs.Arg(0)
+	}
+	if file == "" {
+		return errors.New("which replay? for example: kubexray play incident.kxr")
+	}
+	raw, err := os.ReadFile(file) //nolint:gosec // the user names the file to play
+	if err != nil {
+		return err
+	}
+	// Validate before serving: a replay is untrusted (ADR-0008).
+	if _, err := replay.Read(bytes.NewReader(raw)); err != nil {
+		return err
+	}
+	log := slog.New(slog.NewTextHandler(stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	srv, err := server.NewPlayer(raw, web.Assets(), log)
+	if err != nil {
+		return err
+	}
+	ln, err := srv.Listen(ctx, *port)
+	if err != nil {
+		return fmt.Errorf("listening: %w", err)
+	}
+	_, _ = fmt.Fprintf(stdout, "Playing %s at %s   (Ctrl-C to stop)\n", file, srv.URL())
+	if !*noBrowser {
+		if err := openBrowser(ctx, srv.URL()); err != nil {
+			_, _ = fmt.Fprintf(stderr, "Couldn't open the browser (%v); open the link above.\n", err)
+		}
+	}
+	return srv.Serve(ctx, ln)
 }
 
 // openBrowser opens url, kubexray's own launch link, with the platform's

@@ -29,3 +29,11 @@ packages:
     frontmatter: |
       import type * as cause from "./cause";
       import type * as graph from "./graph";
+
+  - path: "github.com/kubexray/kubexray/internal/replay"
+    output_path: "web/src/gen/replay.ts"
+    exclude_files: ["anonymize.go", "write.go", "read.go"]
+    type_mappings:
+      cause.Change: "cause.Change"
+    frontmatter: |
+      import type * as cause from "./cause";

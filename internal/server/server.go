@@ -66,6 +66,8 @@ type Server struct {
 	host   string // 127.0.0.1:<port>, set by Listen
 	csp    string
 	cookie string // session cookie name, set by Listen
+
+	replay []byte // player mode: the one replay file served (kubexray play)
 }
 
 // New returns a server for the hub and recorder fed by the pump.
@@ -75,6 +77,30 @@ func New(hub *Hub, rec *recorder.Recorder, assets fs.FS, log *slog.Logger, info 
 		return nil, fmt.Errorf("generating session token: %w", err)
 	}
 	return &Server{hub: hub, rec: rec, assets: assets, log: log, info: info, now: time.Now, token: base64.RawURLEncoding.EncodeToString(b)}, nil
+}
+
+// NewPlayer returns a server in player mode (kubexray play): the replay
+// player and one already-validated replay file, behind the same protections
+// as live mode (ADR-0008, section 5). It has no cluster access at all.
+func NewPlayer(file []byte, assets fs.FS, log *slog.Logger) (*Server, error) {
+	s, err := New(nil, nil, playerHome{assets}, log, Info{})
+	if err != nil {
+		return nil, err
+	}
+	s.replay = file
+	return s, nil
+}
+
+// playerHome serves player.html as the home page (when the build has one).
+type playerHome struct{ fs.FS }
+
+func (p playerHome) Open(name string) (fs.File, error) {
+	if name == "index.html" {
+		if f, err := p.FS.Open("player.html"); err == nil {
+			return f, nil
+		}
+	}
+	return p.FS.Open(name)
 }
 
 // Listen binds to 127.0.0.1 on port (0 picks a free one).
@@ -107,7 +133,9 @@ func (s *Server) Serve(ctx context.Context, ln net.Listener) error {
 		ReadHeaderTimeout: 5 * time.Second,
 		BaseContext:       func(net.Listener) context.Context { return ctx },
 	}
-	go s.watchIncidents(ctx)
+	if s.hub != nil {
+		go s.watchIncidents(ctx)
+	}
 	go func() {
 		<-ctx.Done()
 		// ctx is done by now; shutdown gets its own deadline.
@@ -140,12 +168,16 @@ func (s *Server) watchIncidents(ctx context.Context) {
 // session, then routes.
 func (s *Server) Handler() http.Handler {
 	api := http.NewServeMux()
-	api.HandleFunc("GET /api/stream", s.stream)
-	api.HandleFunc("GET /api/history", s.history)
-	api.HandleFunc("GET /api/at", s.at)
-	api.HandleFunc("GET /api/why", s.why)
-	api.HandleFunc("GET /api/changes", s.changes)
-	api.HandleFunc("GET /api/export", s.export)
+	if s.replay != nil {
+		api.HandleFunc("GET /api/replay", s.serveReplay)
+	} else {
+		api.HandleFunc("GET /api/stream", s.stream)
+		api.HandleFunc("GET /api/history", s.history)
+		api.HandleFunc("GET /api/at", s.at)
+		api.HandleFunc("GET /api/why", s.why)
+		api.HandleFunc("GET /api/changes", s.changes)
+		api.HandleFunc("GET /api/export", s.export)
+	}
 	api.Handle("GET /", http.FileServerFS(s.assets))
 
 	return s.checkHost(s.headers(s.session(api)))
@@ -201,8 +233,13 @@ func (s *Server) session(next http.Handler) http.Handler {
 				Name: s.cookie, Value: s.token, Path: "/",
 				HttpOnly: true, SameSite: http.SameSiteStrictMode,
 			})
-			// Drop the token from the address bar and history.
-			http.Redirect(w, r, "/", http.StatusSeeOther)
+			// Drop the token from the address bar and history. In player
+			// mode, land on the player with the replay loaded.
+			landing := "/"
+			if s.replay != nil {
+				landing = "/?replay=%2Fapi%2Freplay"
+			}
+			http.Redirect(w, r, landing, http.StatusSeeOther)
 			return
 		}
 		c, err := r.Cookie(s.cookie)
@@ -335,6 +372,11 @@ func (s *Server) why(w http.ResponseWriter, r *http.Request) {
 	default:
 		writeJSON(w, inc)
 	}
+}
+
+func (s *Server) serveReplay(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "application/gzip")
+	_, _ = w.Write(s.replay)
 }
 
 // changes lists who changed what since the recording began (cause.Changes).
