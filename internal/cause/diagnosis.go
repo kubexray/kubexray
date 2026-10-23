@@ -69,9 +69,13 @@ func (x *index) diagnose(app graph.Node, pods []graph.Node, s Symptom, opts Opti
 			return d
 		}
 		// A pod that just started isn't ready until its probe first passes,
-		// and a crashing one is briefly running: only blame the probe after
-		// the grace period (kubexray why skips it).
-		if r == "" && p.Status.Phase == "Running" && !p.Status.Since.IsZero() && opts.Now.Sub(p.Status.Since) >= opts.Grace {
+		// and a crashing one is briefly running: only blame the probe once a
+		// pod has been unready for the grace period (kubexray why skips it).
+		long := slices.ContainsFunc(same, func(p graph.Node) bool {
+			t := wentBad(p)
+			return !t.IsZero() && opts.Now.Sub(t) >= opts.Grace-opts.Skew
+		})
+		if r == "" && p.Status.Phase == "Running" && long {
 			return notReady(p, n)
 		}
 	}

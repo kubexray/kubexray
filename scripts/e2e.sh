@@ -22,7 +22,7 @@ SCENARIOS=(
   "bad-probe|why deploy/api -n shop|^  diagnosis +1 pod is running but failing its readiness probe;^  very likely cause +readiness probe added to api"
   "unschedulable|why deploy/checkout -n shop|^  diagnosis +The scheduler can't place 1 pod: 2 nodes have too little free memory;^  very likely cause +resources changed .* by kubectl set"
   "bad-config|why deploy/api -n shop|^  diagnosis +Kubernetes can't create the container api: couldn't find key password in Secret shop/db-credentials;^  very likely cause +Secret db-credentials was edited by kubectl patch"
-  "node|incidents|^node $CLUSTER-worker2 is not ready.*: [0-9]+ apps? affected"
+  "node|incidents|^node $CLUSTER-worker[0-9]* is not ready.*: [0-9]+ apps affected"
 )
 
 say() { printf '\033[1m%s\033[0m\n' "$*"; }
@@ -36,13 +36,15 @@ matches() {
   done
 }
 
+# run is called in an || list, where bash ignores set -e: every step checks.
 run() {
-  local name="$1" args="$2" want="$3" out="" waited=0
+  local name="$1" args="$2" want="$3" out="" deadline
   say "== $name"
-  "$ROOT/scripts/demo.sh" fix >/dev/null
-  SCENARIO="$name" "$ROOT/scripts/demo.sh" break >/dev/null
+  "$ROOT/scripts/demo.sh" fix >/dev/null || { echo "FAIL: $name: make fix didn't restore the shop" >&2; return 1; }
+  SCENARIO="$name" "$ROOT/scripts/demo.sh" break >/dev/null || { echo "FAIL: $name: make break failed" >&2; return 1; }
   # Incidents appear after a 30 s grace period; give the cluster time too.
-  while [ "$waited" -lt "$TIMEOUT" ]; do
+  deadline=$((SECONDS + TIMEOUT))
+  while [ "$SECONDS" -lt "$deadline" ]; do
     # shellcheck disable=SC2086 # args is a list of words
     out="$("$KX" $args --kubeconfig "$KUBECONFIG" 2>/dev/null || true)"
     if matches "$out" "$want"; then
@@ -50,7 +52,6 @@ run() {
       return 0
     fi
     sleep 5
-    waited=$((waited + 5))
   done
   echo "FAIL: $name: after ${TIMEOUT}s kubexray said:" >&2
   printf '%s\n' "$out" >&2
@@ -58,6 +59,12 @@ run() {
   kubectl -n shop get pods -o wide >&2 || true
   return 1
 }
+
+known=" "
+for s in "${SCENARIOS[@]}"; do known+="${s%%|*} "; done
+for arg in "$@"; do
+  [[ "$known" == *" $arg "* ]] || { echo "unknown scenario $arg; known:$known" >&2; exit 2; }
+done
 
 failed=()
 for s in "${SCENARIOS[@]}"; do

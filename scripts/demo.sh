@@ -60,9 +60,11 @@ break_image() {
 }
 
 break_node() {
-  local node="$CLUSTER-worker2"
-  if [ "$(kubectl -n shop get pods --field-selector "spec.nodeName=$node" -o name | wc -l | tr -d ' ')" = "0" ]; then
-    echo "No shop pods run on $node, so stopping it wouldn't affect the shop. Try: make fix && make break SCENARIO=node" >&2
+  # The worker running the most shop pods, so the failure hits several apps.
+  local node
+  node="$(kubectl -n shop get pods -o jsonpath='{range .items[*]}{.spec.nodeName}{"\n"}{end}' | grep -- '-worker' | sort | uniq -c | sort -rn | awk 'NR==1 {print $2}')"
+  if [ -z "$node" ]; then
+    echo "No shop pods run on a worker, so stopping one wouldn't affect the shop. Try: make fix && make break SCENARIO=node" >&2
     exit 1
   fi
   say "Worker $node fails (its container is stopped, like a machine losing power)."
@@ -103,12 +105,14 @@ break_bad_config() {
 }
 
 fix() {
-  if [ "$(docker inspect -f '{{.State.Running}}' "$CLUSTER-worker2" 2>/dev/null)" = "false" ]; then
-    say "Starting worker $CLUSTER-worker2 again…"
-    docker start "$CLUSTER-worker2" >/dev/null
-    kubectl wait --for=condition=Ready "node/$CLUSTER-worker2" --timeout=180s >/dev/null ||
-      say "$CLUSTER-worker2 isn't ready yet; it will catch up. Continuing."
-  fi
+  for node in "$CLUSTER-worker" "$CLUSTER-worker2"; do
+    if [ "$(docker inspect -f '{{.State.Running}}' "$node" 2>/dev/null)" = "false" ]; then
+      say "Starting worker $node again…"
+      docker start "$node" >/dev/null
+      kubectl wait --for=condition=Ready "node/$node" --timeout=180s >/dev/null ||
+        say "$node isn't ready yet; it will catch up. Continuing."
+    fi
+  done
   say "Restoring the shop…"
   kubectl -n shop patch configmap checkout-config --type=merge -p '{"data":{"LOG_LEVEL":"info"}}' >/dev/null
   if [ "$(kubectl -n shop get deploy api -o jsonpath='{.spec.template.spec.containers[0].image}')" != "nginx:1.27-alpine" ]; then
