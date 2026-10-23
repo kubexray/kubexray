@@ -65,7 +65,10 @@ func Changes(st *graph.State, since time.Time, includeControllers bool) []Change
 			continue // already listed as the rollout
 		}
 		summary := "changed"
-		if n.Kind == "ConfigMap" || n.Kind == "Secret" {
+		switch {
+		case created(n):
+			summary = "created"
+		case n.Kind == "ConfigMap" || n.Kind == "Secret":
 			summary = "edited (contents not read)"
 		}
 		out = append(out, Change{At: c.At, Object: n.ID, Kind: n.Kind, Name: n.Name, NS: n.Namespace, By: c, Origin: n.Origin, Summary: summary})

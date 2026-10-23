@@ -1,9 +1,19 @@
+import { useState } from "react";
 import type { Cause, Incident } from "../gen/cause";
 import { clock, duration, who } from "../lib/format";
 import { useNow } from "../lib/useNow";
 
 export function down(inc: Incident): boolean {
   return inc.symptom.desired > 0 && inc.symptom.ready === 0;
+}
+
+/** Mirrors cause.Incident.State: down, degraded, or failing pods during an
+ * otherwise healthy rollout. */
+export function stateText(inc: Incident): string {
+  if (inc.healthy) return "is healthy";
+  if (down(inc)) return "is down";
+  if (inc.symptom.ready < inc.symptom.desired) return "is degraded";
+  return "has failing pods";
 }
 
 /** Most severe first: apps that are fully down, then the oldest. */
@@ -41,8 +51,12 @@ interface Props {
   onRewind: (ts: string) => void;
 }
 
+/** How many other incidents to list before "+N more". */
+const MORE_SHOWN = 4;
+
 export function IncidentCard({ incidents, at, canRewindTo, onShow, onRewind }: Props) {
   const live = useNow();
+  const [allShown, setAllShown] = useState(false);
   const now = at ? Date.parse(at) : live;
   const [inc, ...more] = rankIncidents(incidents);
   if (!inc) return null;
@@ -53,13 +67,17 @@ export function IncidentCard({ incidents, at, canRewindTo, onShow, onRewind }: P
       <div className="inc-head">
         <span className="badge">Incident</span>
         <h2>
-          {inc.name} {down(inc) ? "is down" : "is degraded"}
+          {inc.name} {stateText(inc)}
         </h2>
-        {inc.since && (
-          <span className="since">
-            for {duration(inc.since, now)} · since {clock(inc.since)} · {inc.symptom.summary}
-          </span>
-        )}
+        <span className="since">
+          in {inc.namespace}
+          {inc.since && (
+            <>
+              {" "}· for {duration(inc.since, now)} · since {clock(inc.since)}
+            </>
+          )}{" "}
+          · {inc.symptom.summary}
+        </span>
       </div>
       {top ? (
         <CauseLine cause={top} />
@@ -80,12 +98,17 @@ export function IncidentCard({ incidents, at, canRewindTo, onShow, onRewind }: P
         )}
         {more.length > 0 && (
           <span className="more">
-            Also:{" "}
-            {more.map((m) => (
+            {more.length === 1 ? "Also:" : `${more.length} more incidents:`}{" "}
+            {(allShown ? more : more.slice(0, MORE_SHOWN)).map((m) => (
               <button type="button" key={m.app} className="chip-btn" onClick={() => onShow(m.app)}>
-                {m.name} <span>{m.symptom.summary}</span>
+                {m.namespace}/{m.name} <span>{m.symptom.summary}</span>
               </button>
             ))}
+            {more.length > MORE_SHOWN && (
+              <button type="button" className="chip-btn link" onClick={() => setAllShown(!allShown)}>
+                {allShown ? "Show fewer" : `+${more.length - MORE_SHOWN} more`}
+              </button>
+            )}
           </span>
         )}
       </div>
