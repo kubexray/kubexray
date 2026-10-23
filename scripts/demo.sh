@@ -41,13 +41,19 @@ up() {
   echo "In another terminal, break it with: make break"
 }
 
+# live_pod prints one pod of an app that isn't already being deleted (right
+# after a rollout, old pods linger while they terminate).
+live_pod() {
+  kubectl -n shop get pod -l "app=$1" -o go-template='{{range .items}}{{if not .metadata.deletionTimestamp}}{{.metadata.name}}{{"\n"}}{{end}}{{end}}' | head -1
+}
+
 break_config() {
   say "1. Someone edits checkout-config: LOG_LEVEL=verbose (checkout only accepts debug, info, warn or error)."
   kubectl -n shop patch configmap checkout-config --type=merge -p '{"data":{"LOG_LEVEL":"verbose"}}' >/dev/null
   say "2. Nothing breaks: running pods keep the config they started with. Waiting ${DELAY}s…"
   sleep "$DELAY"
   say "3. A pod gets replaced, as during a node drain or an eviction."
-  kubectl -n shop delete "$(kubectl -n shop get pod -l app=checkout -o name | head -1)" --wait=false >/dev/null
+  kubectl -n shop delete pod "$(live_pod checkout)" --wait=false >/dev/null
   say "The new pod reads the bad value and crash-loops. Ask kubexray why:"
   echo "   ./bin/kubexray why deploy/checkout -n shop --kubeconfig .demo/kubeconfig"
 }
@@ -60,9 +66,11 @@ break_image() {
 }
 
 break_node() {
-  local node="$CLUSTER-worker2"
-  if [ "$(kubectl -n shop get pods --field-selector "spec.nodeName=$node" -o name | wc -l | tr -d ' ')" = "0" ]; then
-    echo "No shop pods run on $node, so stopping it wouldn't affect the shop. Try: make fix && make break SCENARIO=node" >&2
+  # The worker running the most shop pods, so the failure hits several apps.
+  local node
+  node="$(kubectl -n shop get pods -o jsonpath='{range .items[*]}{.spec.nodeName}{"\n"}{end}' | grep -- '-worker' | sort | uniq -c | sort -rn | awk 'NR==1 {print $2}')"
+  if [ -z "$node" ]; then
+    echo "No shop pods run on a worker, so stopping one wouldn't affect the shop. Try: make fix && make break SCENARIO=node" >&2
     exit 1
   fi
   say "Worker $node fails (its container is stopped, like a machine losing power)."
@@ -97,18 +105,20 @@ break_bad_config() {
   say "1. Someone renames the key in db-credentials from password to db-password. api reads password."
   kubectl -n shop patch secret db-credentials --type=json -p '[{"op":"move","from":"/data/password","path":"/data/db-password"}]' >/dev/null
   say "2. Running pods are fine. A pod gets replaced, as during a node drain."
-  kubectl -n shop delete "$(kubectl -n shop get pod -l app=api -o name | head -1)" --wait=false >/dev/null
+  kubectl -n shop delete pod "$(live_pod api)" --wait=false >/dev/null
   say "The new pod can't start. Ask kubexray why:"
   echo "   ./bin/kubexray why deploy/api -n shop --kubeconfig .demo/kubeconfig"
 }
 
 fix() {
-  if [ "$(docker inspect -f '{{.State.Running}}' "$CLUSTER-worker2" 2>/dev/null)" = "false" ]; then
-    say "Starting worker $CLUSTER-worker2 again…"
-    docker start "$CLUSTER-worker2" >/dev/null
-    kubectl wait --for=condition=Ready "node/$CLUSTER-worker2" --timeout=180s >/dev/null ||
-      say "$CLUSTER-worker2 isn't ready yet; it will catch up. Continuing."
-  fi
+  for node in "$CLUSTER-worker" "$CLUSTER-worker2"; do
+    if [ "$(docker inspect -f '{{.State.Running}}' "$node" 2>/dev/null)" = "false" ]; then
+      say "Starting worker $node again…"
+      docker start "$node" >/dev/null
+      kubectl wait --for=condition=Ready "node/$node" --timeout=180s >/dev/null ||
+        say "$node isn't ready yet; it will catch up. Continuing."
+    fi
+  done
   say "Restoring the shop…"
   kubectl -n shop patch configmap checkout-config --type=merge -p '{"data":{"LOG_LEVEL":"info"}}' >/dev/null
   if [ "$(kubectl -n shop get deploy api -o jsonpath='{.spec.template.spec.containers[0].image}')" != "nginx:1.27-alpine" ]; then

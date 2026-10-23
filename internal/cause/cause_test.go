@@ -301,6 +301,26 @@ func TestScaleFromZeroDoesntDateAnOldRollout(t *testing.T) {
 	}
 }
 
+func TestEditSecondsAfterCreationIsAnEdit(t *testing.T) {
+	t.Parallel()
+	// A fresh cluster: the ConfigMap is deployed with the app and edited ten
+	// seconds later; only the pod started after the edit fails.
+	c := newCluster()
+	d := c.deployment("1", "busybox", 2, 1, by("kubectl-client-side-apply", "kubectl", "apply", mins(-1)))
+	d.Created = mins(-1)
+	c.add(d)
+	rs := c.replicaSet(d.ID, "api-1", mins(-1), spec("1", "busybox"))
+	c.pod(rs.ID, "api-1-a", mins(-1), true, "", mins(-1))
+	c.pod(rs.ID, "api-1-b", mins(-0.5), false, "CrashLoopBackOff", mins(-0.5))
+	c.add(graph.Node{
+		ID: "ConfigMap/shop/cfg", Kind: "ConfigMap", Namespace: "shop", Name: "cfg", Created: mins(-1), Status: graph.Status{Ready: true},
+		Change: by("kubectl-patch", "kubectl", "patch", mins(-1).Add(10*time.Second)),
+	})
+	c.edge(graph.EdgeMounts, "Pod/shop/api-1-a", "ConfigMap/shop/cfg")
+	c.edge(graph.EdgeMounts, "Pod/shop/api-1-b", "ConfigMap/shop/cfg")
+	assertTop(t, analyze(t, c, mins(1)), KindConfig, Likely)
+}
+
 func TestNamesMatchesWholeObjects(t *testing.T) {
 	t.Parallel()
 	msg := "couldn't find key password in Secret shop/db-credentials"

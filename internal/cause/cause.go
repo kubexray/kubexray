@@ -312,7 +312,7 @@ func (x *index) explain(app graph.Node, opts Options) Incident {
 	}
 	inc.Since = since(pods)
 	inc.Impact = x.impact(pods, inc.Symptom)
-	inc.Diagnosis = x.diagnose(app, pods, inc.Symptom)
+	inc.Diagnosis = x.diagnose(app, pods, inc.Symptom, opts)
 
 	a := &analysis{x: x, app: app, pods: pods, inc: &inc, opts: opts}
 	inc.Causes = a.causes()

@@ -530,9 +530,13 @@ func nextSteps(inc Incident, app graph.Node) []Step {
 }
 
 // created reports whether an object's latest write is its creation.
+// The creating write is stamped in the same second as creationTimestamp; an
+// edit seconds later is an edit (a fresh cluster, a quick fix after deploy).
 func created(n graph.Node) bool {
-	return n.Change != nil && !n.Created.IsZero() && n.Change.At.Sub(n.Created) <= attributionSlack
+	return n.Change != nil && !n.Created.IsZero() && n.Change.At.Sub(n.Created) <= creationSlack
 }
+
+const creationSlack = time.Second
 
 // createdWith reports whether a dependency was created together with its app
 // (or before it) and never changed since: deploying a ConfigMap alongside its

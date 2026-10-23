@@ -92,12 +92,17 @@ demo: build ## Run the demo: a kind cluster with the shop app, and kubexray on i
 	./bin/kubexray --kubeconfig $(DEMO_KUBECONFIG)
 
 .PHONY: break
-break: ## Break the demo (SCENARIO=config, the default, bad-image or node)
+break: ## Break the demo (SCENARIO=config, bad-image, node, oom, bad-probe, unschedulable or bad-config)
 	scripts/demo.sh break
 
 .PHONY: fix
 fix: ## Undo make break
 	scripts/demo.sh fix
+
+.PHONY: e2e
+e2e: go-build ## Run every break-it scenario on the demo cluster and check kubexray's answers
+	scripts/demo.sh up
+	scripts/e2e.sh
 
 .PHONY: demo-down
 demo-down: ## Delete the demo cluster
