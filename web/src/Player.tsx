@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Header } from "./components/Header";
+import type { Entry } from "./components/IncidentCard";
+import { PostmortemDialog } from "./components/PostmortemDialog";
 import { Timeline } from "./components/Timeline";
 import { Workspace } from "./components/Workspace";
 import { changeEvents, mergeEvents } from "./lib/events";
 import { clock } from "./lib/format";
-import { firstIncident, incidentsAt, loadReplay, type Replay, stateAt } from "./lib/replay";
+import { firstIncident, incidentsAt, loadReplay, recoveredAt, type Replay, stateAt } from "./lib/replay";
 
 /** Playback speed: a few minutes of incident in under a minute. */
 const SPEED = 10;
@@ -34,6 +36,7 @@ export function Player() {
   const [playing, setPlaying] = useState(false);
   const [selected, setSelected] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [drafting, setDrafting] = useState<Entry | null>(null);
 
   const open = useCallback(
     async (blob: Blob, from: string | null) => {
@@ -150,11 +153,15 @@ export function Player() {
     );
   }
 
+  const linkTo = (app: string | null, moment = at) => {
+    if (!source) return null;
+    const p = new URLSearchParams({ replay: source, t: moment });
+    if (app) p.set("app", app);
+    return `${location.origin}${location.pathname}?${p}`;
+  };
   const permalink = () => {
-    if (!source) return;
-    const p = new URLSearchParams({ replay: source, t: at });
-    if (selected) p.set("app", selected);
-    const link = `${location.origin}${location.pathname}?${p}`;
+    const link = linkTo(selected);
+    if (!link) return;
     navigator.clipboard.writeText(link).then(
       () => {
         setCopied(true);
@@ -165,58 +172,84 @@ export function Player() {
   };
 
   const h = replay.header;
+  // A draft links to the replay only when readers can open it (kubexray
+  // play's link is on localhost), opening just before the change or the
+  // first symptom, wherever the author paused.
+  const draft = (entry: Entry) => {
+    const back = recoveredAt(replay, entry.incidents.map((i) => i.app), t);
+    const shareable = location.protocol === "https:" && !!source?.startsWith("https://");
+    const starts = [entry.group?.cause.at ?? entry.incidents[0]?.causes?.[0]?.at, ...entry.incidents.map((i) => i.since)].map((s) => Date.parse(s ?? "")).filter(Number.isFinite);
+    const opens = starts.length ? Math.max(Date.parse(h.from), Math.min(...starts) - 10_000) : t;
+    return {
+      entry,
+      cluster: h.cluster,
+      at,
+      recovered: back === null ? null : { at: new Date(back).toISOString(), exact: true },
+      events,
+      eventsFrom: null,
+      link: shareable ? linkTo(entry.incidents[0]?.app ?? null, new Date(opens).toISOString()) : null,
+    };
+  };
   return (
-    <Workspace
-      header={(view) => <Header view={view} status="replay" label={`${h.cluster}${h.anonymized ? " (anonymized)" : ""} · ${clock(h.from)} to ${clock(h.to)}`} />}
-      notice={
-        <div className="replay-bar">
-          <span>You're watching a recording. Use the timeline or press Play; links keep the moment and the selected app.</span>
-          {source && (
-            <button type="button" onClick={permalink}>
-              {copied ? "Link copied" : "Copy link to this moment"}
+    <>
+      <Workspace
+        header={(view) => <Header view={view} status="replay" label={`${h.cluster}${h.anonymized ? " (anonymized)" : ""} · ${clock(h.from)} to ${clock(h.to)}`} />}
+        notice={
+          <div className="replay-bar">
+            <span>You're watching a recording. Use the timeline or press Play; links keep the moment and the selected app.</span>
+            {source && (
+              <button type="button" onClick={permalink}>
+                {copied ? "Link copied" : "Copy link to this moment"}
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => {
+                setPlaying(false);
+                setReplay(null);
+              }}
+            >
+              Open another replay
             </button>
-          )}
-          <button
-            type="button"
-            onClick={() => {
-              setPlaying(false);
-              setReplay(null);
-            }}
-          >
-            Open another replay
+          </div>
+        }
+        state={state}
+        incidents={incidents?.incidents ?? []}
+        groups={incidents?.groups ?? []}
+        events={events}
+        at={at}
+        initialSelection={selected}
+        onSelectionChange={setSelected}
+        canRewindTo={(ts) => Date.parse(ts) >= Date.parse(h.from)}
+        onRewind={(ts) => {
+          setPlaying(false);
+          setT(Date.parse(ts) + 1000);
+        }}
+        actions={(entry) => (
+          <button type="button" onClick={() => setDrafting(entry)}>
+            Post-mortem draft
           </button>
-        </div>
-      }
-      state={state}
-      incidents={incidents?.incidents ?? []}
-      groups={incidents?.groups ?? []}
-      events={events}
-      at={at}
-      initialSelection={selected}
-      onSelectionChange={setSelected}
-      canRewindTo={(ts) => Date.parse(ts) >= Date.parse(h.from)}
-      onRewind={(ts) => {
-        setPlaying(false);
-        setT(Date.parse(ts) + 1000);
-      }}
-      timeline={
-        <Timeline
-          bounds={h}
-          at={at}
-          mode="replay"
-          events={events}
-          incidents={incidents?.incidents ?? []}
-          playing={running}
-          onPlay={() => {
-            if (t >= end) setT(Date.parse(h.from));
-            setPlaying(!running);
-          }}
-          onSeek={(ts) => {
-            setPlaying(false);
-            if (ts) setT(Date.parse(ts));
-          }}
-        />
-      }
-    />
+        )}
+        timeline={
+          <Timeline
+            bounds={h}
+            at={at}
+            mode="replay"
+            events={events}
+            incidents={incidents?.incidents ?? []}
+            playing={running}
+            onPlay={() => {
+              if (t >= end) setT(Date.parse(h.from));
+              setPlaying(!running);
+            }}
+            onSeek={(ts) => {
+              setPlaying(false);
+              if (ts) setT(Date.parse(ts));
+            }}
+          />
+        }
+      />
+      {drafting && <PostmortemDialog draft={() => draft(drafting)} onClose={() => setDrafting(null)} />}
+    </>
   );
 }

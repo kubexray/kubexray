@@ -9,7 +9,9 @@
 
 See what changed. See what broke. Share what happened.
 
-> **Status:** early development, heading for v0.1. The live map, incident detection, rewind and `kubexray why` all work. See the [roadmap](ROADMAP.md).
+> **Status:** early development. The live map, incident detection with grouped causes, rewind, `kubexray why`, shareable replays and post-mortem drafts all work. See the [roadmap](ROADMAP.md).
+>
+> **[Watch a recorded incident in your browser →](https://kubexray.github.io/kubexray/)** No install, no cluster.
 
 ## Why
 
@@ -26,7 +28,7 @@ Dashboards tell you a pod is crashing. During an incident you need to know more:
                    image  nginx:1.27  →  nginx:1.72
   ```
 
-- **Can I show my team?** Export the incident as a replay. Anyone can watch it at kubexray.com, without access to your cluster.
+- **Can I show my team?** Export the incident as a replay. Anyone can watch it in the [kubexray player](https://kubexray.github.io/kubexray/), without access to your cluster, and kubexray drafts the post-mortem for you.
 
 ## Performance
 
@@ -81,6 +83,19 @@ checkout (Deployment, shop) is degraded: 2 of 3 pods ready, since 00:10:47 (50s 
   next              kubectl -n shop logs checkout-5d6d48b89-4cpfx --previous   # why the last attempt failed
                     kubectl -n shop rollout restart deployment/checkout        # after fixing checkout-config
 ```
+
+## Share an incident
+
+On the incident card, **Share replay** downloads the incident as a `.kxr` file: a few minutes of what kubexray recorded, with the incidents and causes it found. Names, labels and images are anonymized by default; Secret and ConfigMap contents, environment values and annotations are never in a replay ([ADR-0008](docs/adr/0008-replays-and-sharing.md)).
+
+Anyone can play it:
+
+- drop it on the [kubexray player](https://kubexray.github.io/kubexray/), which runs entirely in the browser and uploads nothing, or
+- run `./bin/kubexray play incident.kxr`.
+
+The player's timeline plays and scrubs the incident, and **Copy link to this moment** shares a link that opens on the same moment and app, for replays hosted at an https address.
+
+**Post-mortem draft** turns the incident into Markdown to paste into a doc or an issue: status, duration, impact, the likely cause and who made the change, a timeline, the suggested fix commands and the replay link, with TODOs for what kubexray can't see.
 
 Other commands:
 

@@ -92,7 +92,11 @@ func Incidents(w io.Writer, incidents []cause.Incident, groups []cause.Group, no
 	}
 	for _, e := range cause.Entries(incidents, groups) {
 		if e.Group != nil {
-			p.line("%s: %d apps affected", describe(e.Group.Cause, now), len(e.Incidents))
+			apps := "apps"
+			if len(e.Incidents) == 1 {
+				apps = "app"
+			}
+			p.line("%s: %d %s affected", describe(e.Group.Cause, now), len(e.Incidents), apps)
 			for _, inc := range e.Incidents {
 				p.row("", "%s/%s %s: %s", inc.Namespace, inc.Name, inc.State(), inc.Symptom.Summary)
 			}

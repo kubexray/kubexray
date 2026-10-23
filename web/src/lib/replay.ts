@@ -189,3 +189,13 @@ export function firstIncident(r: Replay): number | null {
   const i = r.incidents.findIndex((x) => x.incidents.length > 0);
   return i >= 0 ? (r.incidentTimes[i] ?? null) : null;
 }
+
+/** When none of the apps had an incident any more, after t, or null if the
+ * recording ends before that. */
+export function recoveredAt(r: Replay, apps: string[], t: number): number | null {
+  const want = new Set(apps);
+  for (let i = Math.max(0, lastAtOrBefore(r.incidentTimes, t) + 1); i < r.incidents.length; i++) {
+    if (!r.incidents[i]?.incidents.some((inc) => want.has(inc.app))) return r.incidentTimes[i] ?? null;
+  }
+  return null;
+}

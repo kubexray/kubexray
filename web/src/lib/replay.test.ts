@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import demo from "../../pages-public/demo.kxr?inline";
 import { safeReplayURL } from "../Player";
-import { firstIncident, incidentsAt, loadReplay, stateAt } from "./replay";
+import { firstIncident, incidentsAt, loadReplay, recoveredAt, stateAt } from "./replay";
 
 const T = (s: number) => new Date(Date.UTC(2026, 9, 23, 14, 0, s)).toISOString();
 const pod = (name: string) => ({ id: `Pod/shop/${name}`, kind: "Pod", ns: "shop", name, status: { ready: true }, created: T(0) });
@@ -87,6 +87,12 @@ describe("loadReplay", () => {
     const at = firstIncident(r);
     expect(at).not.toBeNull();
     expect(incidentsAt(r, at ?? 0)?.incidents[0]?.app).toBe("Deployment/shop/checkout");
+  });
+
+  it("finds when the apps recovered", async () => {
+    const r = await loadReplay(await file([...lines.slice(0, 6), { v: 1, type: "incidents", ts: T(50), incidents: [], groups: [] }]));
+    expect(recoveredAt(r, ["Deployment/shop/x"], Date.parse(T(35)))).toBe(Date.parse(T(50)));
+    expect(recoveredAt(r, ["Deployment/shop/x"], Date.parse(T(55)))).toBeNull();
   });
 
   it("rejects files over the size limit", async () => {
