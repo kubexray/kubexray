@@ -1,0 +1,51 @@
+name: E2E
+
+# Break-it scenarios on a kind cluster: each must produce the expected
+# diagnosis and cause (scripts/e2e.sh).
+on:
+  pull_request:
+    paths: &paths
+      - "cmd/**"
+      - "internal/**"
+      - "demo/**"
+      - "scripts/**"
+      - "go.mod"
+      - "go.sum"
+      - "Makefile"
+      - ".github/workflows/e2e.yml"
+  push:
+    branches: [main]
+    paths: *paths
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  scenarios:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Install kind
+        run: go install sigs.k8s.io/kind@v0.33.0
+      - run: make e2e
+      - name: Cluster state on failure
+        if: failure()
+        run: |
+          export KUBECONFIG=.demo/kubeconfig
+          kubectl get nodes -o wide || true
+          kubectl get pods -A -o wide || true
+          kubectl -n shop get events --sort-by=.lastTimestamp | tail -40 || true
+      - name: Delete the cluster
+        if: always()
+        run: scripts/demo.sh down || true

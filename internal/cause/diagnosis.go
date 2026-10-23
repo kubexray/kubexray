@@ -22,7 +22,7 @@ type Diagnosis struct {
 // diagnose explains the app's most common pod problem, or a workload that
 // can't create pods at all. It returns nil when there's nothing specific to
 // say ("3 pods not ready" is already the symptom).
-func (x *index) diagnose(app graph.Node, pods []graph.Node, s Symptom) *Diagnosis {
+func (x *index) diagnose(app graph.Node, pods []graph.Node, s Symptom, opts Options) *Diagnosis {
 	if len(s.BadPods) == 0 {
 		if app.Status.Message != "" {
 			return refused(app)
@@ -68,7 +68,10 @@ func (x *index) diagnose(app graph.Node, pods []graph.Node, s Symptom) *Diagnosi
 		if d := x.pendingVolume(same); d != nil {
 			return d
 		}
-		if r == "" && p.Status.Phase == "Running" {
+		// A pod that just started isn't ready until its probe first passes,
+		// and a crashing one is briefly running: only blame the probe after
+		// the grace period (kubexray why skips it).
+		if r == "" && p.Status.Phase == "Running" && !p.Status.Since.IsZero() && opts.Now.Sub(p.Status.Since) >= opts.Grace {
 			return notReady(p, n)
 		}
 	}

@@ -100,6 +100,11 @@ func TestDiagnoseReadinessProbe(t *testing.T) {
 	if inc := analyze(t, sick(running, graph.Container{}), mins(0)); inc.Diagnosis != nil {
 		t.Errorf("readiness blamed without a readiness probe: %+v", inc.Diagnosis)
 	}
+	// Just started: not ready yet is normal.
+	inc, err := Explain(sick(running, graph.Container{Probes: graph.Probes{Readiness: true}}).st, "Deployment/shop/api", DefaultOptions(mins(-9.9)))
+	if err != nil || inc.Diagnosis != nil {
+		t.Errorf("readiness blamed 6 seconds after the pod started: %+v, %v", inc.Diagnosis, err)
+	}
 }
 
 func TestDiagnoseUnschedulable(t *testing.T) {
