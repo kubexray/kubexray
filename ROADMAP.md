@@ -94,13 +94,13 @@ kubexray answers all three, free and open source, from a single binary on your l
 
 **Goal:** turn an incident into something anyone can watch.
 
-- [ ] Export: save a time window as a replay file (gzip NDJSON, the same messages as the live stream).
-- [ ] Scrubbing: the same allow-list as the live stream, plus optional anonymization of names, namespaces and labels.
-- [ ] kubexray.com player: a static page that plays replay files. Drop a file in or open a shared link; no cluster access, no install.
-- [ ] Incident permalinks: share a replay that opens on the incident, with the chain already highlighted.
-- [ ] A recorded demo incident on the kubexray.com homepage.
-- [ ] **Post-mortem draft:** one click exports Markdown with impact, timeline, likely cause, who made the change, the fix, duration and the replay link.
-- [ ] **One cause, many symptoms:** when one change or failure breaks several apps (a node going NotReady, a shared ConfigMap edit), show one incident card listing every affected app, instead of one alert per app.
+- [x] Export: save a time window as a replay file (gzip NDJSON, the same messages as the live stream).
+- [x] Scrubbing: the same allow-list as the live stream, plus optional anonymization of names, namespaces and labels.
+- [x] Player: a static page that plays replay files. Drop a file in or open a shared link; no cluster access, no install. Live at [kubexray.github.io/kubexray](https://kubexray.github.io/kubexray/); kubexray.com will point there.
+- [x] Incident permalinks: share a replay that opens on the incident, with the chain already highlighted.
+- [x] A recorded demo incident on the player's homepage.
+- [x] **Post-mortem draft:** one click exports Markdown with impact, timeline, likely cause, who made the change, the fix, duration and the replay link.
+- [x] **One cause, many symptoms:** when one change or failure breaks several apps (a node going NotReady, a shared ConfigMap edit), show one incident card listing every affected app, instead of one alert per app.
 
 **Done when:** an incident exported from `make break` plays on kubexray.com with no cluster, its post-mortem draft is accurate, and a node failure in the demo cluster produces one grouped incident.
 

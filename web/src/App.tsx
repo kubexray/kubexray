@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Header } from "./components/Header";
 import type { Entry } from "./components/IncidentCard";
+import { PostmortemDialog } from "./components/PostmortemDialog";
 import { ShareDialog } from "./components/ShareDialog";
 import { Timeline } from "./components/Timeline";
 import { Workspace } from "./components/Workspace";
@@ -89,6 +90,9 @@ function useWhy(id: string | null, enabled: boolean): Incident | null {
   return enabled && why?.id === id ? why.inc : null;
 }
 
+/** Status events are only seen while the page is open (ADR-0007). */
+const OPENED = new Date().toISOString();
+
 const APP_KINDS = new Set(["Deployment", "StatefulSet", "DaemonSet", "Job", "ReplicaSet", "Pod"]);
 
 /** Live mode: the cluster as it is, with rewind over the recording. */
@@ -100,6 +104,7 @@ export function App() {
   const { past, last } = usePast(at);
   const [selected, setSelected] = useState<{ id: string; app: string } | null>(null);
   const [sharing, setSharing] = useState<Entry | null>(null);
+  const [drafting, setDrafting] = useState<Entry | null>(null);
 
   // While a past moment loads (or isn't recorded), keep showing the last one
   // loaded, or the live cluster, dimmed.
@@ -153,12 +158,24 @@ export function App() {
         canRewindTo={(ts) => !!history && Date.parse(ts) >= Date.parse(history.from)}
         onRewind={(ts) => setAt(new Date(Date.parse(ts) + 1000).toISOString())}
         actions={(entry) => (
-          <button type="button" onClick={() => setSharing(entry)}>
-            Share replay
-          </button>
+          <>
+            <button type="button" onClick={() => setSharing(entry)}>
+              Share replay
+            </button>
+            <button type="button" onClick={() => setDrafting(entry)}>
+              Post-mortem draft
+            </button>
+          </>
         )}
         timeline={<Timeline bounds={history} at={at} mode="live" events={events} incidents={stream.incidents} onSeek={setAt} />}
       />
+      {drafting && (
+        // The card only lists ongoing incidents, so there's no recovery to report.
+        <PostmortemDialog
+          draft={() => ({ entry: drafting, cluster: "", at: at ?? new Date().toISOString(), recoveredAt: null, events, eventsFrom: OPENED, link: null })}
+          onClose={() => setDrafting(null)}
+        />
+      )}
       {sharing && <ShareDialog entry={sharing} recordedFrom={history?.from ?? null} onClose={() => setSharing(null)} />}
     </>
   );
