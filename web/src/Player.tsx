@@ -230,8 +230,9 @@ export function Player() {
             Post-mortem draft
           </button>
         )}
-        timeline={
+        timeline={(compare) => (
           <Timeline
+            compare={compare}
             bounds={h}
             at={at}
             mode="replay"
@@ -247,7 +248,7 @@ export function Player() {
               if (ts) setT(Date.parse(ts));
             }}
           />
-        }
+        )}
       />
       {drafting && <PostmortemDialog draft={() => draft(drafting)} onClose={() => setDrafting(null)} />}
     </>

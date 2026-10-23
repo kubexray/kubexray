@@ -1,5 +1,6 @@
 import type { Incident } from "../gen/cause";
 import type { ClusterEvent } from "../lib/events";
+import type { Compare } from "./Workspace";
 import { clock, duration } from "../lib/format";
 import { useNow } from "../lib/useNow";
 
@@ -15,10 +16,12 @@ interface Props {
   onSeek: (ts: string | null) => void;
   playing?: boolean;
   onPlay?: () => void;
+  /** Diff mode (Workspace). */
+  compare?: Compare;
 }
 
 /** The rewind timeline: drag back through the recorded history. */
-export function Timeline({ bounds, at, mode, events, incidents, onSeek, playing, onPlay }: Props) {
+export function Timeline({ bounds, at, mode, events, incidents, onSeek, playing, onPlay, compare }: Props) {
   const now = useNow();
   if (!bounds) {
     return (
@@ -52,6 +55,7 @@ export function Timeline({ bounds, at, mode, events, incidents, onSeek, playing,
             .map((e) => (
               <i key={e.id} className={e.kind} style={{ left: pos(e.ts) }} title={`${clock(e.ts)} ${e.text}`} />
             ))}
+          {compare?.from && Date.parse(compare.from) >= from && <b className="mark" style={{ left: pos(compare.from) }} title={`Comparing from ${clock(compare.from)}`} />}
         </div>
         <input
           type="range"
@@ -66,6 +70,11 @@ export function Timeline({ bounds, at, mode, events, incidents, onSeek, playing,
           }}
         />
       </div>
+      {compare && (
+        <button type="button" className={`compare${compare.from ? " on" : ""}`} onClick={compare.toggle} aria-pressed={!!compare.from} disabled={compare.disabled}>
+          {compare.from ? "Stop comparing" : "Compare"}
+        </button>
+      )}
       <span className="clock">
         {mode === "live"
           ? at

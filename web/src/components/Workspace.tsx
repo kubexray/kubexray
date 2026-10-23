@@ -5,6 +5,7 @@ import { clock } from "../lib/format";
 import type { ClusterState } from "../lib/state";
 import { allWorkloads, buildView, chainOf } from "../lib/view";
 import { DetailsPanel } from "./DetailsPanel";
+import { DiffPanel } from "./DiffPanel";
 import { EventLog } from "./EventLog";
 import { type Entry, entries, IncidentCard } from "./IncidentCard";
 import { MapView } from "./MapView";
@@ -20,7 +21,8 @@ interface Props {
   /** The moment shown, or null for live. */
   at: string | null;
   loading?: boolean;
-  timeline: ReactNode;
+  /** Renders the timeline, given diff mode's controls. */
+  timeline: (compare: Compare) => ReactNode;
   canRewindTo: (ts: string) => boolean;
   onRewind: (ts: string) => void;
   actions?: (entry: Entry) => ReactNode;
@@ -31,6 +33,14 @@ interface Props {
   onSelectionChange?: (id: string | null, app: string | null) => void;
 }
 
+/** Diff mode's controls for the timeline: the moment compared from, if any. */
+export interface Compare {
+  from: string | null;
+  toggle: () => void;
+  /** Off while the moment shown is loading or isn't recorded. */
+  disabled: boolean;
+}
+
 /** Everything live mode and replay mode share: incident card, map, side
  * panel and event log, with selection and hover tracing. */
 export function Workspace(props: Props) {
@@ -38,6 +48,22 @@ export function Workspace(props: Props) {
   const view = useMemo(() => buildView(state), [state]);
 
   const [selected, setSelectedState] = useState<string | null>(props.initialSelection ?? null);
+  // Diff mode: the moment compared from. States never change once made, so
+  // keeping this one is enough; the other side is whatever is shown.
+  const [base, setBase] = useState<{ at: string; state: ClusterState } | null>(null);
+  // Live, the moment is now: the last delta may be minutes old.
+  const [liveNow, setLiveNow] = useState(() => new Date().toISOString());
+  useEffect(() => {
+    if (at || !base) return;
+    const t = setInterval(() => setLiveNow(new Date().toISOString()), 1000);
+    return () => clearInterval(t);
+  }, [at, base]);
+  const shownAt = at ?? liveNow;
+  const compare: Compare = {
+    from: base?.at ?? null,
+    disabled: !base && !!props.loading,
+    toggle: () => setBase(base ? null : { at: at ?? new Date().toISOString(), state }),
+  };
   const [hovered, setHovered] = useState<string | null>(null);
   const [open, setOpen] = useState(new Map<string, boolean>());
   const appOf = useCallback((id: string | null) => (id ? (allWorkloads(view).find(({ w }) => w.pods.some((p) => p.id === id))?.w.node.id ?? id) : null), [view]);
@@ -112,10 +138,14 @@ export function Workspace(props: Props) {
         <MapView view={view} open={open} highlight={highlight} causeOf={causeOf} onToggle={toggle} onSelect={setSelected} onHover={setHovered} />
         <aside>
           <DetailsPanel id={selected} state={state} view={view} incident={listed ?? props.why ?? null} onSelect={show} />
-          <EventLog events={events} at={at} />
+          {base ? (
+            <DiffPanel from={base} to={{ at: shownAt, state }} onSelect={show} onClose={() => setBase(null)} />
+          ) : (
+            <EventLog events={events} at={at} />
+          )}
         </aside>
       </main>
-      {props.timeline}
+      {props.timeline(compare)}
     </div>
   );
 }

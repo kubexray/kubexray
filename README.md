@@ -93,6 +93,10 @@ checkout (Deployment, shop) is degraded: 2 of 3 pods ready, since 00:10:47 (50s 
                     kubectl -n shop rollout restart deployment/checkout        # after fixing checkout-config
 ```
 
+## Compare two moments
+
+Press **Compare** on the timeline, then move to another moment: the side panel lists what changed in between. You see what was added or removed, new images, resources and probes, revisions, replicas and readiness, pods replaced or failing, and who edited a ConfigMap or Secret (never its contents). It works live, rewound and in replays.
+
 ## Share an incident
 
 On the incident card, **Share replay** downloads the incident as a `.kxr` file: a few minutes of what kubexray recorded, with the incidents and causes it found. Names, labels and images are anonymized by default; Secret and ConfigMap contents, environment values and annotations are never in a replay ([ADR-0008](docs/adr/0008-replays-and-sharing.md)).

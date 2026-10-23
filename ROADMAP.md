@@ -113,7 +113,7 @@ kubexray answers all three, free and open source, from a single binary on your l
 - [x] Explanations for OOMKilled (with the limit; usage needs metrics, so kubexray suggests `kubectl top`), failed probes, unschedulable pods (resources, taints, affinity), pending PVCs, evictions, and pods refused by quotas or admission ([ADR-0009](docs/adr/0009-diagnosis.md)).
 - [ ] More causes: node failures, ConfigMap or Secret edits followed by crashes, scale-downs, quota changes.
 - [ ] Evidence links: every diagnosis shows the events, container states and log lines it is based on.
-- [ ] Diff mode: pick two moments and see what changed between them.
+- [x] Diff mode: pick two moments and see what changed between them.
 - [ ] Break-it scenarios: `make break SCENARIO=oom|bad-config|bad-probe|unschedulable`, each with an expected diagnosis in CI.
 
 **Done when:** every break-it scenario produces the right incident card and cause.
