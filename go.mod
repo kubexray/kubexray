@@ -3,6 +3,7 @@ module github.com/kubexray/kubexray
 go 1.27.3
 
 require (
+	github.com/coder/websocket v1.8.15
 	k8s.io/api v0.37.1
 	k8s.io/apimachinery v0.37.1
 	k8s.io/client-go v0.37.1

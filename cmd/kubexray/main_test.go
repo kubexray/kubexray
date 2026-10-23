@@ -1,8 +1,6 @@
 package main
 
 import (
-	"errors"
-	"flag"
 	"strings"
 	"testing"
 
@@ -31,7 +29,10 @@ func TestRunWithoutACluster(t *testing.T) {
 		wantErr string
 		stdout  string
 	}{
-		{nil, flag.ErrHelp.Error(), ""},
+		{[]string{"--history", "0s"}, "--history must be positive", ""},
+		{[]string{"--port", "1", "extra"}, `unknown command "extra"`, ""},
+		{[]string{"--context", "prod", "why", "deploy/api"}, "put flags after the command", ""},
+		{[]string{"-help"}, "", "flight recorder"},
 		{[]string{"version"}, "", "kubexray "},
 		{[]string{"help"}, "", "flight recorder"},
 		{[]string{"bogus"}, `unknown command "bogus"`, ""},
@@ -53,8 +54,5 @@ func TestRunWithoutACluster(t *testing.T) {
 		case !strings.Contains(stdout.String(), tt.stdout):
 			t.Errorf("run(%v) stdout = %q, want it to contain %q", tt.args, stdout.String(), tt.stdout)
 		}
-	}
-	if err := run(nil, &strings.Builder{}, &strings.Builder{}); !errors.Is(err, flag.ErrHelp) {
-		t.Errorf("no arguments = %v, want flag.ErrHelp", err)
 	}
 }
