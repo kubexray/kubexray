@@ -64,7 +64,7 @@ func run(namespaces, apps, podsPerApp int, churn time.Duration, port int) error 
 
 	rec := recorder.New(recorder.DefaultOptions)
 	hub := server.NewHub(server.MaxClients, server.ClientQueue)
-	srv, err := server.New(hub, rec, web.Assets(), log)
+	srv, err := server.New(hub, rec, web.Assets(), log, server.Info{Cluster: "loadgen", Version: "dev"})
 	if err != nil {
 		return err
 	}

@@ -11,6 +11,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/subtle"
@@ -30,6 +31,7 @@ import (
 	"github.com/kubexray/kubexray/internal/cause"
 	"github.com/kubexray/kubexray/internal/graph"
 	"github.com/kubexray/kubexray/internal/recorder"
+	"github.com/kubexray/kubexray/internal/replay"
 )
 
 // Client limits (ADR-0007).
@@ -45,12 +47,19 @@ const (
 	incidentsPeriod = time.Second
 )
 
+// Info describes what this server is showing, for replay headers.
+type Info struct {
+	Cluster string // kubeconfig context name
+	Version string // kubexray version
+}
+
 // Server is kubexray's local web server.
 type Server struct {
 	hub    *Hub
 	rec    *recorder.Recorder
 	assets fs.FS
 	log    *slog.Logger
+	info   Info
 	now    func() time.Time
 
 	token  string
@@ -60,12 +69,12 @@ type Server struct {
 }
 
 // New returns a server for the hub and recorder fed by the pump.
-func New(hub *Hub, rec *recorder.Recorder, assets fs.FS, log *slog.Logger) (*Server, error) {
+func New(hub *Hub, rec *recorder.Recorder, assets fs.FS, log *slog.Logger, info Info) (*Server, error) {
 	b := make([]byte, 32)
 	if _, err := rand.Read(b); err != nil {
 		return nil, fmt.Errorf("generating session token: %w", err)
 	}
-	return &Server{hub: hub, rec: rec, assets: assets, log: log, now: time.Now, token: base64.RawURLEncoding.EncodeToString(b)}, nil
+	return &Server{hub: hub, rec: rec, assets: assets, log: log, info: info, now: time.Now, token: base64.RawURLEncoding.EncodeToString(b)}, nil
 }
 
 // Listen binds to 127.0.0.1 on port (0 picks a free one).
@@ -136,6 +145,7 @@ func (s *Server) Handler() http.Handler {
 	api.HandleFunc("GET /api/at", s.at)
 	api.HandleFunc("GET /api/why", s.why)
 	api.HandleFunc("GET /api/changes", s.changes)
+	api.HandleFunc("GET /api/export", s.export)
 	api.Handle("GET /", http.FileServerFS(s.assets))
 
 	return s.checkHost(s.headers(s.session(api)))
@@ -302,7 +312,8 @@ func (s *Server) at(w http.ResponseWriter, r *http.Request) {
 	}
 	resp := AtResponse{Snapshot: raw, Incidents: []cause.Incident{}, Groups: []cause.Group{}}
 	if st, err := graph.NewState(snap); err == nil {
-		resp.Incidents, resp.Groups = analyze(st, t)
+		m := cause.NewIncidentsMessage(st, t)
+		resp.Incidents, resp.Groups = m.Incidents, m.Groups
 	}
 	writeJSON(w, resp)
 }
@@ -338,6 +349,64 @@ func (s *Server) changes(w http.ResponseWriter, _ *http.Request) {
 		return
 	}
 	writeJSON(w, list)
+}
+
+// export downloads a replay of the recorded window from..to (ADR-0008).
+// Both default to the whole recording; anonymize=1 replaces names.
+func (s *Server) export(w http.ResponseWriter, r *http.Request) {
+	first, _, ok := s.rec.Bounds()
+	if !ok {
+		http.Error(w, "nothing recorded yet", http.StatusNotFound)
+		return
+	}
+	now := s.now()
+	from, to := first, now
+	q := r.URL.Query()
+	for name, dst := range map[string]*time.Time{"from": &from, "to": &to} {
+		if v := q.Get(name); v != "" {
+			t, err := time.Parse(time.RFC3339Nano, v)
+			if err != nil {
+				http.Error(w, name+" must be an RFC 3339 time", http.StatusBadRequest)
+				return
+			}
+			*dst = t
+		}
+	}
+	if to.Before(from) {
+		http.Error(w, "to is before from", http.StatusBadRequest)
+		return
+	}
+	// Export what was recorded: the recording starts at first and ends now.
+	// Analyzing a future time would invent incidents that never happened.
+	if from.Before(first) {
+		from = first
+	}
+	if to.After(now) {
+		to = now
+	}
+	msgs, err := s.rec.Messages(from, to)
+	if err != nil {
+		http.Error(w, "kubexray has no history for that window", http.StatusNotFound)
+		return
+	}
+	anonymize := q.Get("anonymize") == "1"
+	var buf bytes.Buffer
+	opts := replay.Options{From: from, To: to, Cluster: s.info.Cluster, Version: s.info.Version, Anonymize: anonymize}
+	switch err := replay.Write(r.Context(), &buf, msgs, opts); {
+	case errors.Is(err, replay.ErrTooLarge):
+		http.Error(w, err.Error(), http.StatusRequestEntityTooLarge)
+		return
+	case r.Context().Err() != nil:
+		return // the browser went away
+	case err != nil:
+		s.log.Warn("exporting a replay", "err", err)
+		http.Error(w, "couldn't write the replay", http.StatusInternalServerError)
+		return
+	}
+	name := "kubexray-" + from.UTC().Format("20060102-150405") + replay.Ext
+	w.Header().Set("Content-Type", "application/gzip")
+	w.Header().Set("Content-Disposition", `attachment; filename="`+name+`"`)
+	_, _ = w.Write(buf.Bytes())
 }
 
 func writeJSON(w http.ResponseWriter, v any) {

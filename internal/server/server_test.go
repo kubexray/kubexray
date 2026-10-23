@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -18,6 +19,7 @@ import (
 	"github.com/kubexray/kubexray/internal/cause"
 	"github.com/kubexray/kubexray/internal/graph"
 	"github.com/kubexray/kubexray/internal/recorder"
+	"github.com/kubexray/kubexray/internal/replay"
 	"github.com/kubexray/kubexray/internal/web"
 )
 
@@ -55,7 +57,7 @@ func start(t *testing.T, maxClients int) *fixture {
 	f := &fixture{t: t, hub: hub, g: g, rec: rec}
 	f.emit(snap, true)
 
-	srv, err := New(hub, rec, web.Assets(), slog.New(slog.DiscardHandler))
+	srv, err := New(hub, rec, web.Assets(), slog.New(slog.DiscardHandler), Info{Cluster: "test", Version: "dev"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -308,7 +310,7 @@ func TestStreamSendsSnapshotIncidentsThenChanges(t *testing.T) {
 		t.Fatalf("first message = %v", snap)
 	}
 	inc := read(t, c)
-	if inc["type"] != MessageIncidents || len(inc["incidents"].([]any)) != 1 {
+	if inc["type"] != cause.MessageIncidents || len(inc["incidents"].([]any)) != 1 {
 		t.Fatalf("second message = %v", inc)
 	}
 
@@ -461,6 +463,41 @@ func TestChanges(t *testing.T) {
 	}
 }
 
+func TestExport(t *testing.T) {
+	t.Parallel()
+	f := start(t, 4)
+	for _, anon := range []bool{false, true} {
+		path := "/api/export"
+		if anon {
+			path += "?anonymize=1"
+		}
+		resp := f.do(req{path: path, cookie: true})
+		if resp.code != http.StatusOK || resp.header.Get("Content-Type") != "application/gzip" || !strings.Contains(resp.header.Get("Content-Disposition"), ".kxr") {
+			t.Fatalf("GET %s = %d %v", path, resp.code, resp.header)
+		}
+		file, err := replay.Read(bytes.NewReader(resp.body))
+		if err != nil {
+			t.Fatalf("exported replay doesn't read back: %v", err)
+		}
+		wantCluster := "test"
+		if anon {
+			wantCluster = "cluster"
+		}
+		if file.Header.Cluster != wantCluster || file.Header.Anonymized != anon || len(file.Incidents) == 0 {
+			t.Errorf("anonymize=%v: header %+v, %d incident messages", anon, file.Header, len(file.Incidents))
+		}
+	}
+	if got := f.status(req{path: "/api/export?from=bad", cookie: true}); got != http.StatusBadRequest {
+		t.Errorf("bad from = %d, want 400", got)
+	}
+	if got := f.status(req{path: "/api/export?from=2026-01-02T00:00:00Z&to=2026-01-01T00:00:00Z", cookie: true}); got != http.StatusBadRequest {
+		t.Errorf("reversed window = %d, want 400", got)
+	}
+	if got := f.status(req{path: "/api/export"}); got != http.StatusUnauthorized {
+		t.Errorf("export without a session = %d, want 401", got)
+	}
+}
+
 func TestServesTheUI(t *testing.T) {
 	t.Parallel()
 	f := start(t, 4)
@@ -472,7 +509,7 @@ func TestServesTheUI(t *testing.T) {
 
 func TestServeStopsWithTheContext(t *testing.T) {
 	t.Parallel()
-	srv, err := New(NewHub(1, 1), recorder.New(recorder.DefaultOptions), web.Assets(), slog.New(slog.DiscardHandler))
+	srv, err := New(NewHub(1, 1), recorder.New(recorder.DefaultOptions), web.Assets(), slog.New(slog.DiscardHandler), Info{})
 	if err != nil {
 		t.Fatal(err)
 	}

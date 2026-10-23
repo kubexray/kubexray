@@ -37,6 +37,15 @@ func NewState(snapshot Message) (*State, error) {
 	return s, nil
 }
 
+// Step adds the next message of a stream to st: the first must be a snapshot
+// (st nil), the rest deltas. It returns the state to use from then on.
+func Step(st *State, m Message) (*State, error) {
+	if st == nil {
+		return NewState(m)
+	}
+	return st, st.Apply(m)
+}
+
 // Apply applies the next delta. It returns ErrGap if the delta isn't the
 // one directly after the state's current sequence number.
 func (s *State) Apply(m Message) error {

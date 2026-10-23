@@ -21,6 +21,7 @@ import (
 
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/metadata"
+	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 
 	"github.com/kubexray/kubexray/internal/cause"
@@ -99,6 +100,10 @@ var (
 // connection holds the flags every command that reads a cluster shares.
 type connection struct {
 	kubeconfig, context, namespace string
+
+	// Set by resolve.
+	cfg      *rest.Config
+	ns, name string
 }
 
 func (c *connection) flags(fs *flag.FlagSet, withNamespace bool) {
@@ -110,38 +115,50 @@ func (c *connection) flags(fs *flag.FlagSet, withNamespace bool) {
 	}
 }
 
-// sync connects read-only and waits until every object has been seen, then
-// returns the graph. It tells the user which cluster it is reading first.
-func (c *connection) sync(ctx context.Context, log *slog.Logger, stderr io.Writer) (*graph.Graph, string, error) {
+// resolve reads the kubeconfig (no network): which cluster, namespace and
+// context name. It tells the user which cluster kubexray is about to read.
+func (c *connection) resolve(stderr io.Writer) error {
+	if c.cfg != nil {
+		return nil
+	}
 	rules := clientcmd.NewDefaultClientConfigLoadingRules()
 	rules.ExplicitPath = c.kubeconfig
 	cc := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(rules, &clientcmd.ConfigOverrides{CurrentContext: c.context})
 	raw, err := cc.RawConfig()
 	if err != nil {
-		return nil, "", fmt.Errorf("loading kubeconfig: %w", err)
+		return fmt.Errorf("loading kubeconfig: %w", err)
 	}
 	cfg, err := cc.ClientConfig()
 	if err != nil {
-		return nil, "", fmt.Errorf("loading kubeconfig: %w", err)
+		return fmt.Errorf("loading kubeconfig: %w", err)
 	}
 	ns := c.namespace
 	if ns == "" {
 		if ns, _, err = cc.Namespace(); err != nil {
-			return nil, "", fmt.Errorf("reading namespace from kubeconfig: %w", err)
+			return fmt.Errorf("reading namespace from kubeconfig: %w", err)
 		}
 	}
 	name := c.context
 	if name == "" {
 		name = raw.CurrentContext
 	}
-	_, _ = fmt.Fprintf(stderr, "Reading cluster %q at %s (read-only)…\n", name, cfg.Host)
-
 	cfg.UserAgent = "kubexray/" + version.Version
-	client, err := kubernetes.NewForConfig(cfg)
+	c.cfg, c.ns, c.name = cfg, ns, name
+	_, _ = fmt.Fprintf(stderr, "Reading cluster %q at %s (read-only)…\n", name, cfg.Host)
+	return nil
+}
+
+// sync connects read-only and waits until every object has been seen, then
+// returns the graph and the namespace to use.
+func (c *connection) sync(ctx context.Context, log *slog.Logger, stderr io.Writer) (*graph.Graph, string, error) {
+	if err := c.resolve(stderr); err != nil {
+		return nil, "", err
+	}
+	client, err := kubernetes.NewForConfig(c.cfg)
 	if err != nil {
 		return nil, "", fmt.Errorf("creating client: %w", err)
 	}
-	metaClient, err := metadata.NewForConfig(cfg)
+	metaClient, err := metadata.NewForConfig(c.cfg)
 	if err != nil {
 		return nil, "", fmt.Errorf("creating metadata client: %w", err)
 	}
@@ -149,7 +166,7 @@ func (c *connection) sync(ctx context.Context, log *slog.Logger, stderr io.Write
 	if err := cluster.New(client, metaClient, g, log).Start(ctx); err != nil {
 		return nil, "", err
 	}
-	return g, ns, nil
+	return g, c.ns, nil
 }
 
 // state syncs and returns the cluster as a graph state.
@@ -235,14 +252,8 @@ func incidents(ctx context.Context, args []string, stdout, stderr io.Writer) err
 		return err
 	}
 	now := time.Now()
-	list := cause.Analyze(st, cause.DefaultOptions(now))
-	groups := cause.GroupIncidents(list)
-	if list == nil {
-		list = []cause.Incident{} // JSON lists, never null
-	}
-	if groups == nil {
-		groups = []cause.Group{}
-	}
+	m := cause.NewIncidentsMessage(st, now)
+	list, groups := m.Incidents, m.Groups
 	if *output == "json" {
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
@@ -349,7 +360,10 @@ func ui(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	if *uiDir != "" {
 		assets = os.DirFS(*uiDir)
 	}
-	srv, err := server.New(hub, rec, assets, log)
+	if err := conn.resolve(stderr); err != nil {
+		return err
+	}
+	srv, err := server.New(hub, rec, assets, log, server.Info{Cluster: conn.name, Version: version.Version})
 	if err != nil {
 		return err
 	}

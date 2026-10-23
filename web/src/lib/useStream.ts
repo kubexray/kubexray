@@ -2,9 +2,8 @@
 // incidents, then every change. Reconnects with backoff and resyncs from a
 // fresh snapshot after any gap.
 import { useEffect, useRef, useState } from "react";
-import type { Group, Incident } from "../gen/cause";
+import type { Group, Incident, IncidentsMessage } from "../gen/cause";
 import type { Message } from "../gen/graph";
-import type { IncidentsMessage } from "../gen/server";
 import { fetchHistory, SignedOutError } from "./api";
 import { type ClusterEvent, statusEvents } from "./events";
 import { applyDelta, type ClusterState, fromSnapshot, GapError } from "./state";

@@ -10,18 +10,6 @@ import (
 // The types in this file are what the browser receives. TypeScript versions
 // are generated from them (make gen), so keep them free of server internals.
 
-// MessageIncidents carries the cause engine's current incidents (ADR-0007).
-const MessageIncidents = "incidents"
-
-// IncidentsMessage is sent on the stream whenever the set of incidents changes.
-type IncidentsMessage struct {
-	V         int              `json:"v"`
-	Type      string           `json:"type" tstype:"\"incidents\""`
-	TS        time.Time        `json:"ts"`
-	Incidents []cause.Incident `json:"incidents"`
-	Groups    []cause.Group    `json:"groups"` // incidents sharing a cause (ADR-0008)
-}
-
 // HistoryResponse is the recorded time range (GET /api/history).
 type HistoryResponse struct {
 	From time.Time `json:"from"`

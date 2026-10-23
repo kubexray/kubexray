@@ -141,6 +141,21 @@ export interface Group {
   apps: string[];
 }
 /**
+ * MessageIncidents is the stream and replay message carrying incidents
+ * (ADR-0007, ADR-0008).
+ */
+export const MessageIncidents = "incidents";
+/**
+ * IncidentsMessage is sent whenever the set of incidents changes.
+ */
+export interface IncidentsMessage {
+  v: number /* int */;
+  type: "incidents";
+  ts: string /* RFC 3339 */;
+  incidents: Incident[];
+  groups: Group[]; // incidents sharing a cause (ADR-0008)
+}
+/**
  * Entry is what to show as one incident: a group, or a single incident.
  */
 export interface Entry {
