@@ -241,6 +241,7 @@ aside { display: flex; flex-direction: column; gap: 12px; min-height: 0; min-wid
 .ticks .mark { position: absolute; top: -2px; bottom: 6px; width: 2px; margin-left: -1px; background: var(--text); border-radius: 1px; }
 .compare { border: 1px solid var(--border-strong); background: transparent; border-radius: 6px; padding: 5px 12px; cursor: pointer; font-size: 13px; white-space: nowrap; }
 .compare.on { background: var(--text); color: var(--bg); border-color: var(--text); }
+.compare:disabled { opacity: 0.5; cursor: default; }
 .clock { font: 500 12px var(--font-data); font-variant-numeric: tabular-nums; color: var(--muted); white-space: nowrap; }
 
 /* Full-page messages */

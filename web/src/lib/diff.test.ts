@@ -69,6 +69,20 @@ describe("diffStates", () => {
     ]);
   });
 
+  it("counts pods the way the map does: an evicted, replaced pod isn't failing", () => {
+    const edges = [owns(deploy().id, rs.id), owns(rs.id, "Pod/shop/api-1-a")];
+    const evicted: Node = { ...pod("api-1-b", false, "Evicted"), status: { ready: false, reason: "Evicted", phase: "Failed" } };
+    const before = state([deploy(), rs, pod("api-1-a")], edges);
+    const after = state([deploy(), rs, pod("api-1-a"), evicted, pod("api-1-c")], [...edges, owns(rs.id, evicted.id), owns(rs.id, "Pod/shop/api-1-c")]);
+    expect(diffStates(before, after)[0]?.details).toEqual(["pods: 1 started"]);
+  });
+
+  it("ignores label order", () => {
+    const a = state([cm(), { ...deploy(), labels: { a: "1", b: "2" } }]);
+    const b = state([cm(), { ...deploy(), labels: { b: "2", a: "1" } }]);
+    expect(diffStates(a, b)).toEqual([]);
+  });
+
   it("says who edited a ConfigMap, without its contents", () => {
     const d = diffStates(state([cm({ at: T(0), by: "helm", tool: "helm" })]), state([cm({ at: T(5), by: "kubectl-patch", tool: "kubectl", via: "patch" })]));
     expect(d).toEqual([{ id: "ConfigMap/shop/cfg", kind: "ConfigMap", ns: "shop", name: "cfg", change: "changed", details: ["edited by kubectl patch (contents not read)"] }]);

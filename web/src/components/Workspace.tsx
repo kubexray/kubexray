@@ -37,6 +37,8 @@ interface Props {
 export interface Compare {
   from: string | null;
   toggle: () => void;
+  /** Off while the moment shown is loading or isn't recorded. */
+  disabled: boolean;
 }
 
 /** Everything live mode and replay mode share: incident card, map, side
@@ -49,8 +51,19 @@ export function Workspace(props: Props) {
   // Diff mode: the moment compared from. States never change once made, so
   // keeping this one is enough; the other side is whatever is shown.
   const [base, setBase] = useState<{ at: string; state: ClusterState } | null>(null);
-  const shownAt = at ?? state.ts;
-  const compare: Compare = { from: base?.at ?? null, toggle: () => setBase(base ? null : { at: shownAt, state }) };
+  // Live, the moment is now: the last delta may be minutes old.
+  const [liveNow, setLiveNow] = useState(() => new Date().toISOString());
+  useEffect(() => {
+    if (at || !base) return;
+    const t = setInterval(() => setLiveNow(new Date().toISOString()), 1000);
+    return () => clearInterval(t);
+  }, [at, base]);
+  const shownAt = at ?? liveNow;
+  const compare: Compare = {
+    from: base?.at ?? null,
+    disabled: !base && !!props.loading,
+    toggle: () => setBase(base ? null : { at: at ?? new Date().toISOString(), state }),
+  };
   const [hovered, setHovered] = useState<string | null>(null);
   const [open, setOpen] = useState(new Map<string, boolean>());
   const appOf = useCallback((id: string | null) => (id ? (allWorkloads(view).find(({ w }) => w.pods.some((p) => p.id === id))?.w.node.id ?? id) : null), [view]);

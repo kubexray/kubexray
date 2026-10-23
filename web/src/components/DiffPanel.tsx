@@ -18,7 +18,11 @@ export function DiffPanel({ from, to, onSelect, onClose }: Props) {
   const [a, b] = Date.parse(from.at) <= Date.parse(to.at) ? [from, to] : [to, from];
   const diffs = useMemo(() => diffStates(a.state, b.state), [a.state, b.state]);
   const byNs = new Map<string, ObjectDiff[]>();
-  for (const d of diffs) byNs.set(d.ns ?? "", [...(byNs.get(d.ns ?? "") ?? []), d]);
+  for (const d of diffs) {
+    const list = byNs.get(d.ns ?? "");
+    if (list) list.push(d);
+    else byNs.set(d.ns ?? "", [d]);
+  }
 
   return (
     <section className="panel compare-panel" aria-label="Changes between two moments">
@@ -38,7 +42,7 @@ export function DiffPanel({ from, to, onSelect, onClose }: Props) {
           <ul>
             {list.map((d) => (
               <li key={d.id}>
-                <button type="button" className={`diff-row ${d.change}`} onClick={() => onSelect(d.id)} disabled={d.change === "removed"}>
+                <button type="button" className={`diff-row ${d.change}`} onClick={() => onSelect(d.id)} disabled={!to.state.nodes.has(d.id)}>
                   <span className="tag">{LABEL[d.change]}</span>
                   <span className="what">
                     <span className="kind">{d.kind}</span> {d.name}

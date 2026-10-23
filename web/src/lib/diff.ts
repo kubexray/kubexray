@@ -6,7 +6,7 @@ import type { Container, Node } from "../gen/graph";
 import { who } from "./format";
 import { podHealth } from "./health";
 import type { ClusterState } from "./state";
-import { SYSTEM_NAMESPACES } from "./view";
+import { allWorkloads, buildView, SYSTEM_NAMESPACES } from "./view";
 
 export interface ObjectDiff {
   id: string;
@@ -23,33 +23,22 @@ const LISTED = new Set([...APP_KINDS, "Service", "Ingress", "ConfigMap", "Secret
 /** Order within a namespace: apps first, then what they use. */
 const ORDER = ["Node", "Namespace", "Ingress", "Service", "Deployment", "StatefulSet", "DaemonSet", "Job", "ConfigMap", "Secret", "PersistentVolumeClaim"];
 
-/** The app that runs a pod: its topmost owner of an app kind (Pod ← ReplicaSet ← Deployment). */
-function appOf(s: ClusterState, owners: Map<string, string>, id: string): string | null {
-  let cur = id;
-  for (let i = 0; i < 3; i++) {
-    const up = owners.get(cur);
-    if (!up) break;
-    cur = up;
+// Each app's pods, exactly as the map groups them (active pods only, with
+// node problems applied). Cached per state: in live mode the compared-from
+// state stays the same while the other side changes with every delta.
+const podCache = new WeakMap<ClusterState, Map<string, Node[]>>();
+function podsByApp(s: ClusterState): Map<string, Node[]> {
+  let m = podCache.get(s);
+  if (!m) {
+    m = new Map(allWorkloads(buildView(s)).map(({ w }) => [w.node.id, w.pods]));
+    podCache.set(s, m);
   }
-  return cur !== id && APP_KINDS.has(s.nodes.get(cur)?.kind ?? cur.split("/")[0] ?? "") ? cur : null;
-}
-
-function ownersOf(s: ClusterState): Map<string, string> {
-  const m = new Map<string, string>();
-  for (const e of s.edges.values()) if (e.type === "owns") m.set(e.to, e.from);
   return m;
 }
 
-/** Each app's active pods. */
-function podsByApp(s: ClusterState): Map<string, Node[]> {
-  const owners = ownersOf(s);
-  const out = new Map<string, Node[]>();
-  for (const n of s.nodes.values()) {
-    if (n.kind !== "Pod" || n.status.reason === "Terminating" || n.status.phase === "Succeeded") continue;
-    const app = appOf(s, owners, n.id);
-    if (app) out.set(app, [...(out.get(app) ?? []), n]);
-  }
-  return out;
+function sameLabels(a: Record<string, string> = {}, b: Record<string, string> = {}): boolean {
+  const ka = Object.keys(a);
+  return ka.length === Object.keys(b).length && ka.every((k) => a[k] === b[k]);
 }
 
 function resources(c: Container): string {
@@ -147,7 +136,7 @@ export function diffStates(a: ClusterState, b: ClusterState): ObjectDiff[] {
       const by = who(nb.change) || "someone";
       details.push(details.length ? `changed by ${by}` : nb.kind === "ConfigMap" || nb.kind === "Secret" ? `edited by ${by} (contents not read)` : `changed by ${by}`);
     }
-    if (JSON.stringify(na.labels ?? {}) !== JSON.stringify(nb.labels ?? {}) && !written) details.push("labels changed");
+    if (!sameLabels(na.labels, nb.labels) && !written) details.push("labels changed");
     if (details.length) entry(nb, "changed", details);
   }
   for (const na of a.nodes.values()) if (shown(na) && !b.nodes.has(na.id)) entry(na, "removed", []);

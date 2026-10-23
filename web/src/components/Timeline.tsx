@@ -55,7 +55,7 @@ export function Timeline({ bounds, at, mode, events, incidents, onSeek, playing,
             .map((e) => (
               <i key={e.id} className={e.kind} style={{ left: pos(e.ts) }} title={`${clock(e.ts)} ${e.text}`} />
             ))}
-          {compare?.from && <b className="mark" style={{ left: pos(compare.from) }} title={`Comparing from ${clock(compare.from)}`} />}
+          {compare?.from && Date.parse(compare.from) >= from && <b className="mark" style={{ left: pos(compare.from) }} title={`Comparing from ${clock(compare.from)}`} />}
         </div>
         <input
           type="range"
@@ -71,7 +71,7 @@ export function Timeline({ bounds, at, mode, events, incidents, onSeek, playing,
         />
       </div>
       {compare && (
-        <button type="button" className={`compare${compare.from ? " on" : ""}`} onClick={compare.toggle} aria-pressed={!!compare.from}>
+        <button type="button" className={`compare${compare.from ? " on" : ""}`} onClick={compare.toggle} aria-pressed={!!compare.from} disabled={compare.disabled}>
           {compare.from ? "Stop comparing" : "Compare"}
         </button>
       )}
