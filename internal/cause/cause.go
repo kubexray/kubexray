@@ -106,8 +106,11 @@ type Incident struct {
 	LastChange *graph.Change `json:"lastChange,omitempty"`
 }
 
-// Down reports whether the app has no ready pods at all.
-func (i Incident) Down() bool { return !i.Healthy && i.Symptom.Desired > 0 && i.Symptom.Ready == 0 }
+// Down reports whether the app has no ready pods at all: none of those it
+// wants, or none at all while traffic is routed to it (scaled to zero).
+func (i Incident) Down() bool {
+	return !i.Healthy && i.Symptom.Ready == 0 && (i.Symptom.Desired > 0 || len(i.Symptom.BadPods) == 0)
+}
 
 // State says how the app is doing in a few words: "is healthy", "is down",
 // "is degraded" (fewer ready pods than wanted), or "has failing pods" (all
@@ -221,6 +224,7 @@ type index struct {
 	in, out  map[string][]graph.Edge
 	podsOf   map[string][]graph.Node // app ID → its pods, sorted by name
 	appByPod map[string]string
+	services map[string][]graph.Node // namespace → Services, see servicesIn
 }
 
 func newIndex(st *graph.State) *index {
@@ -311,13 +315,14 @@ func (x *index) explain(app graph.Node, opts Options) Incident {
 		}
 	}
 	inc := Incident{App: app.ID, Kind: app.Kind, Namespace: app.Namespace, Name: app.Name, LastChange: app.Change}
-	if z, ok := x.scaledToZero(app); ok {
-		return z
+	if x.scaledToZero(app, &inc) {
+		return inc
 	}
 	inc.Symptom = symptom(app, pods)
 	// Kubernetes refusing to create pods (a quota, a webhook) is a problem even
-	// while the old pods still serve: the rollout or scale-up is stuck.
-	refused := app.Status.Message != ""
+	// while the old pods still serve: the rollout or scale-up is stuck. The
+	// reason survives anonymization; the message doesn't.
+	refused := app.Kind == "Deployment" && (app.Status.Reason == "FailedCreate" || app.Status.Message != "")
 	if (len(inc.Symptom.BadPods) == 0 && inc.Symptom.Ready >= inc.Symptom.Desired && !refused) || (app.Kind == "Job" && app.Status.Phase == "Complete") {
 		inc.Healthy = true
 		return inc
@@ -425,15 +430,8 @@ func (x *index) impact(pods []graph.Node, s Symptom) []string {
 	}
 	lines := make([]string, 0, len(services))
 	for _, svc := range slices.Sorted(maps.Keys(services)) {
-		hops := []string{}
-		for _, e := range x.in[svc] {
-			if e.Type == graph.EdgeRoutes {
-				hops = append(hops, "Ingress "+x.st.Nodes[e.From].Name)
-			}
-		}
-		slices.Sort(hops)
 		path := ""
-		if len(hops) > 0 {
+		if hops := x.ingressHops(svc); len(hops) > 0 {
 			path = strings.Join(hops, ", ") + " → "
 		}
 		lines = append(lines, fmt.Sprintf("%sService %s → %d of %d pods ready", path, x.st.Nodes[svc].Name, s.Ready, s.Desired))

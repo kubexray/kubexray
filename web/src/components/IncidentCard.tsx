@@ -3,8 +3,10 @@ import type { Cause, Diagnosis, Group, Incident } from "../gen/cause";
 import { affected, clock, duration, who } from "../lib/format";
 import { useNow } from "../lib/useNow";
 
+/** Mirrors cause.Incident.Down: no ready pods, of those it wants or at all
+ * while traffic is routed to it (scaled to zero). */
 export function down(inc: Incident): boolean {
-  return inc.symptom.desired > 0 && inc.symptom.ready === 0;
+  return !inc.healthy && inc.symptom.ready === 0 && (inc.symptom.desired > 0 || !inc.symptom.badPods?.length);
 }
 
 /** Mirrors cause.Incident.State: scaled to zero behind an Ingress, down,

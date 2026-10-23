@@ -2,6 +2,7 @@ package cause
 
 import (
 	"testing"
+	"time"
 
 	"github.com/kubexray/kubexray/internal/graph"
 )
@@ -29,7 +30,7 @@ func scaledDown(routed bool, change *graph.Change) *cluster {
 func TestScaledToZeroBehindAnIngress(t *testing.T) {
 	t.Parallel()
 	inc := analyze(t, scaledDown(true, by("kubectl-scale", "kubectl", "scale", mins(0))), mins(2))
-	if inc.State() != "is scaled to zero" || inc.Symptom.Summary != "scaled to 0 replicas" {
+	if inc.State() != "is scaled to zero" || inc.Symptom.Summary != "scaled to 0 replicas" || !inc.Down() {
 		t.Errorf("state %q, symptom %+v", inc.State(), inc.Symptom)
 	}
 	if len(inc.Impact) != 1 || inc.Impact[0] != "Ingress web → Service api → no pods" {
@@ -83,6 +84,33 @@ func TestScaleIsNotCreditedToAnOlderWrite(t *testing.T) {
 	}
 }
 
+func TestScaleAppliedFromAManifestIsCredited(t *testing.T) {
+	t.Parallel()
+	// replicas: 0 applied by Argo CD: its write coincides with the scale-down.
+	c := scaledDown(true, by("argocd-controller", "argocd", "", mins(0)))
+	rs := c.replicaSet("Deployment/shop/api", "api-1", mins(-50), spec("1", "nginx"))
+	rs.Change = by("kube-controller-manager", "controller", "", mins(0).Add(time.Second))
+	c.add(rs)
+	top := assertTop(t, analyze(t, c, mins(2)), KindScale, VeryLikely)
+	if top.By == nil || top.By.Tool != "argocd" || len(top.Evidence) != 0 {
+		t.Errorf("cause = %+v", top)
+	}
+}
+
+func TestScaledStatefulSetStartsAtItsLatestWrite(t *testing.T) {
+	t.Parallel()
+	// No ReplicaSet to date the scale: it happened at or after the latest write.
+	c := scaledDown(true, by("kubectl-set", "kubectl", "set", mins(-5)))
+	d := c.st.Nodes["Deployment/shop/api"]
+	delete(c.st.Nodes, d.ID)
+	d.ID, d.Kind = "StatefulSet/shop/api", "StatefulSet"
+	c.add(d)
+	inc := analyze(t, c, mins(2))
+	if !inc.Since.Equal(mins(-5)) || inc.Causes[0].By != nil || !inc.Causes[0].At.IsZero() {
+		t.Errorf("since %v, cause %+v", inc.Since, inc.Causes[0])
+	}
+}
+
 func TestQuotaRefusingPods(t *testing.T) {
 	t.Parallel()
 	// A restart can't create pods; the old ones still serve.
@@ -107,5 +135,24 @@ func TestQuotaRefusingPods(t *testing.T) {
 	top := assertTop(t, inc, KindQuota, VeryLikely)
 	if top.Summary != "ResourceQuota compute was created" || !hasStep(inc.Next, "describe resourcequota compute") {
 		t.Errorf("cause %+v, next %+v", top, inc.Next)
+	}
+
+	// Anonymized replays drop the message; the reason still says it.
+	d.Status.Message = ""
+	c.add(d)
+	if inc := analyze(t, c, mins(2)); inc.State() != "can't create new pods" {
+		t.Errorf("anonymized: state %q", inc.State())
+	}
+}
+
+func TestStandalonePodMessageIsNotARefusal(t *testing.T) {
+	t.Parallel()
+	c := newCluster()
+	c.add(graph.Node{
+		ID: "Pod/shop/tool", Kind: "Pod", Namespace: "shop", Name: "tool", Created: mins(-10),
+		Status: graph.Status{Phase: "Running", Ready: true, Message: "the kubelet said something"},
+	})
+	if incs := Analyze(c.st, DefaultOptions(mins(2))); len(incs) != 0 {
+		t.Errorf("incidents = %+v", incs)
 	}
 }
