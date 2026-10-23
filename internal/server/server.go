@@ -135,6 +135,7 @@ func (s *Server) Handler() http.Handler {
 	api.HandleFunc("GET /api/history", s.history)
 	api.HandleFunc("GET /api/at", s.at)
 	api.HandleFunc("GET /api/why", s.why)
+	api.HandleFunc("GET /api/changes", s.changes)
 	api.Handle("GET /", http.FileServerFS(s.assets))
 
 	return s.checkHost(s.headers(s.session(api)))
@@ -325,6 +326,20 @@ func (s *Server) why(w http.ResponseWriter, r *http.Request) {
 	default:
 		writeJSON(w, inc)
 	}
+}
+
+// changes lists who changed what since the recording began (cause.Changes).
+func (s *Server) changes(w http.ResponseWriter, _ *http.Request) {
+	from, _, ok := s.rec.Bounds()
+	if !ok {
+		from = s.now().Add(-time.Hour)
+	}
+	list, err := s.hub.changes(from)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusServiceUnavailable)
+		return
+	}
+	writeJSON(w, list)
 }
 
 func writeJSON(w http.ResponseWriter, v any) {

@@ -1,5 +1,6 @@
 import type { Cause, Incident } from "../gen/cause";
 import { clock, duration, who } from "../lib/format";
+import { useNow } from "../lib/useNow";
 
 export function down(inc: Incident): boolean {
   return inc.symptom.desired > 0 && inc.symptom.ready === 0;
@@ -33,13 +34,16 @@ export function CauseLine({ cause }: { cause: Cause }) {
 
 interface Props {
   incidents: Incident[];
-  now: number;
+  /** Pinned time when rewound; otherwise the card ticks with the clock. */
+  at: string | null;
   canRewindTo: (ts: string) => boolean;
   onShow: (id: string) => void;
   onRewind: (ts: string) => void;
 }
 
-export function IncidentCard({ incidents, now, canRewindTo, onShow, onRewind }: Props) {
+export function IncidentCard({ incidents, at, canRewindTo, onShow, onRewind }: Props) {
+  const live = useNow();
+  const now = at ? Date.parse(at) : live;
   const [inc, ...more] = rankIncidents(incidents);
   if (!inc) return null;
   const top = inc.causes?.[0];

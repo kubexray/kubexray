@@ -6,7 +6,7 @@ import type { Incident } from "../gen/cause";
 import type { Message } from "../gen/graph";
 import type { IncidentsMessage } from "../gen/server";
 import { fetchHistory, SignedOutError } from "./api";
-import { type ClusterEvent, eventsFor } from "./events";
+import { type ClusterEvent, statusEvents } from "./events";
 import { applyDelta, type ClusterState, fromSnapshot, GapError } from "./state";
 
 export type StreamStatus = "connecting" | "live" | "reconnecting" | "signed-out";
@@ -50,7 +50,7 @@ export function useStream(): Stream {
           } else if (msg.type === "delta" && current.current) {
             const before = current.current;
             current.current = applyDelta(before, msg);
-            const events = eventsFor(before, msg);
+            const events = statusEvents(before, msg);
             setStream((s) => ({
               ...s,
               state: current.current,
@@ -67,13 +67,17 @@ export function useStream(): Stream {
         if (stopped) return;
         // A refused upgrade looks like any other close; ask the API why.
         fetchHistory()
-          .then(() => setStream((s) => ({ ...s, status: "reconnecting" })))
-          .catch((err: unknown) => {
-            if (err instanceof SignedOutError) setStream((s) => ({ ...s, status: "signed-out" }));
-            else setStream((s) => ({ ...s, status: "reconnecting" }));
-          })
-          .finally(() => {
+          .then(() => true)
+          .catch((err: unknown) => !(err instanceof SignedOutError))
+          .then((retryable) => {
             if (stopped) return;
+            if (!retryable) {
+              // Only the launch link can fix this; stop knocking.
+              stopped = true;
+              setStream((s) => ({ ...s, status: "signed-out" }));
+              return;
+            }
+            setStream((s) => ({ ...s, status: "reconnecting" }));
             retry = setTimeout(connect, delay);
             delay = Math.min(delay * 2, 10_000);
           });

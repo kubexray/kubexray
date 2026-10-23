@@ -1,8 +1,8 @@
 import { useState } from "react";
+import { useNow } from "../lib/useNow";
 import type { Incident } from "../gen/cause";
-import type { Node } from "../gen/graph";
 import { ago, who } from "../lib/format";
-import { podHealth, podText } from "../lib/health";
+import { nodeSummary, podHealth, podText } from "../lib/health";
 import type { ClusterState } from "../lib/state";
 import { allWorkloads, type NamespaceView, workloadHealth, workloadProblem } from "../lib/view";
 import { CauseLine } from "./IncidentCard";
@@ -13,11 +13,11 @@ interface Props {
   view: NamespaceView[];
   /** The cause engine's answer for the selected app, when there is one. */
   incident: Incident | null;
-  now: number;
   onSelect: (id: string) => void;
 }
 
-export function DetailsPanel({ id, state, view, incident, now, onSelect }: Props) {
+export function DetailsPanel({ id, state, view, incident, onSelect }: Props) {
+  const now = useNow();
   const n = id ? state?.nodes.get(id) : undefined;
   if (!n || !state) {
     return (
@@ -44,7 +44,7 @@ export function DetailsPanel({ id, state, view, incident, now, onSelect }: Props
   const wl = allWorkloads(view).find(({ w }) => w.node.id === n.id || w.pods.some((p) => p.id === n.id));
   const isApp = wl?.w.node.id === n.id;
   const health = n.kind === "Pod" ? podHealth(n) : isApp && wl ? workloadHealth(wl.w) : n.status.ready ? "ok" : "warn";
-  const stateText = isApp && wl ? workloadProblem(wl.w) || summary(n) : n.kind === "Pod" ? podText(n) : summary(n);
+  const stateText = isApp && wl ? workloadProblem(wl.w) || nodeSummary(n) : nodeSummary(n);
 
   if (n.kind === "Pod") {
     if (wl && !isApp) facts.push(["App", link(wl.w.node.id)]);
@@ -163,12 +163,6 @@ function Command({ command, note }: { command: string; note?: string }) {
       </div>
     </div>
   );
-}
-
-function summary(n: Node): string {
-  const s = n.status;
-  if (s.replicas) return `${s.replicas.ready}/${s.replicas.desired} ready`;
-  return [s.phase, s.reason].filter(Boolean).join(" · ") || (s.ready ? "Ready" : "Not ready");
 }
 
 function join(items: React.ReactNode[]): React.ReactNode[] {

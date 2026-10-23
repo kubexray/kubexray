@@ -443,6 +443,22 @@ func TestWhy(t *testing.T) {
 	}
 }
 
+func TestChanges(t *testing.T) {
+	t.Parallel()
+	f := start(t, 4)
+	f.g.UpsertNode(graph.Node{ID: "ConfigMap/shop/cfg", Kind: "ConfigMap", Namespace: "shop", Name: "cfg",
+		Change: &graph.Change{At: time.Now(), By: "kubectl-patch", Tool: "kubectl", Via: "patch"}})
+	delta, _ := f.g.Flush()
+	f.emit(delta, false)
+	var list []cause.Change
+	if err := json.Unmarshal(f.do(req{path: "/api/changes", cookie: true}).body, &list); err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 1 || list[0].Object != "ConfigMap/shop/cfg" || list[0].By.Via != "patch" {
+		t.Errorf("changes = %+v", list)
+	}
+}
+
 func TestServesTheUI(t *testing.T) {
 	t.Parallel()
 	f := start(t, 4)

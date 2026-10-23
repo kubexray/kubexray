@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState } from "react";
+import { memo, useLayoutEffect, useRef, useState } from "react";
 import type { Node } from "../gen/graph";
 import { podHealth, podText } from "../lib/health";
 import { type NamespaceView, type Workload, wireTarget, workloadHealth, workloadProblem } from "../lib/view";
@@ -24,7 +24,7 @@ interface Props {
   onHover: (id: string | null) => void;
 }
 
-export function MapView(props: Props) {
+export const MapView = memo(function MapView(props: Props) {
   return (
     <div className="map" aria-label="Cluster map">
       {props.view.map((ns) => (
@@ -32,7 +32,7 @@ export function MapView(props: Props) {
       ))}
     </div>
   );
-}
+});
 
 function Namespace({ ns, open, highlight, causeOf, onToggle, onSelect, onHover }: Props & { ns: NamespaceView }) {
   const isOpen = open.get(ns.name) ?? (!ns.system || !ns.allHealthy);
@@ -45,7 +45,14 @@ function Namespace({ ns, open, highlight, causeOf, onToggle, onSelect, onHover }
     <NodeCard key={key} n={n} kind={kind} dataKey={key} extra={extra} highlight={highlight} onSelect={onSelect} onHover={onHover} />
   );
   return (
-    <details className="ns" open={isOpen} onToggle={(e) => onToggle(ns.name, e.currentTarget.open)}>
+    <details
+      className="ns"
+      open={isOpen}
+      onToggle={(e) => {
+        // React setting `open` fires toggle too; only remember what the user did.
+        if (e.currentTarget.open !== isOpen) onToggle(ns.name, e.currentTarget.open);
+      }}
+    >
       <summary>
         <span className="ns-name">{ns.name}</span>
         <span className={`ns-meta ${ns.problems ? "bad" : ""}`}>{meta}</span>

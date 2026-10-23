@@ -20,7 +20,9 @@ help: ## Show this help
 	@grep -hE '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
 
 .PHONY: build
-build: web go-build ## Build the kubexray binary with the web UI into ./bin
+build: ## Build the kubexray binary with the web UI into ./bin
+	$(MAKE) web
+	$(MAKE) go-build
 
 .PHONY: go-build
 go-build: ## Build the binary without rebuilding the UI (no Node needed)

@@ -172,6 +172,20 @@ func (h *Hub) UpdateIncidents(now time.Time) error {
 	return nil
 }
 
+// changes lists recent changes on the current state.
+func (h *Hub) changes(since time.Time) ([]cause.Change, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.state == nil {
+		return nil, errNotSynced
+	}
+	list := cause.Changes(h.state, since, false)
+	if list == nil {
+		list = []cause.Change{}
+	}
+	return list, nil
+}
+
 // explain runs the cause engine for one app on the current state.
 func (h *Hub) explain(id string, now time.Time) (cause.Incident, error) {
 	h.mu.Lock()

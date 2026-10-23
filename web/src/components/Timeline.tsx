@@ -2,18 +2,19 @@ import type { Incident } from "../gen/cause";
 import type { HistoryResponse } from "../gen/server";
 import type { ClusterEvent } from "../lib/events";
 import { clock } from "../lib/format";
+import { useNow } from "../lib/useNow";
 
 interface Props {
   history: HistoryResponse | null;
   at: string | null; // null: live
-  now: number;
   events: ClusterEvent[];
   incidents: Incident[];
   onSeek: (ts: string | null) => void;
 }
 
 /** The rewind timeline: drag back through the recorded history. */
-export function Timeline({ history, at, now, events, incidents, onSeek }: Props) {
+export function Timeline({ history, at, events, incidents, onSeek }: Props) {
+  const now = useNow();
   if (!history) {
     return (
       <footer className="timeline">

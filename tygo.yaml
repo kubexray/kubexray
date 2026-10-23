@@ -12,7 +12,7 @@ packages:
   - path: "github.com/kubexray/kubexray/internal/cause"
     output_path: "web/src/gen/cause.ts"
     enum_style: "union"
-    exclude_files: ["rules.go", "changes.go"]
+    exclude_files: ["rules.go"]
     type_mappings:
       graph.Change: "graph.Change"
       graph.Origin: "graph.Origin"

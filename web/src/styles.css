@@ -232,3 +232,7 @@ aside { display: flex; flex-direction: column; gap: 12px; min-height: 0; min-wid
 @media (prefers-reduced-motion: reduce) {
   *, *::before { animation: none !important; transition: none !important; }
 }
+
+/* Rewinding */
+.notice { border: 1px solid var(--border); background: var(--accent-soft); color: var(--text); border-radius: 10px; padding: 10px 14px; }
+.main.loading { opacity: 0.6; transition: opacity 0.2s; }

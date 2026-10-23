@@ -104,3 +104,20 @@ export interface Options {
   Lookback: number /* nanoseconds */; // how far before an incident to look for causes
   Skew: number /* nanoseconds */; // changes this long after the start still count (clock skew)
 }
+
+//////////
+// source: changes.go
+
+/**
+ * Change is one entry in the list of recent changes.
+ */
+export interface Change {
+  at: string /* RFC 3339 */;
+  object: string;
+  kind: string;
+  name: string;
+  namespace?: string;
+  by?: graph.Change;
+  origin?: graph.Origin;
+  summary: string;
+}
