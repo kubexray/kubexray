@@ -446,8 +446,10 @@ func TestWhy(t *testing.T) {
 func TestChanges(t *testing.T) {
 	t.Parallel()
 	f := start(t, 4)
-	f.g.UpsertNode(graph.Node{ID: "ConfigMap/shop/cfg", Kind: "ConfigMap", Namespace: "shop", Name: "cfg",
-		Change: &graph.Change{At: time.Now(), By: "kubectl-patch", Tool: "kubectl", Via: "patch"}})
+	f.g.UpsertNode(graph.Node{
+		ID: "ConfigMap/shop/cfg", Kind: "ConfigMap", Namespace: "shop", Name: "cfg",
+		Change: &graph.Change{At: time.Now(), By: "kubectl-patch", Tool: "kubectl", Via: "patch"},
+	})
 	delta, _ := f.g.Flush()
 	f.emit(delta, false)
 	var list []cause.Change
