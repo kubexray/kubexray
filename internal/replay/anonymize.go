@@ -19,6 +19,14 @@ func newAnonymizer() *anonymizer {
 	return &anonymizer{seen: map[string]map[string]string{}, counters: map[string]int{}}
 }
 
+// Standard Kubernetes names identify nothing, and code matches some of them
+// literally (kube-root-ca.crt is skipped as noise, system namespaces are
+// collapsed in the UI), so they're kept.
+var (
+	wellKnownNamespaces = map[string]bool{"default": true, "kube-system": true, "kube-public": true, "kube-node-lease": true, "local-path-storage": true}
+	wellKnownNames      = map[string]bool{"kube-root-ca.crt": true, "kubernetes": true, "coredns": true, "kube-dns": true, "kube-proxy": true}
+)
+
 func (a *anonymizer) replace(space, original, prefix string) string {
 	if original == "" {
 		return ""
@@ -37,11 +45,19 @@ func (a *anonymizer) replace(space, original, prefix string) string {
 	return r
 }
 
-func (a *anonymizer) namespace(ns string) string { return a.replace("namespace", ns, "namespace") }
+func (a *anonymizer) namespace(ns string) string {
+	if wellKnownNamespaces[ns] {
+		return ns
+	}
+	return a.replace("namespace", ns, "namespace")
+}
 
 func (a *anonymizer) name(kind, name string) string {
-	if kind == "Namespace" {
+	switch {
+	case kind == "Namespace":
 		return a.namespace(name)
+	case wellKnownNames[name]:
+		return name
 	}
 	prefix := strings.ToLower(kind)
 	if kind == "PersistentVolumeClaim" {
@@ -73,20 +89,45 @@ func (a *anonymizer) edgeID(id string) string {
 	return t + ":" + a.id(from) + ":" + a.id(to)
 }
 
-// image keeps the tag ("the tag changed" is the story) and replaces the rest.
+// image replaces the repository and digest but keeps the tag: "the tag
+// changed" is the story. A digest change stays visible as a different
+// replacement.
 func (a *anonymizer) image(image string) string {
-	repo, tag := image, ""
-	if i := strings.LastIndex(image, ":"); i > strings.LastIndex(image, "/") {
-		repo, tag = image[:i], image[i:]
+	ref, digest, _ := strings.Cut(image, "@")
+	repo, tag := ref, ""
+	if i := strings.LastIndex(ref, ":"); i > strings.LastIndex(ref, "/") {
+		repo, tag = ref[:i], ref[i:]
 	}
-	if at := strings.Index(repo, "@"); at >= 0 { // digests identify too
-		repo, tag = repo[:at], ""
+	out := a.replace("image", repo, "image") + tag
+	if digest != "" {
+		out += "@" + a.replace("digest", digest, "digest")
 	}
-	return a.replace("image", repo, "image") + tag
+	return out
 }
 
-// knownTools are change tools that name software, not a person or system.
-var knownTools = map[string]bool{"kubectl": true, "helm": true, "argocd": true, "flux": true, "controller": true}
+// Known kubectl subcommands; anything else in a kubectl field manager name
+// (kubectl-ivan-hotfix) could identify someone.
+var kubectlVerbs = map[string]bool{
+	"apply": true, "patch": true, "edit": true, "set": true, "scale": true, "rollout": true, "create": true,
+	"replace": true, "label": true, "annotate": true, "debug": true, "expose": true, "autoscale": true,
+}
+
+// change keeps only the tool family: field manager names are free-form and
+// can carry company or person names (acme-billing-controller-manager).
+func (a *anonymizer) change(c graph.Change) graph.Change {
+	switch c.Tool {
+	case "kubectl", "helm", "argocd", "flux":
+		c.By = c.Tool
+	default:
+		c.By = a.replace("manager", c.By, "manager")
+	}
+	if c.Tool == "kubectl" && kubectlVerbs[c.Via] {
+		c.By = "kubectl-" + c.Via
+	} else {
+		c.Via = ""
+	}
+	return c
+}
 
 func (a *anonymizer) node(n *graph.Node) {
 	kind := n.Kind
@@ -113,9 +154,8 @@ func (a *anonymizer) node(n *graph.Node) {
 		}
 		n.Spec = &spec
 	}
-	if n.Change != nil && !knownTools[n.Change.Tool] {
-		c := *n.Change
-		c.By = a.replace("manager", c.By, "manager")
+	if n.Change != nil {
+		c := a.change(*n.Change)
 		n.Change = &c
 	}
 	if n.Origin != nil {

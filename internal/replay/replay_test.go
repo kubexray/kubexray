@@ -3,7 +3,9 @@ package replay
 import (
 	"bytes"
 	"compress/gzip"
+	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"strings"
 	"testing"
@@ -84,7 +86,7 @@ func recording(t *testing.T) [][]byte {
 func write(t *testing.T, anonymize bool) []byte {
 	t.Helper()
 	var buf bytes.Buffer
-	err := Write(&buf, recording(t), Options{From: t0.Add(-time.Minute), To: t0.Add(3 * time.Minute), Cluster: "acme-prod-eu", Version: "v0.2.0", Anonymize: anonymize})
+	err := Write(t.Context(), &buf, recording(t), Options{From: t0.Add(-time.Minute), To: t0.Add(3 * time.Minute), Cluster: "acme-prod-eu", Version: "v0.2.0", Anonymize: anonymize})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -161,11 +163,89 @@ func TestAnonymizerIsConsistent(t *testing.T) {
 		{"registry.acme.internal:5000/team/app:1.2.3", "image-1:1.2.3"},
 		{"registry.acme.internal:5000/team/app:1.3.0", "image-1:1.3.0"},
 		{"registry.acme.internal:5000/team/app", "image-1"},
-		{"nginx@sha256:abc", "image-2"},
+		{"nginx@sha256:abc", "image-2@digest-1"},
+		{"nginx@sha256:def", "image-2@digest-2"},
+		{"app:1.2@sha256:abc", "image-3:1.2@digest-1"},
 	} {
 		if got := a.image(tt.in); got != tt.want {
 			t.Errorf("image(%q) = %q, want %q", tt.in, got, tt.want)
 		}
+	}
+}
+
+func TestAnonymizerKeepsToolsNotNames(t *testing.T) {
+	t.Parallel()
+	a := newAnonymizer()
+	for _, tt := range []struct {
+		in   graph.Change
+		want string // By after anonymizing
+	}{
+		{graph.Change{By: "kubectl-patch", Tool: "kubectl", Via: "patch"}, "kubectl-patch"},
+		{graph.Change{By: "kubectl-ivan-hotfix", Tool: "kubectl", Via: "ivan-hotfix"}, "kubectl"},
+		{graph.Change{By: "argocd-acme-prod", Tool: "argocd"}, "argocd"},
+		{graph.Change{By: "acme-billing-controller-manager", Tool: "controller"}, "manager-1"},
+		{graph.Change{By: "terraform-acme", Tool: "other"}, "manager-2"},
+	} {
+		got := a.change(tt.in)
+		if got.By != tt.want || strings.Contains(got.Via, "ivan") {
+			t.Errorf("change(%q) = %+v, want By %q", tt.in.By, got, tt.want)
+		}
+	}
+}
+
+func TestAnonymizerKeepsWellKnownNames(t *testing.T) {
+	t.Parallel()
+	a := newAnonymizer()
+	for in, want := range map[string]string{
+		"ConfigMap/shop/kube-root-ca.crt":   "ConfigMap/namespace-1/kube-root-ca.crt",
+		"Deployment/kube-system/coredns":    "Deployment/kube-system/coredns",
+		"Service/default/kubernetes":        "Service/default/kubernetes",
+		"Deployment/kube-system/acme-agent": "Deployment/kube-system/deployment-1",
+	} {
+		if got := a.id(in); got != want {
+			t.Errorf("id(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestIncidentsAppearAfterTheGracePeriodWithoutNewChanges(t *testing.T) {
+	t.Parallel()
+	// The pod starts crash-looping at +0 and nothing else changes; the
+	// incident must be stamped about 30 s later, not at the end of the window.
+	g := graph.New()
+	g.UpsertNode(graph.Node{ID: "Deployment/shop/api", Kind: "Deployment", Namespace: "shop", Name: "api", Status: graph.Status{Replicas: &graph.Replicas{Desired: 1, Ready: 1, Updated: 1}, Ready: true}})
+	_, _, snap := g.FlushAndSnapshot()
+	snap.TS = t0
+	g.UpsertNode(graph.Node{ID: "Pod/shop/api-x", Kind: "Pod", Namespace: "shop", Name: "api-x", Created: t0, Status: graph.Status{Reason: "CrashLoopBackOff", Restarts: 1, Since: t0}})
+	g.UpsertEdge(graph.NewEdge(graph.EdgeOwns, "Deployment/shop/api", "Pod/shop/api-x"))
+	d, _ := g.Flush()
+	d.TS = t0
+	raw := func(m graph.Message) []byte { b, _ := json.Marshal(m); return b }
+	var buf bytes.Buffer
+	if err := Write(t.Context(), &buf, [][]byte{raw(snap), raw(d)}, Options{From: t0, To: t0.Add(10 * time.Minute)}); err != nil {
+		t.Fatal(err)
+	}
+	f, err := Read(&buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, m := range f.Incidents {
+		if len(m.Incidents) > 0 {
+			if late := m.TS.Sub(t0); late < 30*time.Second || late > 40*time.Second {
+				t.Errorf("incident first written %v after it began, want 30-40 s", late)
+			}
+			return
+		}
+	}
+	t.Error("the incident never appeared")
+}
+
+func TestWriteStopsWhenCancelled(t *testing.T) {
+	t.Parallel()
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if err := Write(ctx, io.Discard, recording(t), Options{To: t0}); !errors.Is(err, context.Canceled) {
+		t.Errorf("Write = %v, want context.Canceled", err)
 	}
 }
 
@@ -227,7 +307,7 @@ func TestReadRejectsHugeFiles(t *testing.T) {
 
 func TestWriteNeedsMessages(t *testing.T) {
 	t.Parallel()
-	if err := Write(io.Discard, nil, Options{}); err == nil {
+	if err := Write(t.Context(), io.Discard, nil, Options{}); err == nil {
 		t.Error("Write of nothing succeeded")
 	}
 }

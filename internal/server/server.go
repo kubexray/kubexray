@@ -77,10 +77,6 @@ func New(hub *Hub, rec *recorder.Recorder, assets fs.FS, log *slog.Logger, info 
 	return &Server{hub: hub, rec: rec, assets: assets, log: log, info: info, now: time.Now, token: base64.RawURLEncoding.EncodeToString(b)}, nil
 }
 
-// SetCluster names the cluster in replay headers, once it's known. Call it
-// before Serve.
-func (s *Server) SetCluster(name string) { s.info.Cluster = name }
-
 // Listen binds to 127.0.0.1 on port (0 picks a free one).
 func (s *Server) Listen(ctx context.Context, port int) (net.Listener, error) {
 	var lc net.ListenConfig
@@ -358,12 +354,13 @@ func (s *Server) changes(w http.ResponseWriter, _ *http.Request) {
 // export downloads a replay of the recorded window from..to (ADR-0008).
 // Both default to the whole recording; anonymize=1 replaces names.
 func (s *Server) export(w http.ResponseWriter, r *http.Request) {
-	first, last, ok := s.rec.Bounds()
+	first, _, ok := s.rec.Bounds()
 	if !ok {
 		http.Error(w, "nothing recorded yet", http.StatusNotFound)
 		return
 	}
-	from, to := first, last
+	now := s.now()
+	from, to := first, now
 	q := r.URL.Query()
 	for name, dst := range map[string]*time.Time{"from": &from, "to": &to} {
 		if v := q.Get(name); v != "" {
@@ -379,8 +376,13 @@ func (s *Server) export(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "to is before from", http.StatusBadRequest)
 		return
 	}
+	// Export what was recorded: the recording starts at first and ends now.
+	// Analyzing a future time would invent incidents that never happened.
 	if from.Before(first) {
-		from = first // the recording starts later; export what there is
+		from = first
+	}
+	if to.After(now) {
+		to = now
 	}
 	msgs, err := s.rec.Messages(from, to)
 	if err != nil {
@@ -390,7 +392,13 @@ func (s *Server) export(w http.ResponseWriter, r *http.Request) {
 	anonymize := q.Get("anonymize") == "1"
 	var buf bytes.Buffer
 	opts := replay.Options{From: from, To: to, Cluster: s.info.Cluster, Version: s.info.Version, Anonymize: anonymize}
-	if err := replay.Write(&buf, msgs, opts); err != nil {
+	switch err := replay.Write(r.Context(), &buf, msgs, opts); {
+	case errors.Is(err, replay.ErrTooLarge):
+		http.Error(w, err.Error(), http.StatusRequestEntityTooLarge)
+		return
+	case r.Context().Err() != nil:
+		return // the browser went away
+	case err != nil:
 		s.log.Warn("exporting a replay", "err", err)
 		http.Error(w, "couldn't write the replay", http.StatusInternalServerError)
 		return

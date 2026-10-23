@@ -199,17 +199,12 @@ func (r *Recorder) At(t time.Time) (graph.Message, error) {
 		return graph.Message{}, err
 	}
 	var state *graph.State
-	for i, raw := range msgs {
+	for _, raw := range msgs {
 		var m graph.Message
 		if err := json.Unmarshal(raw, &m); err != nil {
 			return graph.Message{}, fmt.Errorf("recorder: decoding message: %w", err)
 		}
-		if i == 0 {
-			state, err = graph.NewState(m)
-		} else {
-			err = state.Apply(m)
-		}
-		if err != nil {
+		if state, err = graph.Step(state, m); err != nil {
 			return graph.Message{}, err
 		}
 	}

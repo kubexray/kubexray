@@ -7,6 +7,7 @@ import (
 	"bufio"
 	"bytes"
 	"compress/gzip"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -58,11 +59,29 @@ type Options struct {
 	Anonymize bool
 }
 
+// ErrTooLarge is returned when a window doesn't fit in a replay that players
+// will accept; pick a shorter window.
+var ErrTooLarge = fmt.Errorf("replay: the window is larger than %d MiB uncompressed; pick a shorter one", MaxUncompressed>>20)
+
+// recheck is how often incidents are re-analyzed while nothing changes, so
+// problems that outlast the grace period appear on time (as live, ADR-0007).
+const recheck = 5 * time.Second
+
 // Write writes a replay of msgs, the recorder's messages for the window (a
-// keyframe, then deltas), to w.
-func Write(w io.Writer, msgs [][]byte, opts Options) error {
+// keyframe, then deltas), to w. It stops early if ctx is cancelled.
+func Write(ctx context.Context, w io.Writer, msgs [][]byte, opts Options) error {
 	gz := gzip.NewWriter(w)
-	enc := json.NewEncoder(gz)
+	counted := &countingWriter{w: gz}
+	enc := json.NewEncoder(counted)
+	emit := func(v any) error {
+		if err := enc.Encode(v); err != nil {
+			return err
+		}
+		if counted.n > MaxUncompressed {
+			return ErrTooLarge
+		}
+		return nil
+	}
 
 	cluster := opts.Cluster
 	var anon *anonymizer
@@ -70,22 +89,18 @@ func Write(w io.Writer, msgs [][]byte, opts Options) error {
 		anon = newAnonymizer()
 		cluster = "cluster"
 	}
-	if err := enc.Encode(Header{V: graph.SchemaVersion, Type: MessageHeader, From: opts.From, To: opts.To, Cluster: cluster, Anonymized: opts.Anonymize, Kubexray: opts.Version}); err != nil {
+	if err := emit(Header{V: graph.SchemaVersion, Type: MessageHeader, From: opts.From, To: opts.To, Cluster: cluster, Anonymized: opts.Anonymize, Kubexray: opts.Version}); err != nil {
 		return err
 	}
 
 	var (
-		state     *graph.State
-		lastCheck time.Time
-		lastSaid  []byte
+		state    *graph.State
+		checked  time.Time
+		lastSaid []byte
 	)
-	// Incidents are analyzed at most once per second of recorded time, and
-	// written only when they change.
-	incidents := func(ts time.Time, force bool) error {
-		if !force && ts.Sub(lastCheck) < time.Second {
-			return nil
-		}
-		lastCheck = ts
+	// analyze writes the incidents at ts if they changed since last written.
+	analyze := func(ts time.Time) error {
+		checked = ts
 		m := cause.NewIncidentsMessage(state, ts)
 		key, err := json.Marshal([]any{m.Incidents, m.Groups})
 		if err != nil {
@@ -95,10 +110,22 @@ func Write(w io.Writer, msgs [][]byte, opts Options) error {
 			return nil
 		}
 		lastSaid = key
-		return enc.Encode(m)
+		return emit(m)
+	}
+	// catchUp re-analyzes through a quiet stretch, every recheck, until t.
+	catchUp := func(t time.Time) error {
+		for next := checked.Add(recheck); state != nil && next.Before(t); next = checked.Add(recheck) {
+			if err := analyze(next); err != nil {
+				return err
+			}
+		}
+		return nil
 	}
 
 	for i, raw := range msgs {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		var m graph.Message
 		if err := json.Unmarshal(raw, &m); err != nil {
 			return fmt.Errorf("replay: decoding message %d: %w", i, err)
@@ -106,36 +133,48 @@ func Write(w io.Writer, msgs [][]byte, opts Options) error {
 		if anon != nil {
 			anon.message(&m)
 		}
-		var err error
-		if i == 0 {
-			state, err = graph.NewState(m)
-		} else {
-			err = state.Apply(m)
-		}
-		if err != nil {
-			return fmt.Errorf("replay: message %d: %w", i, err)
-		}
-		if err := enc.Encode(m); err != nil {
+		if err := catchUp(m.TS); err != nil {
 			return err
 		}
-		if err := incidents(m.TS, i == 0); err != nil {
+		var err error
+		if state, err = graph.Step(state, m); err != nil {
+			return fmt.Errorf("replay: message %d: %w", i, err)
+		}
+		if err := emit(m); err != nil {
+			return err
+		}
+		if err := analyze(m.TS); err != nil {
 			return err
 		}
 	}
 	if state == nil {
 		return errors.New("replay: nothing recorded in that window")
 	}
-	if err := incidents(opts.To, true); err != nil {
+	if err := catchUp(opts.To); err != nil {
+		return err
+	}
+	if err := analyze(opts.To); err != nil {
 		return err
 	}
 	changes := cause.Changes(state, opts.From, false)
 	if changes == nil {
 		changes = []cause.Change{}
 	}
-	if err := enc.Encode(ChangesMessage{V: graph.SchemaVersion, Type: MessageChanges, Changes: changes}); err != nil {
+	if err := emit(ChangesMessage{V: graph.SchemaVersion, Type: MessageChanges, Changes: changes}); err != nil {
 		return err
 	}
 	return gz.Close()
+}
+
+type countingWriter struct {
+	w io.Writer
+	n int64
+}
+
+func (c *countingWriter) Write(p []byte) (int, error) {
+	n, err := c.w.Write(p)
+	c.n += int64(n)
+	return n, err
 }
 
 // File is a replay read back and validated.
@@ -194,12 +233,8 @@ func read(r io.Reader, limit int64) (*File, error) {
 			if err := json.Unmarshal(raw, &m); err != nil {
 				return nil, fmt.Errorf("replay: line %d: %w", line, err)
 			}
-			if state == nil {
-				state, err = graph.NewState(m) // must start with a snapshot
-			} else {
-				err = state.Apply(m) // validates every op
-			}
-			if err != nil {
+			// Must start with a snapshot; every op of every delta is validated.
+			if state, err = graph.Step(state, m); err != nil {
 				return nil, fmt.Errorf("replay: line %d: %w", line, err)
 			}
 			f.Messages = append(f.Messages, m)
