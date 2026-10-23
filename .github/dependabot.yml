@@ -1,9 +1,14 @@
 version: 2
+
+# Updates wait 14 days after a release (cooldown), so brand-new versions get
+# time to be vetted or yanked before they reach kubexray.
 updates:
   - package-ecosystem: gomod
     directory: /
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 14
     groups:
       go-deps:
         patterns: ["*"]
@@ -14,6 +19,8 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 14
     groups:
       actions:
         patterns: ["*"]
@@ -24,9 +31,15 @@ updates:
     directory: /web
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 14
     groups:
       web:
         patterns: ["*"]
+    ignore:
+      # typescript-eslint supports TypeScript < 6.1; move to 7 once it does.
+      - dependency-name: typescript
+        update-types: ["version-update:semver-major"]
     commit-message:
       prefix: "chore(web)"
 
@@ -34,5 +47,12 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 14
+    ignore:
+      # Stay on Node's active LTS (web/.nvmrc); odd releases are short-lived.
+      # Move to the next LTS deliberately, together with .nvmrc.
+      - dependency-name: node
+        update-types: ["version-update:semver-major"]
     commit-message:
       prefix: "chore(docker)"
