@@ -1,6 +1,7 @@
 package cluster
 
 import (
+	"maps"
 	"unicode/utf8"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -28,6 +29,7 @@ const (
 	KindConfigMap   = "ConfigMap"
 	KindSecret      = "Secret"
 	KindPVC         = "PersistentVolumeClaim"
+	KindQuota       = "ResourceQuota"
 )
 
 // baseNode fills the fields every node has. Namespaced objects are grouped
@@ -303,6 +305,7 @@ func mapDeployment(d *appsv1.Deployment) (graph.Node, []graph.Edge) {
 	n := baseNode(KindDeployment, d)
 	n.Status = replicas(d.Spec.Replicas, d.Status.ReadyReplicas, d.Status.UpdatedReplicas)
 	n.Spec = podSpec(d, &d.Spec.Template.Spec)
+	n.Spec.Labels = maps.Clone(d.Spec.Template.Labels)
 	for _, c := range d.Status.Conditions {
 		switch {
 		case c.Type == appsv1.DeploymentProgressing && c.Reason == "ProgressDeadlineExceeded":
@@ -310,6 +313,7 @@ func mapDeployment(d *appsv1.Deployment) (graph.Node, []graph.Edge) {
 		case c.Type == appsv1.DeploymentReplicaFailure && c.Status == corev1.ConditionTrue:
 			// Pods couldn't be created: a quota, an admission webhook, pod security.
 			n.Status.Message = message(c.Message)
+			n.Status.Since = c.LastTransitionTime.Time
 			if n.Status.Reason == "" {
 				n.Status.Reason = c.Reason
 			}
@@ -330,6 +334,7 @@ func mapStatefulSet(ss *appsv1.StatefulSet) (graph.Node, []graph.Edge) {
 	n := baseNode(KindStatefulSet, ss)
 	n.Status = replicas(ss.Spec.Replicas, ss.Status.ReadyReplicas, ss.Status.UpdatedReplicas)
 	n.Spec = podSpec(ss, &ss.Spec.Template.Spec)
+	n.Spec.Labels = maps.Clone(ss.Spec.Template.Labels)
 	return n, ownerEdges(n.ID, ss)
 }
 
@@ -362,7 +367,16 @@ func mapJob(job *batchv1.Job) (graph.Node, []graph.Edge) {
 func mapService(svc *corev1.Service) (graph.Node, []graph.Edge) {
 	n := baseNode(KindService, svc)
 	n.Status = graph.Status{Phase: string(svc.Spec.Type), Ready: true}
+	n.Selector = maps.Clone(svc.Spec.Selector)
 	return n, ownerEdges(n.ID, svc)
+}
+
+// mapResourceQuota keeps only who changed a quota and when: refused pods
+// name the quota (ADR-0009), and an edit to it can be the cause.
+func mapResourceQuota(q *corev1.ResourceQuota) (graph.Node, []graph.Edge) {
+	n := baseNode(KindQuota, q)
+	n.Status.Ready = true
+	return n, ownerEdges(n.ID, q)
 }
 
 func mapIngress(ing *networkingv1.Ingress) (graph.Node, []graph.Edge) {

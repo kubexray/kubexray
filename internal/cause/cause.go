@@ -54,6 +54,8 @@ const (
 	KindConfig    Kind = "config"    // a ConfigMap or Secret the app uses was edited
 	KindMissing   Kind = "missing"   // a ConfigMap, Secret or PVC the app uses doesn't exist
 	KindNode      Kind = "node"      // a node running the app's pods is unhealthy
+	KindScale     Kind = "scale"     // the app was scaled to zero
+	KindQuota     Kind = "quota"     // a ResourceQuota that refuses the app's pods changed
 )
 
 // Cause is one candidate explanation for an incident.
@@ -114,10 +116,14 @@ func (i Incident) State() string {
 	switch {
 	case i.Healthy:
 		return "is healthy"
+	case i.Symptom.Desired == 0 && i.Symptom.Ready == 0 && len(i.Symptom.BadPods) == 0:
+		return "is scaled to zero"
 	case i.Down():
 		return "is down"
 	case i.Symptom.Ready < i.Symptom.Desired:
 		return "is degraded"
+	case len(i.Symptom.BadPods) == 0:
+		return "can't create new pods"
 	default:
 		return "has failing pods"
 	}
@@ -305,12 +311,24 @@ func (x *index) explain(app graph.Node, opts Options) Incident {
 		}
 	}
 	inc := Incident{App: app.ID, Kind: app.Kind, Namespace: app.Namespace, Name: app.Name, LastChange: app.Change}
+	if z, ok := x.scaledToZero(app); ok {
+		return z
+	}
 	inc.Symptom = symptom(app, pods)
-	if (len(inc.Symptom.BadPods) == 0 && inc.Symptom.Ready >= inc.Symptom.Desired) || (app.Kind == "Job" && app.Status.Phase == "Complete") {
+	// Kubernetes refusing to create pods (a quota, a webhook) is a problem even
+	// while the old pods still serve: the rollout or scale-up is stuck.
+	refused := app.Status.Message != ""
+	if (len(inc.Symptom.BadPods) == 0 && inc.Symptom.Ready >= inc.Symptom.Desired && !refused) || (app.Kind == "Job" && app.Status.Phase == "Complete") {
 		inc.Healthy = true
 		return inc
 	}
+	if refused && len(inc.Symptom.BadPods) == 0 {
+		inc.Symptom.Summary = "new pods can't be created"
+	}
 	inc.Since = since(pods)
+	if inc.Since.IsZero() && refused {
+		inc.Since = app.Status.Since // when the ReplicaFailure condition appeared
+	}
 	inc.Impact = x.impact(pods, inc.Symptom)
 	inc.Diagnosis = x.diagnose(app, pods, inc.Symptom, opts)
 

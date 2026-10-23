@@ -13,6 +13,9 @@ describe("incident card", () => {
     expect(stateText(inc("a", 2, 3, "t"))).toBe("is degraded");
     expect(stateText(inc("a", 3, 3, "t"))).toBe("has failing pods");
     expect(stateText({ ...inc("a", 3, 3, "t"), healthy: true })).toBe("is healthy");
+    const noBadPods = (ready: number, desired: number): Incident => ({ ...inc("a", ready, desired, "t"), symptom: { summary: "", ready, desired } });
+    expect(stateText(noBadPods(0, 0))).toBe("is scaled to zero");
+    expect(stateText(noBadPods(3, 3))).toBe("can't create new pods");
   });
 
   it("ranks like the engine: outages first, then larger groups, then the oldest", () => {

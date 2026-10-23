@@ -80,6 +80,7 @@ func (w *Watcher) Start(ctx context.Context) error {
 	track(register(w, KindNamespace, core.Namespaces().Informer(), mapNamespace))
 	track(register(w, KindNode, core.Nodes().Informer(), mapNode))
 	track(register(w, KindPVC, core.PersistentVolumeClaims().Informer(), mapPVC))
+	track(register(w, KindQuota, core.ResourceQuotas().Informer(), mapResourceQuota))
 	track(register(w, KindDeployment, apps.Deployments().Informer(), mapDeployment))
 	track(register(w, KindReplicaSet, apps.ReplicaSets().Informer(), mapReplicaSet))
 	track(register(w, KindStatefulSet, apps.StatefulSets().Informer(), mapStatefulSet))

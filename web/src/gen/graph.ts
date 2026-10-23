@@ -51,6 +51,7 @@ export interface Node {
   spec?: Spec; // workloads and pods (ADR-0005)
   change?: Change; // latest non-status write
   origin?: Origin; // Helm, Argo CD or Flux
+  selector?: { [key: string]: string}; // a Service's pod selector
 }
 /**
  * Spec is the allow-listed desired state of a workload or pod. Commands,
@@ -60,6 +61,11 @@ export interface Spec {
   generation?: number /* int64 */;
   revision?: string; // deployment.kubernetes.io/revision
   containers?: Container[];
+  /**
+   * Labels of the pods a workload creates, to match Services against it
+   * when it has no pods (scaled to zero).
+   */
+  labels?: { [key: string]: string};
 }
 /**
  * Container is one container of a pod or pod template.

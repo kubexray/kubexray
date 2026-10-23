@@ -26,6 +26,10 @@ Two constraints shape what we may add:
 | `status.container` | Pod | The container the reason, message and exit code come from | |
 | `spec.containers[].probes` | Pods and templates | Whether liveness, readiness and startup probes are defined | Not their commands, paths or ports |
 
+| `selector` | Service | The pod selector | Labels, anonymized like labels |
+| `spec.labels` | Deployments, StatefulSets | The pod template's labels, to match Services when the app has no pods (scaled to zero) | Labels, anonymized like labels |
+| ResourceQuota nodes | Namespaced | Who changed the quota and when (managedFields) | Not its limits or usage; not drawn on the map |
+
 Never added: `terminated.message` (the app's termination message), probe handlers, events, logs.
 
 Anonymized replays drop `status.message` entirely (it names nodes, volumes and keys) and anonymize `status.container` like container names.
@@ -43,7 +47,8 @@ Each incident gains an optional **diagnosis**: one plain-English sentence on wha
 | A volume the app uses is `Pending` | The volume isn't bound, so the pods can't start | Volume name and phase |
 | `Evicted` | The kubelet evicted the pods, with its message (usually node pressure) | The kubelet's message |
 | `CreateContainerConfigError`, image pulls | The kubelet's message: the missing key, or why the pull failed | The kubelet's message |
-| No pods, `ReplicaFailure` | Kubernetes refused to create the pods: quota, admission or pod security | The controller's message |
+| No pods, `ReplicaFailure` | Kubernetes refused to create the pods: quota, admission or pod security. An incident even while old pods still serve, since the rollout is stuck | The controller's message |
+| Scaled to 0, with an Ingress routing to its Service | It has no pods, but traffic is still routed to it | The Ingress → Service routes |
 
 "Limit vs. usage" for memory: kubexray has no metrics, so the diagnosis states the limit and suggests `kubectl top` (metrics-server) to see usage. It never guesses usage.
 
@@ -56,4 +61,5 @@ The incident card and the selection panel, `kubexray why` (a `diagnosis` row and
 - Pending, OOM and probe incidents get a specific answer instead of a pod count, from facts users can check with `kubectl describe`.
 - The model carries a little free-form text for the first time. It comes only from Kubernetes components, is capped, and anonymization removes it.
 - Translating scheduler messages relies on their wording, which Kubernetes doesn't guarantee. The verbatim message is always kept as evidence, so a missed translation degrades to "the scheduler says: …", not to a wrong answer.
+- Kubernetes doesn't record who scales an app: a write to the `/scale` subresource leaves no managedFields entry. kubexray dates a scale to zero from the Deployment's current ReplicaSet (its controller scales it at that moment) and says it can't tell who did it, rather than crediting an older write.
 - Wire format version stays 1: all fields are additive and optional.

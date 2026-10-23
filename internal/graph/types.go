@@ -37,9 +37,10 @@ type Node struct {
 	Labels    map[string]string `json:"labels,omitempty"`
 	Status    Status            `json:"status"`
 	Created   time.Time         `json:"created"`
-	Spec      *Spec             `json:"spec,omitempty"`   // workloads and pods (ADR-0005)
-	Change    *Change           `json:"change,omitempty"` // latest non-status write
-	Origin    *Origin           `json:"origin,omitempty"` // Helm, Argo CD or Flux
+	Spec      *Spec             `json:"spec,omitempty"`     // workloads and pods (ADR-0005)
+	Change    *Change           `json:"change,omitempty"`   // latest non-status write
+	Origin    *Origin           `json:"origin,omitempty"`   // Helm, Argo CD or Flux
+	Selector  map[string]string `json:"selector,omitempty"` // a Service's pod selector
 }
 
 // Spec is the allow-listed desired state of a workload or pod. Commands,
@@ -48,6 +49,9 @@ type Spec struct {
 	Generation int64       `json:"generation,omitempty"`
 	Revision   string      `json:"revision,omitempty"` // deployment.kubernetes.io/revision
 	Containers []Container `json:"containers,omitempty"`
+	// Labels of the pods a workload creates, to match Services against it
+	// when it has no pods (scaled to zero).
+	Labels map[string]string `json:"labels,omitempty"`
 }
 
 // Container is one container of a pod or pod template.
@@ -131,12 +135,13 @@ func (n Node) Equal(o Node) bool {
 		n.Created.Equal(o.Created) &&
 		equalPtr(n.Spec, o.Spec, Spec.Equal) &&
 		equalPtr(n.Change, o.Change, Change.Equal) &&
-		equalPtr(n.Origin, o.Origin, func(a, b Origin) bool { return a == b })
+		equalPtr(n.Origin, o.Origin, func(a, b Origin) bool { return a == b }) &&
+		maps.Equal(n.Selector, o.Selector)
 }
 
 // Equal reports whether two specs are identical.
 func (s Spec) Equal(o Spec) bool {
-	return s.Generation == o.Generation && s.Revision == o.Revision && slices.Equal(s.Containers, o.Containers)
+	return s.Generation == o.Generation && s.Revision == o.Revision && slices.Equal(s.Containers, o.Containers) && maps.Equal(s.Labels, o.Labels)
 }
 
 // Equal reports whether two changes are identical.

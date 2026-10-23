@@ -22,6 +22,8 @@ SCENARIOS=(
   "bad-probe|why deploy/api -n shop|^  diagnosis +1 pod is running but failing its readiness probe;^  very likely cause +readiness probe added to api"
   "unschedulable|why deploy/checkout -n shop|^  diagnosis +The scheduler can't place 1 pod: 2 nodes have too little free memory;^  very likely cause +resources changed .* by kubectl set"
   "bad-config|why deploy/api -n shop|^  diagnosis +Kubernetes can't create the container api: couldn't find key password in Secret shop/db-credentials;^  very likely cause +Secret db-credentials was edited by kubectl patch"
+  "scale-zero|why deploy/api -n shop|^api \\(Deployment, shop\\) is scaled to zero;^  impact +Ingress web → Service api → no pods;^  very likely cause +scaled to 0 at "
+  "quota|why deploy/api -n shop|^  diagnosis +Kubernetes refused to create its pods: a ResourceQuota in shop is used up;^  very likely cause +ResourceQuota compute was created by kubectl create"
   "node|incidents|^node $CLUSTER-worker[0-9]* is not ready.*: [0-9]+ apps affected"
 )
 

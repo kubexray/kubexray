@@ -4,7 +4,7 @@
 #
 #   scripts/demo.sh up       create the cluster and deploy the shop app
 #   scripts/demo.sh break    break it: SCENARIO=config (the default), bad-image, node,
-#                            oom, bad-probe, unschedulable or bad-config
+#                            oom, bad-probe, unschedulable, bad-config, scale-zero or quota
 #   scripts/demo.sh fix      undo every scenario
 #   scripts/demo.sh down     delete the cluster
 set -euo pipefail
@@ -34,6 +34,7 @@ up() {
     kind export kubeconfig --name "$CLUSTER" --kubeconfig "$KUBECONFIG" >/dev/null
   fi
   say "Deploying the shop app…"
+  kubectl -n shop delete resourcequota compute --ignore-not-found >/dev/null
   kubectl apply -f "$ROOT/demo/shop.yaml" >/dev/null
   for d in api checkout reports; do kubectl -n shop rollout status "deploy/$d" --timeout=180s >/dev/null; done
   kubectl -n shop rollout status sts/db --timeout=180s >/dev/null
@@ -110,6 +111,22 @@ break_bad_config() {
   echo "   ./bin/kubexray why deploy/api -n shop --kubeconfig .demo/kubeconfig"
 }
 
+break_scale_zero() {
+  say "Someone scales api down to 0 to save costs. The web Ingress still sends traffic to it."
+  kubectl -n shop scale deploy/api --replicas=0 >/dev/null
+  say "Every request through web now fails, though no pod is failing. Ask kubexray:"
+  echo "   ./bin/kubexray incidents --kubeconfig .demo/kubeconfig"
+}
+
+break_quota() {
+  say "1. Someone adds a ResourceQuota to the shop namespace: 64Mi of memory requests in all."
+  kubectl -n shop create quota compute --hard=requests.memory=64Mi >/dev/null
+  say "2. Nothing changes: running pods are fine. Then api is restarted."
+  kubectl -n shop rollout restart deploy/api >/dev/null
+  say "Kubernetes refuses to create the new pods. Ask kubexray why:"
+  echo "   ./bin/kubexray why deploy/api -n shop --kubeconfig .demo/kubeconfig"
+}
+
 fix() {
   for node in "$CLUSTER-worker" "$CLUSTER-worker2"; do
     if [ "$(docker inspect -f '{{.State.Running}}' "$node" 2>/dev/null)" = "false" ]; then
@@ -129,6 +146,7 @@ fix() {
   if [ -n "$(kubectl -n shop get deploy api -o jsonpath='{.spec.template.spec.containers[0].readinessProbe}')" ]; then
     kubectl -n shop patch deploy/api --type=json -p '[{"op":"remove","path":"/spec/template/spec/containers/0/readinessProbe"}]' >/dev/null
   fi
+  kubectl -n shop delete resourcequota compute --ignore-not-found >/dev/null
   kubectl apply -f "$ROOT/demo/shop.yaml" >/dev/null
   if [ -n "$(kubectl -n shop get secret db-credentials -o jsonpath='{.data.db-password}')" ]; then
     kubectl -n shop patch secret db-credentials --type=json -p '[{"op":"remove","path":"/data/db-password"}]' >/dev/null
@@ -154,7 +172,9 @@ case "${1:-}" in
       bad-probe) break_probe ;;
       unschedulable) break_unschedulable ;;
       bad-config) break_bad_config ;;
-      *) echo "unknown SCENARIO=$SCENARIO (config, bad-image, node, oom, bad-probe, unschedulable or bad-config)" >&2; exit 1 ;;
+      scale-zero) break_scale_zero ;;
+      quota) break_quota ;;
+      *) echo "unknown SCENARIO=$SCENARIO (config, bad-image, node, oom, bad-probe, unschedulable, bad-config, scale-zero or quota)" >&2; exit 1 ;;
     esac ;;
   fix) fix ;;
   down) down ;;

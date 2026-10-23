@@ -19,9 +19,9 @@ export interface ObjectDiff {
 
 const APP_KINDS = new Set(["Deployment", "StatefulSet", "DaemonSet", "Job"]);
 /** Kinds listed in their own right; pods count under their app. */
-const LISTED = new Set([...APP_KINDS, "Service", "Ingress", "ConfigMap", "Secret", "PersistentVolumeClaim", "Node", "Namespace"]);
+const LISTED = new Set([...APP_KINDS, "Service", "Ingress", "ConfigMap", "Secret", "PersistentVolumeClaim", "ResourceQuota", "Node", "Namespace"]);
 /** Order within a namespace: apps first, then what they use. */
-const ORDER = ["Node", "Namespace", "Ingress", "Service", "Deployment", "StatefulSet", "DaemonSet", "Job", "ConfigMap", "Secret", "PersistentVolumeClaim"];
+const ORDER = ["Node", "Namespace", "Ingress", "Service", "Deployment", "StatefulSet", "DaemonSet", "Job", "ConfigMap", "Secret", "PersistentVolumeClaim", "ResourceQuota"];
 
 // Each app's pods, exactly as the map groups them (active pods only, with
 // node problems applied). Cached per state: in live mode the compared-from

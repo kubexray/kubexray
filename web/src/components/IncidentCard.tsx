@@ -7,12 +7,16 @@ export function down(inc: Incident): boolean {
   return inc.symptom.desired > 0 && inc.symptom.ready === 0;
 }
 
-/** Mirrors cause.Incident.State: down, degraded, or failing pods during an
- * otherwise healthy rollout. */
+/** Mirrors cause.Incident.State: scaled to zero behind an Ingress, down,
+ * degraded, refused new pods, or failing pods during an otherwise healthy
+ * rollout. */
 export function stateText(inc: Incident): string {
+  const bad = inc.symptom.badPods?.length ?? 0;
   if (inc.healthy) return "is healthy";
+  if (inc.symptom.desired === 0 && inc.symptom.ready === 0 && bad === 0) return "is scaled to zero";
   if (down(inc)) return "is down";
   if (inc.symptom.ready < inc.symptom.desired) return "is degraded";
+  if (bad === 0) return "can't create new pods";
   return "has failing pods";
 }
 

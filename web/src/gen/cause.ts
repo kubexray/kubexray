@@ -39,10 +39,12 @@ export const KindChange = "change"; // the app changed, details unknown
 export const KindConfig = "config"; // a ConfigMap or Secret the app uses was edited
 export const KindMissing = "missing"; // a ConfigMap, Secret or PVC the app uses doesn't exist
 export const KindNode = "node"; // a node running the app's pods is unhealthy
+export const KindScale = "scale"; // the app was scaled to zero
+export const KindQuota = "quota"; // a ResourceQuota that refuses the app's pods changed
 /**
  * Kinds of causes.
  */
-export type Kind = typeof KindImage | typeof KindResources | typeof KindTemplate | typeof KindProbe | typeof KindRestart | typeof KindChange | typeof KindConfig | typeof KindMissing | typeof KindNode;
+export type Kind = typeof KindImage | typeof KindResources | typeof KindTemplate | typeof KindProbe | typeof KindRestart | typeof KindChange | typeof KindConfig | typeof KindMissing | typeof KindNode | typeof KindScale | typeof KindQuota;
 /**
  * Cause is one candidate explanation for an incident.
  */
