@@ -10,7 +10,7 @@ import type { HistoryResponse } from "./gen/server";
 import { fetchAt, fetchChanges, fetchHistory, fetchWhy } from "./lib/api";
 import { changeEvents, mergeEvents } from "./lib/events";
 import { type ClusterState, fromSnapshot } from "./lib/state";
-import { useStream } from "./lib/useStream";
+import { MAX_EVENTS, useStream } from "./lib/useStream";
 
 /** Polls an API endpoint, keeping the last good answer. */
 function usePoll<T>(load: (signal: AbortSignal) => Promise<T | null>, every: number): T | null {
@@ -170,9 +170,25 @@ export function App() {
         timeline={<Timeline bounds={history} at={at} mode="live" events={events} incidents={stream.incidents} onSeek={setAt} />}
       />
       {drafting && (
-        // The card only lists ongoing incidents, so there's no recovery to report.
         <PostmortemDialog
-          draft={() => ({ entry: drafting, cluster: "", at: at ?? new Date().toISOString(), recoveredAt: null, events, eventsFrom: OPENED, link: null })}
+          draft={() => {
+            const now = new Date().toISOString();
+            // Live, the card only shows ongoing incidents. Rewound, an app no
+            // longer listed now has recovered since; when isn't known here.
+            const ongoing = new Set(stream.incidents.map((i) => i.app));
+            const over = !!at && drafting.incidents.every((i) => !ongoing.has(i.app));
+            // The stream keeps the latest MAX_EVENTS status events.
+            const capped = stream.events.length >= MAX_EVENTS ? stream.events[0]?.ts : undefined;
+            return {
+              entry: drafting,
+              cluster: "",
+              at: at ?? now,
+              recovered: over ? { at: now, exact: false } : null,
+              events,
+              eventsFrom: capped && capped > OPENED ? capped : OPENED,
+              link: null,
+            };
+          }}
           onClose={() => setDrafting(null)}
         />
       )}

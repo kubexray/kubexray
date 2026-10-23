@@ -18,7 +18,7 @@ export interface Stream {
   events: ClusterEvent[];
 }
 
-const MAX_EVENTS = 300;
+export const MAX_EVENTS = 300;
 
 export function useStream(): Stream {
   const [stream, setStream] = useState<Stream>({ status: "connecting", state: null, incidents: [], groups: [], events: [] });

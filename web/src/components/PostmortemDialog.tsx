@@ -19,9 +19,15 @@ export function PostmortemDialog({ draft, onClose }: Props) {
     return () => d?.close();
   }, []);
 
-  const href = useMemo(() => URL.createObjectURL(new Blob([markdown], { type: "text/markdown" })), [markdown]);
-  useEffect(() => () => URL.revokeObjectURL(href), [href]);
-  const name = `postmortem-${input.at.slice(0, 16).replace(/[^0-9]/g, "")}.md`;
+  // The file is made when it's asked for, so there's no object URL to manage.
+  const download = () => {
+    const stamp = Date.parse(input.at);
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([markdown], { type: "text/markdown" }));
+    a.download = `postmortem-${Number.isFinite(stamp) ? new Date(stamp).toISOString().slice(0, 16).replace(/[^0-9]/g, "") : Date.now()}.md`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  };
 
   const copy = () =>
     navigator.clipboard.writeText(markdown).then(
@@ -38,9 +44,9 @@ export function PostmortemDialog({ draft, onClose }: Props) {
         <button type="button" className="primary" onClick={() => void copy()}>
           {copied ? "Copied" : "Copy Markdown"}
         </button>
-        <a href={href} download={name}>
+        <button type="button" onClick={download}>
           Download .md
-        </a>
+        </button>
         <button type="button" onClick={onClose}>
           Close
         </button>

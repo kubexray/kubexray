@@ -153,9 +153,9 @@ export function Player() {
     );
   }
 
-  const linkTo = (app: string | null) => {
+  const linkTo = (app: string | null, moment = at) => {
     if (!source) return null;
-    const p = new URLSearchParams({ replay: source, t: at });
+    const p = new URLSearchParams({ replay: source, t: moment });
     if (app) p.set("app", app);
     return `${location.origin}${location.pathname}?${p}`;
   };
@@ -172,19 +172,22 @@ export function Player() {
   };
 
   const h = replay.header;
-  // A draft links to the replay only when readers can open it: kubexray
-  // play's link is on localhost.
+  // A draft links to the replay only when readers can open it (kubexray
+  // play's link is on localhost), opening just before the change or the
+  // first symptom, wherever the author paused.
   const draft = (entry: Entry) => {
     const back = recoveredAt(replay, entry.incidents.map((i) => i.app), t);
     const shareable = location.protocol === "https:" && !!source?.startsWith("https://");
+    const starts = [entry.group?.cause.at ?? entry.incidents[0]?.causes?.[0]?.at, ...entry.incidents.map((i) => i.since)].map((s) => Date.parse(s ?? "")).filter(Number.isFinite);
+    const opens = starts.length ? Math.max(Date.parse(h.from), Math.min(...starts) - 10_000) : t;
     return {
       entry,
       cluster: h.cluster,
       at,
-      recoveredAt: back === null ? null : new Date(back).toISOString(),
+      recovered: back === null ? null : { at: new Date(back).toISOString(), exact: true },
       events,
       eventsFrom: null,
-      link: shareable ? linkTo(entry.incidents[0]?.app ?? null) : null,
+      link: shareable ? linkTo(entry.incidents[0]?.app ?? null, new Date(opens).toISOString()) : null,
     };
   };
   return (

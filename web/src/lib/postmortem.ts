@@ -5,24 +5,26 @@
 import type { Cause, Incident } from "../gen/cause";
 import { stateText, type Entry } from "../components/IncidentCard";
 import type { ClusterEvent } from "./events";
-import { who } from "./format";
+import { affected, elapsed, who } from "./format";
 
 export interface DraftInput {
   entry: Entry;
   cluster: string;
   /** The moment the draft describes: now when live, the playhead in a replay. */
   at: string;
-  /** When the apps were healthy again, if the recording shows it. */
-  recoveredAt: string | null;
+  /** When the apps were healthy again: exactly, from a recording, or only
+   * "by then" when rewound in live mode. Null while it's ongoing. */
+  recovered: { at: string; exact: boolean } | null;
   events: ClusterEvent[];
-  /** Status events before this time weren't seen (live mode: the tab opened). */
+  /** Pod status events before this time aren't in `events` (live mode). */
   eventsFrom: string | null;
   /** A link to watch the incident, when there is one to share. */
   link: string | null;
 }
 
-/** How many timeline lines to list before "N more". */
-const MAX_EVENTS = 40;
+/** How many timeline lines to list: the first and last, with "N more" between. */
+const HEAD = 20;
+const TAIL = 20;
 /** How far before the change or the first symptom the timeline starts. */
 const LEAD = 2 * 60_000;
 
@@ -32,7 +34,7 @@ export function text(s: string): string {
 }
 
 const ms = (ts: string | undefined | null): number => (ts ? Date.parse(ts) : NaN);
-const valid = (t: number) => !Number.isNaN(t);
+const valid = (t: number) => Number.isFinite(t);
 
 /** 2026-10-23 14:05:09 UTC; drafts are shared across time zones. */
 function utc(t: number): string {
@@ -40,13 +42,7 @@ function utc(t: number): string {
 }
 const timeOf = (t: number) => (valid(t) ? new Date(t).toISOString().slice(11, 19) : "--:--:--");
 
-function span(from: number, to: number): string {
-  if (!valid(from) || !valid(to)) return "unknown";
-  const s = Math.max(0, Math.round((to - from) / 1000));
-  if (s < 60) return `${s}s`;
-  if (s < 3600) return `${Math.floor(s / 60)}m ${s % 60}s`;
-  return `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`;
-}
+const span = (from: number, to: number) => elapsed(valid(from) && valid(to) ? to - from : NaN);
 
 /** Inline code; backticks inside become quotes so the span can't break. */
 const inline = (s: string) => `\`${s.replace(/\s+/g, " ").replace(/`/g, "'")}\``;
@@ -65,7 +61,7 @@ function causeText(c: Cause): string {
 
 export function title(entry: Entry): string {
   const first = entry.incidents[0];
-  if (entry.group) return `${text(entry.group.cause.summary)}: ${entry.incidents.length} apps affected`;
+  if (entry.group) return `${text(entry.group.cause.summary)}: ${affected(entry.incidents.length)}`;
   return first ? `${text(first.name)} ${stateText(first)}` : "Incident";
 }
 
@@ -77,8 +73,10 @@ export function postmortem(d: DraftInput): string {
   const starts = entry.incidents.map((i) => ms(i.since)).filter(valid);
   const start = starts.length ? Math.min(...starts) : NaN;
   const at = ms(d.at);
-  const recovered = ms(d.recoveredAt);
-  const end = valid(recovered) ? recovered : at;
+  const back = ms(d.recovered?.at);
+  const exact = valid(back) && !!d.recovered?.exact;
+  const recovered = exact ? back : NaN;
+  const end = exact ? recovered : at;
   const out: string[] = [];
   const add = (...lines: string[]) => out.push(...lines);
 
@@ -87,9 +85,13 @@ export function postmortem(d: DraftInput): string {
     "> Drafted by kubexray from what it recorded in the cluster. It sees Kubernetes objects, not users, traffic or code: check every line, and fill in the TODOs, before sharing.",
     "",
   );
-  add(`- **Status:** ${valid(recovered) ? `resolved at ${utc(recovered)}` : `ongoing as of ${utc(at)}`}`);
+  if (exact) add(`- **Status:** resolved at ${utc(recovered)}`);
+  else if (valid(back)) add(`- **Status:** resolved by ${utc(back)}; TODO: when exactly`);
+  else add(`- **Status:** ongoing as of ${utc(at)}`);
   add(`- **Started:** ${utc(start)}`);
-  add(`- **Duration:** ${span(start, end)}${valid(recovered) ? "" : " so far"}`);
+  if (exact) add(`- **Duration:** ${span(start, recovered)}`);
+  else if (valid(back)) add(`- **Duration:** at least ${span(start, at)}, at most ${span(start, back)}`);
+  else add(`- **Duration:** ${span(start, at)} so far`);
   if (d.cluster) add(`- **Cluster:** ${text(d.cluster)}`);
   add("");
 
@@ -115,10 +117,14 @@ export function postmortem(d: DraftInput): string {
   add("");
 
   add("## Timeline (UTC)", "");
-  const from = Math.min(...[ms(cause?.at), start].filter(valid)) - LEAD;
+  const begins = [ms(cause?.at), start].filter(valid);
+  const from = begins.length ? Math.min(...begins) - LEAD : NaN;
+  // Only the affected namespaces and cluster-scoped objects (nodes): the
+  // draft is meant to be shared, and other teams' objects are noise.
+  const spaces = new Set([...entry.incidents.map((i) => i.namespace), ...(cause?.object.split("/").length === 3 ? [cause.object.split("/")[1]] : [])]);
   const seen = d.events
-    .map((e) => ({ t: ms(e.ts), text: e.text }))
-    .filter((e) => valid(e.t) && (!valid(from) || e.t >= from) && (!valid(end) || e.t <= end))
+    .map((e) => ({ t: ms(e.ts), text: e.text, ns: e.ns }))
+    .filter((e) => valid(e.t) && (!e.ns || spaces.has(e.ns)) && (!valid(from) || e.t >= from) && (!valid(end) || e.t <= end))
     .sort((a, b) => a.t - b.t);
   const lines = [
     ...seen.map((e) => ({ t: e.t, line: text(e.text) })),
@@ -126,15 +132,21 @@ export function postmortem(d: DraftInput): string {
     ...(valid(recovered) ? [{ t: recovered, line: "**Recovered**" }] : []),
   ].sort((a, b) => a.t - b.t);
   if (valid(from) && valid(ms(d.eventsFrom)) && ms(d.eventsFrom) > from) {
-    add(`_Pod status changes before ${timeOf(ms(d.eventsFrom))} aren't listed: kubexray's page wasn't open yet. Changes to objects are complete._`, "");
+    add(`_Pod status changes before ${timeOf(ms(d.eventsFrom))} aren't listed: the page only has the ones it saw since then. Changes to objects are complete._`, "");
   }
-  for (const l of lines.slice(0, MAX_EVENTS)) add(`- ${timeOf(l.t)} ${l.line}`);
-  if (lines.length > MAX_EVENTS) add(`- … ${lines.length - MAX_EVENTS} more`);
+  const cut = lines.length > HEAD + TAIL;
+  for (const l of cut ? lines.slice(0, HEAD) : lines) add(`- ${timeOf(l.t)} ${l.line}`);
+  if (cut) {
+    add(`- … ${lines.length - HEAD - TAIL} more`);
+    for (const l of lines.slice(-TAIL)) add(`- ${timeOf(l.t)} ${l.line}`);
+  }
   if (!lines.length) add("- TODO: what happened, when.");
   add("");
 
   add("## Resolution", "");
-  add(valid(recovered) ? `The apps were healthy again at ${utc(recovered)}. TODO: what fixed it.` : "TODO: what fixed it, and when.");
+  if (exact) add(`The apps were healthy again at ${utc(recovered)}. TODO: what fixed it.`);
+  else if (valid(back)) add(`The apps had recovered by ${utc(back)}. TODO: what fixed it, and when.`);
+  else add("TODO: what fixed it, and when.");
   const steps = first?.next ?? [];
   if (steps.length) add("", "kubexray suggested:", "", code(steps.flatMap((s) => (s.note ? [`# ${s.note}`, s.command] : [s.command]))));
   add("");

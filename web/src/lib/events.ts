@@ -12,6 +12,7 @@ export interface ClusterEvent {
   ts: string;
   text: string;
   kind: "change" | "crit" | "info";
+  ns?: string; // the object's namespace; none for cluster-scoped objects
 }
 
 const shown = (n: Node) => !!n.ns && !SYSTEM_NAMESPACES.has(n.ns) && n.kind !== "ReplicaSet" && n.name !== "kube-root-ca.crt";
@@ -21,17 +22,17 @@ let nextId = 1;
 /** Status events from one delta: apps and pods starting, failing, recovering. */
 export function statusEvents(before: ClusterState, msg: Message): ClusterEvent[] {
   const out: ClusterEvent[] = [];
-  const add = (text: string, kind: ClusterEvent["kind"]) => out.push({ id: `s${nextId++}`, ts: msg.ts, text, kind });
+  const add = (text: string, kind: ClusterEvent["kind"], ns?: string) => out.push({ id: `s${nextId++}`, ts: msg.ts, text, kind, ns });
   for (const op of msg.ops ?? []) {
     if (op.op === "upsertNode" && op.node && shown(op.node)) {
       const n = op.node;
       const prev = before.nodes.get(n.id);
       const crit = n.kind === "Pod" && podHealth(n) === "crit";
-      if (!prev) add(`${n.kind} ${n.name} started`, crit ? "crit" : "info");
-      else if (nodeSummary(prev) !== nodeSummary(n)) add(`${n.name}: ${nodeSummary(n)}`, crit ? "crit" : "info");
+      if (!prev) add(`${n.kind} ${n.name} started`, crit ? "crit" : "info", n.ns);
+      else if (nodeSummary(prev) !== nodeSummary(n)) add(`${n.name}: ${nodeSummary(n)}`, crit ? "crit" : "info", n.ns);
     } else if (op.op === "removeNode" && op.id) {
       const prev = before.nodes.get(op.id);
-      if (prev && shown(prev)) add(`${prev.kind} ${prev.name} removed`, "info");
+      if (prev && shown(prev)) add(`${prev.kind} ${prev.name} removed`, "info", prev.ns);
     }
   }
   return out;
@@ -46,6 +47,7 @@ export function changeEvents(changes: Change[]): ClusterEvent[] {
       ts: c.at,
       text: `${c.kind} ${c.name} ${c.summary}${c.by ? ` by ${who(c.by)}` : ""}`,
       kind: "change" as const,
+      ns: c.namespace,
     }));
 }
 

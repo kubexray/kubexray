@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { Cause, Group, Incident } from "../gen/cause";
-import { clock, duration, who } from "../lib/format";
+import { affected, clock, duration, who } from "../lib/format";
 import { useNow } from "../lib/useNow";
 
 export function down(inc: Incident): boolean {
@@ -100,7 +100,7 @@ export function IncidentCard({ list, at, canRewindTo, onShow, onRewind, actions 
         <span className="badge">Incident</span>
         {top.group ? (
           <h2>
-            {top.group.cause.summary}: {top.incidents.length} apps affected
+            {top.group.cause.summary}: {affected(top.incidents.length)}
           </h2>
         ) : (
           <h2>
