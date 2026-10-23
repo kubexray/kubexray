@@ -16,3 +16,4 @@ kubeconfig
 /internal/web/dist/*
 !/internal/web/dist/.keep
 /loadgen
+dist-pages/

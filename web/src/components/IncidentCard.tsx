@@ -74,12 +74,14 @@ interface Props {
   canRewindTo: (ts: string) => boolean;
   onShow: (id: string) => void;
   onRewind: (ts: string) => void;
+  /** Extra buttons for the shown entry (share, post-mortem). */
+  actions?: (entry: Entry) => React.ReactNode;
 }
 
 /** How many other incidents to list before "+N more". */
 const MORE_SHOWN = 4;
 
-export function IncidentCard({ list, at, canRewindTo, onShow, onRewind }: Props) {
+export function IncidentCard({ list, at, canRewindTo, onShow, onRewind, actions }: Props) {
   const live = useNow();
   const [allShown, setAllShown] = useState(false);
   const now = at ? Date.parse(at) : live;
@@ -137,6 +139,7 @@ export function IncidentCard({ list, at, canRewindTo, onShow, onRewind }: Props)
             Rewind to the change
           </button>
         )}
+        {actions?.(top)}
         {more.length > 0 && (
           <span className="more">
             {more.length === 1 ? "Also:" : `${more.length} more incidents:`}{" "}

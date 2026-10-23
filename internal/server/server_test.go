@@ -498,6 +498,41 @@ func TestExport(t *testing.T) {
 	}
 }
 
+func TestPlayerMode(t *testing.T) {
+	t.Parallel()
+	file := []byte("a validated replay")
+	srv, err := NewPlayer(file, web.Assets(), slog.New(slog.DiscardHandler))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ln, err := srv.Listen(t.Context(), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	go func() { _ = srv.Serve(ctx, ln) }()
+	f := &fixture{t: t, srv: srv, host: ln.Addr().String()}
+
+	if resp := f.do(req{path: "/?token=" + srv.token}); resp.header.Get("Location") != "/?replay=%2Fapi%2Freplay" {
+		t.Errorf("landing = %q, want the player with the replay", resp.header.Get("Location"))
+	}
+	if resp := f.do(req{path: "/api/replay", cookie: true}); resp.code != http.StatusOK || string(resp.body) != string(file) {
+		t.Errorf("GET /api/replay = %d %q", resp.code, resp.body)
+	}
+	for _, path := range []string{"/api/replay"} {
+		if got := f.status(req{path: path}); got != http.StatusUnauthorized {
+			t.Errorf("%s without a session = %d, want 401", path, got)
+		}
+	}
+	// No cluster routes in player mode.
+	for _, path := range []string{"/api/stream", "/api/export", "/api/history"} {
+		if got := f.status(req{path: path, cookie: true}); got != http.StatusNotFound {
+			t.Errorf("%s in player mode = %d, want 404", path, got)
+		}
+	}
+}
+
 func TestServesTheUI(t *testing.T) {
 	t.Parallel()
 	f := start(t, 4)

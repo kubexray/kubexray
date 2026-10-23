@@ -28,6 +28,20 @@ export function fromSnapshot(msg: Message): ClusterState {
 }
 
 /**
+ * Checks a delta from an untrusted source (a replay file) before it's applied,
+ * like the Go graph.State does: every op must be complete and known.
+ */
+export function validateDelta(msg: Message): void {
+  for (const [i, op] of (msg.ops ?? []).entries()) {
+    const ok =
+      (op.op === "upsertNode" && !!op.node?.id) ||
+      (op.op === "upsertEdge" && !!op.edge?.id) ||
+      ((op.op === "removeNode" || op.op === "removeEdge") && !!op.id);
+    if (!ok) throw new Error(`seq ${msg.seq} op ${i}: invalid ${op.op} operation`);
+  }
+}
+
+/**
  * Applies a delta and returns the new state. Deltas at or below the state's
  * seq are already included (a client can join between a flush and its
  * broadcast) and are ignored.
@@ -39,6 +53,12 @@ export function applyDelta(state: ClusterState, msg: Message): ClusterState {
 
   const nodes = new Map(state.nodes);
   const edges = new Map(state.edges);
+  applyOps(nodes, edges, msg);
+  return { seq: msg.seq, ts: msg.ts, nodes, edges };
+}
+
+/** Applies a delta's operations to maps in place (for bulk replay loading). */
+export function applyOps(nodes: Map<string, Node>, edges: Map<string, Edge>, msg: Message): void {
   for (const op of msg.ops ?? []) {
     switch (op.op) {
       case "upsertNode":
@@ -55,5 +75,4 @@ export function applyDelta(state: ClusterState, msg: Message): ClusterState {
         break;
     }
   }
-  return { seq: msg.seq, ts: msg.ts, nodes, edges };
 }

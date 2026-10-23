@@ -1,18 +1,15 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { DetailsPanel } from "./components/DetailsPanel";
-import { EventLog } from "./components/EventLog";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Header } from "./components/Header";
-import { entries, IncidentCard } from "./components/IncidentCard";
-import { MapView } from "./components/MapView";
+import type { Entry } from "./components/IncidentCard";
+import { ShareDialog } from "./components/ShareDialog";
 import { Timeline } from "./components/Timeline";
+import { Workspace } from "./components/Workspace";
 import type { Change, Group, Incident } from "./gen/cause";
 import type { HistoryResponse } from "./gen/server";
 import { fetchAt, fetchChanges, fetchHistory, fetchWhy } from "./lib/api";
 import { changeEvents, mergeEvents } from "./lib/events";
-import { clock } from "./lib/format";
 import { type ClusterState, fromSnapshot } from "./lib/state";
 import { useStream } from "./lib/useStream";
-import { allWorkloads, buildView, chainOf } from "./lib/view";
 
 /** Polls an API endpoint, keeping the last good answer. */
 function usePoll<T>(load: (signal: AbortSignal) => Promise<T | null>, every: number): T | null {
@@ -94,12 +91,15 @@ function useWhy(id: string | null, enabled: boolean): Incident | null {
 
 const APP_KINDS = new Set(["Deployment", "StatefulSet", "DaemonSet", "Job", "ReplicaSet", "Pod"]);
 
+/** Live mode: the cluster as it is, with rewind over the recording. */
 export function App() {
   const stream = useStream();
   const history = usePoll<HistoryResponse>(fetchHistory, 5000);
   const changes = usePoll<Change[]>(fetchChanges, 10_000);
   const [at, setAt] = useState<string | null>(null);
   const { past, last } = usePast(at);
+  const [selected, setSelected] = useState<{ id: string; app: string } | null>(null);
+  const [sharing, setSharing] = useState<Entry | null>(null);
 
   // While a past moment loads (or isn't recorded), keep showing the last one
   // loaded, or the live cluster, dimmed.
@@ -109,66 +109,12 @@ export function App() {
   const groups = at ? (shownMoment?.groups ?? stream.groups) : stream.groups;
   const missing = !!past && "missing" in past;
   const loading = !!at && !(past && "state" in past);
-
-  const view = useMemo(() => (state ? buildView(state) : []), [state]);
   const events = useMemo(() => mergeEvents(stream.events, changeEvents(changes ?? [])), [stream.events, changes]);
 
-  const [selected, setSelected] = useState<string | null>(null);
-  const [hovered, setHovered] = useState<string | null>(null);
-  const [open, setOpen] = useState(new Map<string, boolean>());
-
-  const list = useMemo(() => entries(incidents, groups), [incidents, groups]);
-  const topEntry = list[0];
-
-  // Open on the incident the card shows, once.
-  const autoSelected = useRef(false);
-  useEffect(() => {
-    const first = topEntry?.incidents[0];
-    if (!autoSelected.current && first) {
-      autoSelected.current = true;
-      setSelected(first.app);
-    }
-  }, [topEntry]);
-
-  const show = useCallback(
-    (id: string) => {
-      const ns = state?.nodes.get(id)?.ns;
-      if (ns) setOpen((o) => new Map(o).set(ns, true));
-      setSelected(id);
-      requestAnimationFrame(() => document.querySelector(`[data-key="${CSS.escape(id)}"]`)?.scrollIntoView({ block: "nearest", behavior: "smooth" }));
-    },
-    [state],
-  );
-  const toggle = useCallback((ns: string, isOpen: boolean) => setOpen((o) => new Map(o).set(ns, isOpen)), []);
-
-  const appOf = (id: string | null) => (id ? (allWorkloads(view).find(({ w }) => w.pods.some((p) => p.id === id))?.w.node.id ?? id) : null);
-  const selectedApp = appOf(selected);
-  const listed = incidents.find((i) => i.app === selectedApp) ?? null;
-  const explainable = APP_KINDS.has(state?.nodes.get(selected ?? "")?.kind ?? "");
-  const why = useWhy(selected, !at && !listed && explainable);
-
-  // The broken paths of the top incident, or of every app in its group.
-  const broken = useMemo(() => {
-    if (!topEntry) return null;
-    const ids = new Set<string>();
-    for (const inc of topEntry.incidents) for (const id of chainOf(view, inc.app, "up")) ids.add(id);
-    return ids;
-  }, [view, topEntry]);
-  const lit = useMemo(() => (hovered ? chainOf(view, hovered) : null), [view, hovered]);
-  const highlight = useMemo(() => ({ lit, hovered, broken, selected }), [lit, hovered, broken, selected]);
-  const causeOf = useCallback(
-    (appId: string) => {
-      const c = incidents.find((i) => i.app === appId)?.causes?.[0];
-      return c ? `${c.confidence === "possible" ? "Possibly" : "Likely"} caused by: ${c.summary}${c.at ? ` at ${clock(c.at)}` : ""}` : null;
-    },
-    [incidents],
-  );
-
-  useEffect(() => {
-    const esc = (e: KeyboardEvent) => e.key === "Escape" && setSelected(null);
-    addEventListener("keydown", esc);
-    return () => removeEventListener("keydown", esc);
-  }, []);
+  const listed = incidents.some((i) => i.app === selected?.app || i.symptom.badPods?.includes(selected?.id ?? ""));
+  const explainable = APP_KINDS.has(state?.nodes.get(selected?.id ?? "")?.kind ?? "");
+  const why = useWhy(selected?.id ?? null, !at && !listed && explainable);
+  const onSelectionChange = useCallback((id: string | null, app: string | null) => setSelected(id ? { id, app: app ?? id } : null), []);
 
   if (stream.status === "signed-out") {
     return (
@@ -192,28 +138,28 @@ export function App() {
   }
 
   return (
-    <div className="app">
-      <Header view={view} status={stream.status} rewound={!!at} />
-      {missing && <div className="notice">kubexray has no history for that moment. Pick a later time, or go back to live.</div>}
-      <IncidentCard
-        list={list}
+    <>
+      <Workspace
+        header={(view) => <Header view={view} status={stream.status} rewound={!!at} />}
+        notice={missing && <div className="notice">kubexray has no history for that moment. Pick a later time, or go back to live.</div>}
+        state={state}
+        incidents={incidents}
+        groups={groups}
+        events={events}
         at={at}
+        loading={loading}
+        why={why}
+        onSelectionChange={onSelectionChange}
         canRewindTo={(ts) => !!history && Date.parse(ts) >= Date.parse(history.from)}
-        onShow={show}
         onRewind={(ts) => setAt(new Date(Date.parse(ts) + 1000).toISOString())}
+        actions={(entry) => (
+          <button type="button" onClick={() => setSharing(entry)}>
+            Share replay
+          </button>
+        )}
+        timeline={<Timeline bounds={history} at={at} mode="live" events={events} incidents={stream.incidents} onSeek={setAt} />}
       />
-      {incidents.length === 0 && !loading && <div className="allclear">No incidents{at ? " at this moment" : ""}. Every app is running as expected.</div>}
-      <p className="guide">
-        Read each row left to right: requests come in, a load balancer spreads them across the app's pods, and the app reads its config and storage.
-      </p>
-      <main className={`main${loading ? " loading" : ""}`}>
-        <MapView view={view} open={open} highlight={highlight} causeOf={causeOf} onToggle={toggle} onSelect={setSelected} onHover={setHovered} />
-        <aside>
-          <DetailsPanel id={selected} state={state} view={view} incident={listed ?? why} onSelect={show} />
-          <EventLog events={events} at={at} />
-        </aside>
-      </main>
-      <Timeline history={history} at={at} events={events} incidents={stream.incidents} onSeek={setAt} />
-    </div>
+      {sharing && <ShareDialog entry={sharing} recordedFrom={history?.from ?? null} onClose={() => setSharing(null)} />}
+    </>
   );
 }
