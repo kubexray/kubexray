@@ -295,7 +295,8 @@ func (x *index) deps(pods []graph.Node) []string {
 func (x *index) explain(app graph.Node, opts Options) Incident {
 	pods := slices.DeleteFunc(slices.Clone(x.podsOf[app.ID]), func(p graph.Node) bool { return !active(app, p) })
 	// A pod on a NotReady node reports nothing itself (its kubelet is gone);
-	// say why it isn't ready.
+	// say why it isn't ready. The map applies the same rule (web/src/lib/view.ts)
+	// to pods that aren't part of an incident yet.
 	for i, p := range pods {
 		if n, ok := x.st.Nodes[p.Parent]; ok && n.Kind == "Node" && !n.Status.Ready && !p.Status.Ready && p.Status.Reason == "" {
 			pods[i].Status.Reason = ReasonNodeNotReady

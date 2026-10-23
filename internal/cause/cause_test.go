@@ -688,6 +688,37 @@ func TestNodeFailureGroupsIncidents(t *testing.T) {
 	}
 }
 
+func TestNodeCausesGroupWhateverTheirTime(t *testing.T) {
+	t.Parallel()
+	// Without a recorded transition time, a node cause's time falls back to
+	// when each app broke; that must not split the group.
+	cause := func(at time.Time) []Cause {
+		return []Cause{{Kind: KindNode, Object: "Node/w2", At: at, Confidence: VeryLikely}}
+	}
+	incs := []Incident{{App: "a", Causes: cause(mins(0))}, {App: "b", Causes: cause(mins(0.5))}}
+	if g := GroupIncidents(incs); len(g) != 1 || len(g[0].Apps) != 2 {
+		t.Errorf("groups = %+v, want one group of two", g)
+	}
+}
+
+func TestEntriesPutOutagesFirst(t *testing.T) {
+	t.Parallel()
+	node := []Cause{{Kind: KindNode, Object: "Node/w2", Confidence: VeryLikely}}
+	degraded := func(app string) Incident {
+		return Incident{App: app, Since: mins(0), Symptom: Symptom{Desired: 2, Ready: 1, BadPods: []string{"x"}}, Causes: node}
+	}
+	down := Incident{App: "checkout", Since: mins(1), Symptom: Symptom{Desired: 3, BadPods: []string{"y"}}}
+	incs := []Incident{degraded("a"), degraded("b"), down}
+	got := Entries(incs, GroupIncidents(incs))
+	if len(got) != 2 || got[0].Group != nil || got[0].Incidents[0].App != "checkout" || len(got[1].Incidents) != 2 {
+		t.Errorf("entries = %+v; want the outage first, then the degraded group", got)
+	}
+	// A group naming unknown apps is dropped, not shown empty.
+	if e := Entries(nil, []Group{{Apps: []string{"ghost"}}}); len(e) != 0 {
+		t.Errorf("entries = %+v", e)
+	}
+}
+
 func TestPossibleCausesNeverGroup(t *testing.T) {
 	t.Parallel()
 	at := mins(0)

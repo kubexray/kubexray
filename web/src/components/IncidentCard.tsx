@@ -22,15 +22,27 @@ export function rankIncidents(incidents: Incident[]): Incident[] {
 }
 
 /** One card entry: a group of incidents sharing a cause, or one incident. */
-export type Entry = { group: Group; incidents: Incident[] } | { group: null; incidents: [Incident] };
+export interface Entry {
+  group: Group | null;
+  incidents: Incident[];
+}
 
-/** Groups first (largest first), then single incidents, most severe first. */
+/** Mirrors cause.Entries: entries with an app that's down first, then larger
+ * groups, then the oldest. Groups naming no known incident are dropped. */
 export function entries(incidents: Incident[], groups: Group[]): Entry[] {
   const byApp = new Map(incidents.map((i) => [i.app, i]));
-  const grouped = new Set(groups.flatMap((g) => g.apps));
-  const out: Entry[] = groups.map((g) => ({ group: g, incidents: g.apps.flatMap((a) => byApp.get(a) ?? []) }));
+  const grouped = new Set<string>();
+  const out: Entry[] = [];
+  for (const g of groups) {
+    const members = g.apps.flatMap((a) => byApp.get(a) ?? []);
+    if (!members.length) continue;
+    members.forEach((m) => grouped.add(m.app));
+    out.push({ group: g, incidents: members });
+  }
   for (const inc of rankIncidents(incidents)) if (!grouped.has(inc.app)) out.push({ group: null, incidents: [inc] });
-  return out;
+  const since = (e: Entry) => e.incidents.map((i) => i.since ?? "").filter(Boolean).sort()[0] ?? "";
+  const anyDown = (e: Entry) => Number(e.incidents.some(down));
+  return out.sort((a, b) => anyDown(b) - anyDown(a) || b.incidents.length - a.incidents.length || since(a).localeCompare(since(b)));
 }
 
 const LABEL: Record<string, string> = { "very likely": "Very likely cause", likely: "Likely cause", possible: "Possible cause" };
@@ -55,24 +67,23 @@ export function CauseLine({ cause }: { cause: Cause }) {
 }
 
 interface Props {
-  incidents: Incident[];
-  groups: Group[];
+  /** From entries(): the first is shown in full, the rest as chips. */
+  list: Entry[];
   /** Pinned time when rewound; otherwise the card ticks with the clock. */
   at: string | null;
   canRewindTo: (ts: string) => boolean;
   onShow: (id: string) => void;
   onRewind: (ts: string) => void;
-  onPostmortem?: (entry: Entry) => void;
 }
 
 /** How many other incidents to list before "+N more". */
 const MORE_SHOWN = 4;
 
-export function IncidentCard({ incidents, groups, at, canRewindTo, onShow, onRewind, onPostmortem }: Props) {
+export function IncidentCard({ list, at, canRewindTo, onShow, onRewind }: Props) {
   const live = useNow();
   const [allShown, setAllShown] = useState(false);
   const now = at ? Date.parse(at) : live;
-  const [top, ...rest] = entries(incidents, groups);
+  const [top, ...rest] = list;
   const first = top?.incidents[0];
   if (!top || !first) return null;
 
@@ -124,11 +135,6 @@ export function IncidentCard({ incidents, groups, at, canRewindTo, onShow, onRew
         {changedAt && canRewindTo(changedAt) && (
           <button type="button" onClick={() => onRewind(changedAt)}>
             Rewind to the change
-          </button>
-        )}
-        {onPostmortem && (
-          <button type="button" onClick={() => onPostmortem(top)}>
-            Post-mortem draft
           </button>
         )}
         {more.length > 0 && (

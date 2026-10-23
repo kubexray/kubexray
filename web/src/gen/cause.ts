@@ -140,3 +140,10 @@ export interface Group {
    */
   apps: string[];
 }
+/**
+ * Entry is what to show as one incident: a group, or a single incident.
+ */
+export interface Entry {
+  group?: Group;
+  incidents: Incident[];
+}

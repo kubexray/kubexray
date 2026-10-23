@@ -60,6 +60,10 @@ break_image() {
 
 break_node() {
   local node="$CLUSTER-worker2"
+  if [ "$(kubectl -n shop get pods --field-selector "spec.nodeName=$node" -o name | wc -l | tr -d ' ')" = "0" ]; then
+    echo "No shop pods run on $node, so stopping it wouldn't affect the shop. Try: make fix && make break SCENARIO=node" >&2
+    exit 1
+  fi
   say "Worker $node fails (its container is stopped, like a machine losing power)."
   docker stop "$node" >/dev/null
   say "In about a minute Kubernetes marks the node NotReady and its pods not ready."
@@ -71,7 +75,8 @@ fix() {
   if [ "$(docker inspect -f '{{.State.Running}}' "$CLUSTER-worker2" 2>/dev/null)" = "false" ]; then
     say "Starting worker $CLUSTER-worker2 again…"
     docker start "$CLUSTER-worker2" >/dev/null
-    kubectl wait --for=condition=Ready "node/$CLUSTER-worker2" --timeout=180s >/dev/null
+    kubectl wait --for=condition=Ready "node/$CLUSTER-worker2" --timeout=180s >/dev/null ||
+      say "$CLUSTER-worker2 isn't ready yet; it will catch up. Continuing."
   fi
   say "Restoring checkout-config and api…"
   kubectl -n shop patch configmap checkout-config --type=merge -p '{"data":{"LOG_LEVEL":"info"}}' >/dev/null

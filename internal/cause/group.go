@@ -25,30 +25,94 @@ func GroupIncidents(incidents []Incident) []Group {
 		at     time.Time
 	}
 	groups := map[key]*Group{}
+	var order []key
 	for _, inc := range rankBySeverity(incidents) {
 		if len(inc.Causes) == 0 || inc.Causes[0].Confidence.rank() < Likely.rank() {
 			continue
 		}
 		c := inc.Causes[0]
-		k := key{c.Kind, c.Object, c.At.UTC()}
+		k := key{kind: c.Kind, object: c.Object}
+		if c.Kind != KindNode && c.Kind != KindMissing {
+			// A change is one moment; a failed node or a missing object is a
+			// state, whose time can differ per app (it falls back to when each
+			// app broke).
+			k.at = c.At.UTC()
+		}
 		g := groups[k]
 		if g == nil {
 			g = &Group{Cause: c}
 			g.Cause.Evidence = nil // per-app evidence stays on each incident
 			groups[k] = g
+			order = append(order, k)
 		}
 		g.Apps = append(g.Apps, inc.App)
 	}
 	out := make([]Group, 0, len(groups))
-	for _, g := range groups {
-		if len(g.Apps) > 1 {
+	for _, k := range order {
+		if g := groups[k]; len(g.Apps) > 1 {
 			out = append(out, *g)
 		}
 	}
-	slices.SortFunc(out, func(a, b Group) int {
-		return cmp.Or(cmp.Compare(len(b.Apps), len(a.Apps)), cmp.Compare(a.Cause.Object, b.Cause.Object))
+	slices.SortStableFunc(out, func(a, b Group) int { return cmp.Compare(len(b.Apps), len(a.Apps)) })
+	return out
+}
+
+// Entry is what to show as one incident: a group, or a single incident.
+type Entry struct {
+	Group     *Group     `json:"group,omitempty"`
+	Incidents []Incident `json:"incidents"`
+}
+
+// Entries arranges incidents for display, most severe first: entries with an
+// app that's down, then larger groups, then the oldest. Groups naming no
+// known incident are dropped.
+func Entries(incidents []Incident, groups []Group) []Entry {
+	byApp := make(map[string]Incident, len(incidents))
+	for _, inc := range incidents {
+		byApp[inc.App] = inc
+	}
+	grouped := map[string]bool{}
+	var out []Entry
+	for i := range groups {
+		e := Entry{Group: &groups[i]}
+		for _, app := range groups[i].Apps {
+			if inc, ok := byApp[app]; ok {
+				e.Incidents = append(e.Incidents, inc)
+				grouped[app] = true
+			}
+		}
+		if len(e.Incidents) > 0 {
+			out = append(out, e)
+		}
+	}
+	for _, inc := range rankBySeverity(incidents) {
+		if !grouped[inc.App] {
+			out = append(out, Entry{Incidents: []Incident{inc}})
+		}
+	}
+	slices.SortStableFunc(out, func(a, b Entry) int {
+		return cmp.Or(cmp.Compare(b.down(), a.down()), cmp.Compare(len(b.Incidents), len(a.Incidents)), a.since().Compare(b.since()))
 	})
 	return out
+}
+
+func (e Entry) down() int {
+	for _, inc := range e.Incidents {
+		if inc.Down() {
+			return 1
+		}
+	}
+	return 0
+}
+
+func (e Entry) since() time.Time {
+	var t time.Time
+	for _, inc := range e.Incidents {
+		if !inc.Since.IsZero() && (t.IsZero() || inc.Since.Before(t)) {
+			t = inc.Since
+		}
+	}
+	return t
 }
 
 // rankBySeverity orders incidents: apps that are down first, then the oldest.

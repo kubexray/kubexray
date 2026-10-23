@@ -103,6 +103,7 @@ export function buildView(state: ClusterState): NamespaceView[] {
   };
 
   // Pods on a NotReady node report nothing themselves; say why they're down.
+  // Mirrors the cause engine (internal/cause/cause.go, explain).
   const deadNodes = new Set([...state.nodes.values()].filter((n) => n.kind === "Node" && !n.status.ready).map((n) => n.id));
   const withNodeReason = (p: Node): Node =>
     p.parent && deadNodes.has(p.parent) && !p.status.ready && !p.status.reason ? { ...p, status: { ...p.status, reason: ReasonNodeNotReady } } : p;

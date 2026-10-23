@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { DetailsPanel } from "./components/DetailsPanel";
 import { EventLog } from "./components/EventLog";
 import { Header } from "./components/Header";
-import { entries, IncidentCard, rankIncidents } from "./components/IncidentCard";
+import { entries, IncidentCard } from "./components/IncidentCard";
 import { MapView } from "./components/MapView";
 import { Timeline } from "./components/Timeline";
 import type { Change, Group, Incident } from "./gen/cause";
@@ -117,15 +117,18 @@ export function App() {
   const [hovered, setHovered] = useState<string | null>(null);
   const [open, setOpen] = useState(new Map<string, boolean>());
 
-  // Open on the most severe incident, once.
+  const list = useMemo(() => entries(incidents, groups), [incidents, groups]);
+  const topEntry = list[0];
+
+  // Open on the incident the card shows, once.
   const autoSelected = useRef(false);
   useEffect(() => {
-    const first = rankIncidents(incidents)[0];
+    const first = topEntry?.incidents[0];
     if (!autoSelected.current && first) {
       autoSelected.current = true;
       setSelected(first.app);
     }
-  }, [incidents]);
+  }, [topEntry]);
 
   const show = useCallback(
     (id: string) => {
@@ -145,7 +148,6 @@ export function App() {
   const why = useWhy(selected, !at && !listed && explainable);
 
   // The broken paths of the top incident, or of every app in its group.
-  const topEntry = useMemo(() => entries(incidents, groups)[0], [incidents, groups]);
   const broken = useMemo(() => {
     if (!topEntry) return null;
     const ids = new Set<string>();
@@ -194,8 +196,7 @@ export function App() {
       <Header view={view} status={stream.status} rewound={!!at} />
       {missing && <div className="notice">kubexray has no history for that moment. Pick a later time, or go back to live.</div>}
       <IncidentCard
-        incidents={incidents}
-        groups={groups}
+        list={list}
         at={at}
         canRewindTo={(ts) => !!history && Date.parse(ts) >= Date.parse(history.from)}
         onShow={show}

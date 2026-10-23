@@ -90,24 +90,16 @@ func Incidents(w io.Writer, incidents []cause.Incident, groups []cause.Group, no
 		p.line("No incidents. Every app is running as expected.")
 		return p.err
 	}
-	byApp := map[string]cause.Incident{}
-	for _, inc := range incidents {
-		byApp[inc.App] = inc
-	}
-	grouped := map[string]bool{}
-	for _, g := range groups {
-		p.line("%s: %d apps affected", describe(g.Cause, now), len(g.Apps))
-		for _, id := range g.Apps {
-			inc := byApp[id]
-			grouped[id] = true
-			p.row("", "%s/%s %s: %s", inc.Namespace, inc.Name, inc.State(), inc.Symptom.Summary)
-		}
-		p.line("")
-	}
-	for _, inc := range incidents {
-		if grouped[inc.App] {
+	for _, e := range cause.Entries(incidents, groups) {
+		if e.Group != nil {
+			p.line("%s: %d apps affected", describe(e.Group.Cause, now), len(e.Incidents))
+			for _, inc := range e.Incidents {
+				p.row("", "%s/%s %s: %s", inc.Namespace, inc.Name, inc.State(), inc.Symptom.Summary)
+			}
+			p.line("")
 			continue
 		}
+		inc := e.Incidents[0]
 		p.line("%s/%s %s: %s", inc.Namespace, inc.Name, inc.State(), inc.Symptom.Summary)
 		if len(inc.Causes) > 0 {
 			p.row(string(inc.Causes[0].Confidence)+" cause", "%s", describe(inc.Causes[0], now))

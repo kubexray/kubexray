@@ -237,6 +237,12 @@ func incidents(ctx context.Context, args []string, stdout, stderr io.Writer) err
 	now := time.Now()
 	list := cause.Analyze(st, cause.DefaultOptions(now))
 	groups := cause.GroupIncidents(list)
+	if list == nil {
+		list = []cause.Incident{} // JSON lists, never null
+	}
+	if groups == nil {
+		groups = []cause.Group{}
+	}
 	if *output == "json" {
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")

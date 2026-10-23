@@ -142,6 +142,7 @@ func TestIncidents(t *testing.T) {
 	}
 	var out strings.Builder
 	_ = Incidents(&out, incs, cause.GroupIncidents(incs), now)
+	// Both entries have an app that's down; the larger one comes first.
 	want := "node worker-2 is not ready at 14:03:00 (1m ago): 2 apps affected\n" +
 		"                    shop/checkout is down: 2 pods not ready\n" +
 		"                    shop/api is degraded: 1 pod not ready\n\n" +
