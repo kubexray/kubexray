@@ -97,6 +97,7 @@ export function postmortem(d: DraftInput): string {
 
   add("## Summary", "");
   if (cause) add(`${title(entry)}. The ${cause.confidence} cause: ${causeText(cause)}.`, "", "TODO: one or two sentences on what users saw.", "");
+  else if (first?.diagnosis) add(`${title(entry)}. ${text(first.diagnosis.summary)}. kubexray found no change in the cluster that caused it.`, "");
   else add(`${title(entry)}. kubexray found no change in the cluster that explains it${first?.noCause ? ` (${text(first.noCause)})` : ""}. The cause may be outside the cluster: a dependency, the network, or traffic.`, "");
 
   add("## Impact", "");
@@ -105,6 +106,9 @@ export function postmortem(d: DraftInput): string {
     for (const line of inc.impact ?? []) add(`  - ${text(line)}`);
   }
   add("- TODO: who or what was affected outside the cluster.", "");
+
+  const diagnosis = entry.group ? undefined : first?.diagnosis;
+  if (diagnosis) add("## What Kubernetes reports", "", `${text(diagnosis.summary)}.`, "", ...(diagnosis.evidence ?? []).map((e) => `- ${text(e)}`), "");
 
   add("## Cause", "");
   if (cause) {

@@ -60,7 +60,16 @@ make fix         # put it back
 make demo-down   # delete the cluster
 ```
 
-`SCENARIO=bad-image make break` ships an image tag that doesn't exist instead.
+Other ways to break it, each with the answer kubexray should give:
+
+| `SCENARIO=` | What happens | kubexray says |
+|---|---|---|
+| `bad-image` | api ships an image tag that doesn't exist | can't pull it; very likely the image change |
+| `node` | a worker node stops | one incident for every app on it; the node isn't ready |
+| `oom` | reports' memory limit is cut to 16Mi | it runs out of memory at its limit; very likely the resources change |
+| `bad-probe` | api gets a readiness probe on a path nginx doesn't serve | running but failing its readiness probe; very likely the probe added |
+| `unschedulable` | checkout's memory request is raised to 64Gi | the scheduler can't place it: nodes have too little memory; very likely the resources change |
+| `bad-config` | a key api reads is renamed in its Secret | can't create the container: the key is missing; very likely the Secret edit |
 
 ## Use it on your cluster
 

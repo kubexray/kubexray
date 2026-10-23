@@ -58,10 +58,18 @@ func Why(w io.Writer, inc cause.Incident, now time.Time) error {
 		p.row(first(i, "impact"), "%s", path)
 	}
 	p.row("symptom", "%s", inc.Symptom.Summary)
+	if d := inc.Diagnosis; d != nil {
+		p.row("diagnosis", "%s", d.Summary)
+		for i, ev := range d.Evidence {
+			p.row(first(i, "based on"), "%s", ev)
+		}
+	}
 
 	if len(inc.Causes) == 0 {
 		p.row("cause", "none found: %s.", inc.NoCause)
-		p.row("", "The cause may be outside the cluster: a dependency, the network, or traffic.")
+		if inc.Diagnosis == nil { // otherwise Kubernetes has said what's wrong
+			p.row("", "The cause may be outside the cluster: a dependency, the network, or traffic.")
+		}
 	} else {
 		top := inc.Causes[0]
 		p.row(string(top.Confidence)+" cause", "%s", describe(top, now))

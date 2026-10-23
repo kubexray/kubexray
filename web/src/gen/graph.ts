@@ -71,6 +71,15 @@ export interface Container {
   ephemeral?: boolean; // added by kubectl debug
   requests?: Resources;
   limits?: Resources;
+  probes?: Probes; // which are defined, not what they run (ADR-0009)
+}
+/**
+ * Probes records which health probes a container defines.
+ */
+export interface Probes {
+  liveness?: boolean;
+  readiness?: boolean;
+  startup?: boolean;
 }
 /**
  * Resources holds CPU and memory quantities in Kubernetes notation.
@@ -105,6 +114,13 @@ export interface Status {
   restarts?: number /* int32 */;
   replicas?: Replicas;
   since?: string /* RFC 3339 */; // when readiness last changed (pods, nodes)
+  /**
+   * Why, in the words of a Kubernetes component: the scheduler, the kubelet
+   * or a controller. Never an application's own message (ADR-0009).
+   */
+  message?: string;
+  exit?: number /* int32 */; // exit code behind the reason (pods)
+  container?: string; // the container the reason comes from (pods)
 }
 /**
  * Replicas summarises a workload's scale.

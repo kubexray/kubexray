@@ -3,8 +3,10 @@ package cluster
 import (
 	"fmt"
 	"slices"
+	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
@@ -438,5 +440,117 @@ func TestNodeSince(t *testing.T) {
 	}}})
 	if !n.Status.Since.Equal(when.Time) {
 		t.Errorf("Since = %v, want %v", n.Status.Since, when)
+	}
+}
+
+func TestPodStatusExplanation(t *testing.T) {
+	t.Parallel()
+	exited := func(reason string, code int32) *corev1.ContainerStateTerminated {
+		// The message is the app's own termination message: never kept.
+		return &corev1.ContainerStateTerminated{Reason: reason, ExitCode: code, Message: "password=hunter2"}
+	}
+	tests := []struct {
+		name string
+		pod  corev1.Pod
+		want graph.Status
+	}{
+		{
+			name: "crash loop: the last exit code, not the back-off message",
+			pod: corev1.Pod{Status: corev1.PodStatus{ContainerStatuses: []corev1.ContainerStatus{{
+				Name: "app", RestartCount: 3,
+				State:                corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "CrashLoopBackOff", Message: "back-off 40s restarting failed container"}},
+				LastTerminationState: corev1.ContainerState{Terminated: exited("Error", 1)},
+			}}}},
+			want: graph.Status{Reason: "CrashLoopBackOff", Restarts: 3, Container: "app", Exit: 1},
+		},
+		{
+			name: "oom killed",
+			pod: corev1.Pod{Status: corev1.PodStatus{ContainerStatuses: []corev1.ContainerStatus{
+				{Name: "app", State: corev1.ContainerState{Terminated: exited("OOMKilled", 137)}},
+			}}},
+			want: graph.Status{Reason: "OOMKilled", Container: "app", Exit: 137},
+		},
+		{
+			name: "crash loop from running out of memory is OOMKilled",
+			pod: corev1.Pod{Status: corev1.PodStatus{ContainerStatuses: []corev1.ContainerStatus{{
+				Name: "app", RestartCount: 5,
+				State:                corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "CrashLoopBackOff"}},
+				LastTerminationState: corev1.ContainerState{Terminated: exited("OOMKilled", 137)},
+			}}}},
+			want: graph.Status{Reason: "OOMKilled", Restarts: 5, Container: "app", Exit: 137},
+		},
+		{
+			name: "config error: the kubelet's message",
+			pod: corev1.Pod{Status: corev1.PodStatus{ContainerStatuses: []corev1.ContainerStatus{{
+				Name:  "app",
+				State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "CreateContainerConfigError", Message: `couldn't find key MODE in ConfigMap shop/cfg`}},
+			}}}},
+			want: graph.Status{Reason: "CreateContainerConfigError", Container: "app", Message: `couldn't find key MODE in ConfigMap shop/cfg`},
+		},
+		{
+			name: "unschedulable: the scheduler's message",
+			pod: corev1.Pod{Status: corev1.PodStatus{Phase: corev1.PodPending, Conditions: []corev1.PodCondition{{
+				Type: corev1.PodScheduled, Status: corev1.ConditionFalse, Reason: corev1.PodReasonUnschedulable,
+				Message: "0/3 nodes are available: 3 Insufficient memory.",
+			}}}},
+			want: graph.Status{Phase: "Pending", Reason: "Unschedulable", Message: "0/3 nodes are available: 3 Insufficient memory."},
+		},
+		{
+			name: "evicted: the kubelet's message wins over container states",
+			pod: corev1.Pod{Status: corev1.PodStatus{
+				Phase: corev1.PodFailed, Reason: "Evicted", Message: "The node was low on resource: memory.",
+				ContainerStatuses: []corev1.ContainerStatus{{Name: "app", State: corev1.ContainerState{Terminated: exited("ContainerStatusUnknown", 137)}}},
+			}},
+			want: graph.Status{Phase: "Failed", Reason: "Evicted", Message: "The node was low on resource: memory."},
+		},
+		{
+			name: "failed init container",
+			pod: corev1.Pod{Status: corev1.PodStatus{InitContainerStatuses: []corev1.ContainerStatus{
+				{Name: "migrate", State: corev1.ContainerState{Terminated: exited("Error", 2)}},
+			}}},
+			want: graph.Status{Reason: "Init:Error", Container: "migrate", Exit: 2},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := podStatus(&tt.pod); !got.Equal(tt.want) {
+				t.Errorf("status = %+v\nwant     %+v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestMessagesAreCapped(t *testing.T) {
+	t.Parallel()
+	long := strings.Repeat("é", maxMessage) // two bytes each
+	got := message(long)
+	if !utf8.ValidString(got) || len(got) > maxMessage+len("…") || !strings.HasSuffix(got, "…") {
+		t.Errorf("message(%d bytes) = %d bytes, valid=%v", len(long), len(got), utf8.ValidString(got))
+	}
+}
+
+func TestDeploymentReplicaFailure(t *testing.T) {
+	t.Parallel()
+	n, _ := mapDeployment(&appsv1.Deployment{Status: appsv1.DeploymentStatus{Conditions: []appsv1.DeploymentCondition{{
+		Type: appsv1.DeploymentReplicaFailure, Status: corev1.ConditionTrue, Reason: "FailedCreate",
+		Message: `pods "api-1" is forbidden: exceeded quota: compute, requested: memory=1Gi`,
+	}}}})
+	if n.Status.Reason != "FailedCreate" || !strings.Contains(n.Status.Message, "exceeded quota") {
+		t.Errorf("status = %+v, want FailedCreate with the controller's message", n.Status)
+	}
+}
+
+func TestContainerProbes(t *testing.T) {
+	t.Parallel()
+	n, _ := mapPod(&corev1.Pod{Spec: corev1.PodSpec{Containers: []corev1.Container{
+		{Name: "app", ReadinessProbe: &corev1.Probe{}, LivenessProbe: &corev1.Probe{}},
+		{Name: "sidecar"},
+	}}})
+	if got := n.Spec.Containers[0].Probes; got != (graph.Probes{Liveness: true, Readiness: true}) {
+		t.Errorf("app probes = %+v", got)
+	}
+	if got := n.Spec.Containers[1].Probes; got != (graph.Probes{}) {
+		t.Errorf("sidecar probes = %+v", got)
 	}
 }

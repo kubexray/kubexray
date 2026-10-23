@@ -94,6 +94,29 @@ func TestWhyNoCause(t *testing.T) {
 	}
 }
 
+func TestWhyDiagnosis(t *testing.T) {
+	t.Parallel()
+	var out strings.Builder
+	_ = Why(&out, cause.Incident{
+		Kind: "Deployment", Namespace: "shop", Name: "api",
+		Symptom: cause.Symptom{Summary: "2 pods Unschedulable", Ready: 0, Desired: 2, BadPods: []string{"x", "y"}},
+		Diagnosis: &cause.Diagnosis{
+			Summary:  "The scheduler can't place 2 pods: no node has enough free memory for its memory request",
+			Evidence: []string{`the scheduler says: "0/3 nodes are available: 3 Insufficient memory."`, "memory request 64Gi"},
+		},
+		NoCause: "nothing about api or what it uses changed in the 30 minutes before it broke",
+	}, now)
+	want := `  symptom           2 pods Unschedulable
+  diagnosis         The scheduler can't place 2 pods: no node has enough free memory for its memory request
+  based on          the scheduler says: "0/3 nodes are available: 3 Insufficient memory."
+                    memory request 64Gi
+  cause             none found: nothing about api or what it uses changed in the 30 minutes before it broke.
+`
+	if !strings.HasSuffix(out.String(), want) {
+		t.Errorf("output:\n%s\nwant it to end with:\n%s", out.String(), want)
+	}
+}
+
 func TestWhyHealthy(t *testing.T) {
 	t.Parallel()
 	var out strings.Builder

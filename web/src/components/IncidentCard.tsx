@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { Cause, Group, Incident } from "../gen/cause";
+import type { Cause, Diagnosis, Group, Incident } from "../gen/cause";
 import { affected, clock, duration, who } from "../lib/format";
 import { useNow } from "../lib/useNow";
 
@@ -66,6 +66,16 @@ export function CauseLine({ cause }: { cause: Cause }) {
   );
 }
 
+/** What Kubernetes says is wrong (ADR-0009). */
+export function DiagnosisLine({ diagnosis }: { diagnosis: Diagnosis }) {
+  return (
+    <div className="cause">
+      <span className="lbl">What's wrong</span>
+      <span>{diagnosis.summary}</span>
+    </div>
+  );
+}
+
 interface Props {
   /** From entries(): the first is shown in full, the rest as chips. */
   list: Entry[];
@@ -122,12 +132,15 @@ export function IncidentCard({ list, at, canRewindTo, onShow, onRewind, actions 
           ))}
         </div>
       )}
+      {!top.group && first.diagnosis && <DiagnosisLine diagnosis={first.diagnosis} />}
       {cause ? (
         <CauseLine cause={cause} />
       ) : (
         <div className="cause">
           <span className="lbl">No cause found</span>
-          <span>{first.noCause}. It may be outside the cluster: a dependency, the network, or traffic.</span>
+          <span>
+            {first.noCause}.{!first.diagnosis && " It may be outside the cluster: a dependency, the network, or traffic."}
+          </span>
         </div>
       )}
       <div className="inc-actions">

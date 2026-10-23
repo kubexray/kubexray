@@ -5,7 +5,7 @@ import { ago, who } from "../lib/format";
 import { nodeSummary, podHealth, podText } from "../lib/health";
 import type { ClusterState } from "../lib/state";
 import { allWorkloads, type NamespaceView, workloadHealth, workloadProblem } from "../lib/view";
-import { CauseLine } from "./IncidentCard";
+import { CauseLine, DiagnosisLine } from "./IncidentCard";
 
 interface Props {
   id: string | null;
@@ -115,6 +115,18 @@ function Explanation({ incident, podId }: { incident: Incident; podId: string | 
   if (podId && !incident.symptom.badPods?.includes(podId)) return null;
   return (
     <div className="explain">
+      {incident.diagnosis && (
+        <>
+          <DiagnosisLine diagnosis={incident.diagnosis} />
+          {incident.diagnosis.evidence && (
+            <ul className="evidence">
+              {incident.diagnosis.evidence.map((e) => (
+                <li key={e}>{e}</li>
+              ))}
+            </ul>
+          )}
+        </>
+      )}
       {top ? <CauseLine cause={top} /> : <p>No cause found: {incident.noCause}.</p>}
       {top?.evidence && (
         <ul className="evidence">
