@@ -81,6 +81,7 @@ code { font-family: var(--font-data); font-size: 12px; }
 .more { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); margin-left: 8px; }
 .chip-btn { padding: 3px 9px; font-weight: 400; }
 .chip-btn span { color: var(--muted); font: 12px var(--font-data); }
+.chip-btn.link { border-style: dashed; color: var(--accent); }
 .allclear { border: 1px solid var(--border); background: var(--surface); border-radius: 10px; padding: 10px 14px; color: var(--ok); font-weight: 500; }
 .guide { margin: -4px 0 0; color: var(--muted); font-size: 13px; }
 

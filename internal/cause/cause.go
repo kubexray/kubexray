@@ -105,6 +105,22 @@ type Incident struct {
 // Down reports whether the app has no ready pods at all.
 func (i Incident) Down() bool { return !i.Healthy && i.Symptom.Desired > 0 && i.Symptom.Ready == 0 }
 
+// State says how the app is doing in a few words: "is healthy", "is down",
+// "is degraded" (fewer ready pods than wanted), or "has failing pods" (all
+// wanted pods are ready, but others fail, e.g. a stuck rollout).
+func (i Incident) State() string {
+	switch {
+	case i.Healthy:
+		return "is healthy"
+	case i.Down():
+		return "is down"
+	case i.Symptom.Ready < i.Symptom.Desired:
+		return "is degraded"
+	default:
+		return "has failing pods"
+	}
+}
+
 // Options tune the analysis.
 type Options struct {
 	Now      time.Time

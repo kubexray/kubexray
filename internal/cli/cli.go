@@ -48,10 +48,7 @@ func Why(w io.Writer, inc cause.Incident, now time.Time) error {
 		return p.err
 	}
 
-	state := "is degraded"
-	if inc.Down() {
-		state = "is down"
-	}
+	state := inc.State()
 	if inc.Since.IsZero() {
 		p.line("%s %s: %d of %d pods ready", title, state, inc.Symptom.Ready, inc.Symptom.Desired)
 	} else {

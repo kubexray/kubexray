@@ -75,6 +75,34 @@ check: lint test vuln secrets actionlint ## Run every check CI runs
 docker: ## Build the container image
 	docker build --build-arg VERSION=$(VERSION) --build-arg COMMIT=$(COMMIT) -t $(IMAGE) .
 
+.PHONY: perf
+perf: ## Open the UI on a simulated 1,000-pod cluster with constant churn
+	$(MAKE) web
+	go run ./hack/loadgen
+
+.PHONY: bench
+bench: ## Run the Go benchmarks (1,000-pod cluster)
+	go test -run '^$$' -bench . -benchmem ./internal/...
+
+DEMO_KUBECONFIG := .demo/kubeconfig
+
+.PHONY: demo
+demo: build ## Run the demo: a kind cluster with the shop app, and kubexray on it
+	scripts/demo.sh up
+	./bin/kubexray --kubeconfig $(DEMO_KUBECONFIG)
+
+.PHONY: break
+break: ## Break the demo (SCENARIO=config, the default, or bad-image)
+	scripts/demo.sh break
+
+.PHONY: fix
+fix: ## Undo make break
+	scripts/demo.sh fix
+
+.PHONY: demo-down
+demo-down: ## Delete the demo cluster
+	scripts/demo.sh down
+
 .PHONY: clean
 clean: ## Remove build artifacts
 	rm -rf bin coverage.out

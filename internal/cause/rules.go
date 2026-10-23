@@ -288,9 +288,13 @@ func (a *analysis) appChange() []Cause {
 	if a.app.Kind == "Deployment" || c == nil || c.Tool == "controller" || !a.inWindow(c.At) {
 		return nil
 	}
+	verb := "changed"
+	if created(a.app) {
+		verb = "created" // a new app with a bad spec is still a cause
+	}
 	cause := Cause{
 		Kind: KindChange, Object: a.app.ID, At: c.At, By: c, Origin: a.app.Origin, Confidence: Possible,
-		Summary: fmt.Sprintf("%s %s was changed", a.app.Kind, a.app.Name),
+		Summary: fmt.Sprintf("%s %s was %s", a.app.Kind, a.app.Name, verb),
 	}
 	if b := a.split(c.At); b.strong() {
 		cause.Confidence, cause.Evidence = Likely, b.evidence("the change")
@@ -323,7 +327,7 @@ func (a *analysis) dependencies() []Cause {
 			continue
 		}
 		ch := n.Change
-		if ch == nil || !a.inWindow(ch.At) {
+		if ch == nil || !a.inWindow(ch.At) || createdWith(n, a.app) {
 			continue
 		}
 		c := Cause{
@@ -422,6 +426,19 @@ func nextSteps(inc Incident, app graph.Node) []Step {
 	case KindRestart, KindChange:
 	}
 	return steps
+}
+
+// created reports whether an object's latest write is its creation.
+func created(n graph.Node) bool {
+	return n.Change != nil && !n.Created.IsZero() && n.Change.At.Sub(n.Created) <= attributionSlack
+}
+
+// createdWith reports whether a dependency was created together with its app
+// (or before it) and never changed since: deploying a ConfigMap alongside its
+// app isn't an edit that could break it. One created later, e.g. deleted and
+// recreated with new contents, is still a candidate.
+func createdWith(dep, app graph.Node) bool {
+	return created(dep) && !dep.Created.After(app.Created.Add(attributionSlack))
 }
 
 // rollable kinds support kubectl rollout restart and undo.

@@ -81,10 +81,10 @@ kubexray answers all three, free and open source, from a single binary on your l
 - [x] Single binary: `kubexray` opens the UI in the browser; the UI is embedded with `embed`.
 
 ### Demo
-- [ ] `make demo`: creates a kind cluster, deploys the sample shop app and opens kubexray.
-- [ ] `make break`: the official demo story. Someone edits a ConfigMap; minutes later a pod restarts and crash-loops on the bad value. kubexray links the crash to the earlier edit and names who made it, a cause nobody would connect by hand.
-- [ ] `make break SCENARIO=bad-image`: the simpler bad-rollout story, then a rollback.
-- [ ] Performance baseline: smooth with 1,000 pods, with a load generator checked into the repo.
+- [x] `make demo`: creates a kind cluster, deploys the sample shop app and opens kubexray.
+- [x] `make break`: the official demo story. Someone edits a ConfigMap; minutes later a pod restarts and crash-loops on the bad value. kubexray links the crash to the earlier edit and names who made it, a cause nobody would connect by hand.
+- [x] `make break SCENARIO=bad-image`: the simpler bad-rollout story, then a rollback.
+- [x] Performance baseline: smooth with 1,000 pods, with a load generator checked into the repo (`make perf`, `make bench`).
 
 **Done when:** `make demo && make break` shows the outage; the incident card and `kubexray why` both name the ConfigMap edit and who made it as the likely cause; and rewinding shows the moment it broke.
 

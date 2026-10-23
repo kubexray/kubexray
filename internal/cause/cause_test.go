@@ -562,6 +562,74 @@ func TestTiesGoToTheChangeClosestToTheStart(t *testing.T) {
 	}
 }
 
+func TestCreationIsNotAnEdit(t *testing.T) {
+	t.Parallel()
+	// The ConfigMap was created with the app minutes ago; a bad rollout
+	// breaks it now. The creation must not be offered as a cause.
+	c := badImage(nil)
+	d := c.st.Nodes["Deployment/shop/api"]
+	d.Created = mins(-2)
+	c.add(d)
+	c.add(graph.Node{
+		ID: "ConfigMap/shop/api-config", Kind: "ConfigMap", Namespace: "shop", Name: "api-config",
+		Created: mins(-2), Change: by("kubectl-client-side-apply", "kubectl", "apply", mins(-2)),
+	})
+	for _, p := range []string{"api-2-a", "api-2-b", "api-2-c"} {
+		c.edge(graph.EdgeMounts, "Pod/shop/"+p, "ConfigMap/shop/api-config")
+	}
+	inc := analyze(t, c, mins(4))
+	if len(inc.Causes) != 1 || inc.Causes[0].Kind != KindImage {
+		t.Errorf("causes = %+v; a creation isn't an edit", inc.Causes)
+	}
+	if got := Changes(c.st, mins(-10), false); got[len(got)-1].Summary != "created" {
+		t.Errorf("changes = %+v; want the ConfigMap listed as created", got)
+	}
+}
+
+func TestRecreatedConfigIsStillACause(t *testing.T) {
+	t.Parallel()
+	// kubectl replace --force: the ConfigMap is deleted and created again
+	// with bad contents, long after the app was deployed.
+	c := configThenRestart()
+	cm := c.st.Nodes["ConfigMap/shop/api-config"]
+	cm.Created = mins(0)
+	c.add(cm)
+	d := c.st.Nodes["Deployment/shop/api"]
+	d.Created = mins(-60)
+	c.add(d)
+	top := assertTop(t, analyze(t, c, mins(5)), KindConfig, Likely)
+	if top.Object != "ConfigMap/shop/api-config" {
+		t.Errorf("top = %+v", top)
+	}
+}
+
+func TestNewlyCreatedAppIsACause(t *testing.T) {
+	t.Parallel()
+	c := newCluster()
+	s := c.add(graph.Node{
+		ID: "StatefulSet/shop/db", Kind: "StatefulSet", Namespace: "shop", Name: "db", Created: mins(0),
+		Status: graph.Status{Replicas: &graph.Replicas{Desired: 1}}, Change: by("kubectl-client-side-apply", "kubectl", "apply", mins(0)),
+	})
+	c.pod(s.ID, "db-0", mins(0), false, "CrashLoopBackOff", mins(0.2))
+	if top := assertTop(t, analyze(t, c, mins(2)), KindChange, Possible); top.Summary != "StatefulSet db was created" {
+		t.Errorf("summary = %q", top.Summary)
+	}
+}
+
+func TestIncidentState(t *testing.T) {
+	t.Parallel()
+	for want, inc := range map[string]Incident{
+		"is healthy":       {Healthy: true},
+		"is down":          {Symptom: Symptom{Desired: 3, Ready: 0}},
+		"is degraded":      {Symptom: Symptom{Desired: 3, Ready: 2}},
+		"has failing pods": {Symptom: Symptom{Desired: 3, Ready: 3, BadPods: []string{"x"}}},
+	} {
+		if got := inc.State(); got != want {
+			t.Errorf("State() = %q, want %q", got, want)
+		}
+	}
+}
+
 func TestNoCauseMessageUsesTheLookback(t *testing.T) {
 	t.Parallel()
 	c := newCluster()
