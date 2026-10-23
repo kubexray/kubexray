@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import demo from "../../pages-public/demo.kxr?inline";
 import { safeReplayURL } from "../Player";
 import { firstIncident, incidentsAt, loadReplay, stateAt } from "./replay";
 
@@ -48,12 +49,45 @@ describe("loadReplay", () => {
     ["unknown op", file([lines[0], lines[1], { v: 1, type: "delta", seq: 2, ts: T(1), ops: [{ op: "dropTables", id: "x" }] }]), /invalid dropTables/],
     ["out of order", file([lines[0], lines[1], { ...lines[3], seq: 9 }]), /out of order/],
     ["no snapshot", file([lines[0]]), /no cluster snapshot/],
+    ["no header times", file([{ v: 1, type: "header" }, ...lines.slice(1)]), /invalid start time/],
+    ["a backwards window", file([{ ...lines[0], from: T(60), to: T(0) }, ...lines.slice(1)]), /ends before it starts/],
+    ["a bad message time", file([lines[0], { ...lines[1], ts: "soon" }]), /invalid line 2 time/],
+    ["two snapshots", file([lines[0], lines[1], { ...lines[1], seq: 2 }]), /only one snapshot/],
   ];
   for (const [name, blob, why] of bad) {
     it(`rejects a file with ${name}`, async () => {
       await expect(loadReplay(await blob)).rejects.toThrow(why);
     });
   }
+
+  it("steps through a long replay without changing states already shown", async () => {
+    const at = (s: number) => Date.parse(T(0)) + s * 1000;
+    const deltas = Array.from({ length: 450 }, (_, i) => ({ v: 1, type: "delta", seq: i + 2, ts: new Date(at(1 + i / 10)).toISOString(), ops: [{ op: "upsertNode", node: pod(`p${i}`) }] }));
+    const r = await loadReplay(await file([lines[0], lines[1], ...deltas]));
+    expect(r.checkpoints.map((c) => c.index)).toEqual([0, 200, 400]);
+    const want = (s: number) => 1 + Math.min(450, Math.floor(Math.round((s - 1) * 10)) + 1); // pod a, plus the deltas so far
+    const early = stateAt(r, at(10));
+    // Forward in small steps (playback), back (a seek), then forward again.
+    for (const s of [10, 10.5, 20, 25, 30, 46, 5, 46]) expect(stateAt(r, at(s)).nodes.size).toBe(want(s));
+    expect(early.nodes.size).toBe(want(10));
+  });
+
+  it("tolerates clocks that step back and missing incident lists", async () => {
+    const r = await loadReplay(
+      await file([lines[0], lines[1], { v: 1, type: "incidents", ts: T(30), incidents: null, groups: null }, { ...lines[5], ts: T(20) }]),
+    );
+    expect(r.incidents[0]?.incidents).toEqual([]);
+    expect(incidentsAt(r, Date.parse(T(35)))?.incidents).toHaveLength(1);
+    expect(firstIncident(r)).toBe(Date.parse(T(30)));
+  });
+
+  it("loads the demo published with the player", async () => {
+    const bytes = Uint8Array.from(atob(demo.slice(demo.indexOf(",") + 1)), (c) => c.charCodeAt(0));
+    const r = await loadReplay(new Blob([bytes]));
+    const at = firstIncident(r);
+    expect(at).not.toBeNull();
+    expect(incidentsAt(r, at ?? 0)?.incidents[0]?.app).toBe("Deployment/shop/checkout");
+  });
 
   it("rejects files over the size limit", async () => {
     await expect(loadReplay(await file(lines), 100)).rejects.toThrow(/larger than/);

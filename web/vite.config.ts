@@ -13,6 +13,7 @@ export default defineConfig(({ mode }) => {
   return {
     plugins: [react()],
     base: pages ? "./" : "/",
+    assetsInclude: ["**/*.kxr"], // replay files, for the demo test
     define: pages ? { "import.meta.env.VITE_DEMO": JSON.stringify("1") } : {},
     build: {
       outDir: pages ? "dist-pages" : "../internal/web/dist",

@@ -98,7 +98,7 @@ export function App() {
   const changes = usePoll<Change[]>(fetchChanges, 10_000);
   const [at, setAt] = useState<string | null>(null);
   const { past, last } = usePast(at);
-  const [selected, setSelected] = useState<string | null>(null);
+  const [selected, setSelected] = useState<{ id: string; app: string } | null>(null);
   const [sharing, setSharing] = useState<Entry | null>(null);
 
   // While a past moment loads (or isn't recorded), keep showing the last one
@@ -111,10 +111,10 @@ export function App() {
   const loading = !!at && !(past && "state" in past);
   const events = useMemo(() => mergeEvents(stream.events, changeEvents(changes ?? [])), [stream.events, changes]);
 
-  const listed = incidents.some((i) => i.app === selected || i.symptom.badPods?.includes(selected ?? ""));
-  const explainable = APP_KINDS.has(state?.nodes.get(selected ?? "")?.kind ?? "");
-  const why = useWhy(selected, !at && !listed && explainable);
-  const onSelectionChange = useCallback((id: string | null) => setSelected(id), []);
+  const listed = incidents.some((i) => i.app === selected?.app || i.symptom.badPods?.includes(selected?.id ?? ""));
+  const explainable = APP_KINDS.has(state?.nodes.get(selected?.id ?? "")?.kind ?? "");
+  const why = useWhy(selected?.id ?? null, !at && !listed && explainable);
+  const onSelectionChange = useCallback((id: string | null, app: string | null) => setSelected(id ? { id, app: app ?? id } : null), []);
 
   if (stream.status === "signed-out") {
     return (

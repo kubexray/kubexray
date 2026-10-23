@@ -32,7 +32,7 @@ export function Player() {
   const [busy, setBusy] = useState(!!linkedURL);
   const [t, setT] = useState(0);
   const [playing, setPlaying] = useState(false);
-  const [selected, setSelected] = useState<string | null>(params.get("app"));
+  const [selected, setSelected] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
 
   const open = useCallback(
@@ -43,18 +43,21 @@ export function Player() {
         const r = await loadReplay(blob);
         const start = Date.parse(r.header.from);
         const end = Date.parse(r.header.to);
-        const asked = Date.parse(params.get("t") ?? "");
+        // A link's moment and app belong to the linked replay only.
+        const fromLink = from !== null && from === linked;
+        const asked = fromLink ? Date.parse(params.get("t") ?? "") : NaN;
         const incident = firstIncident(r);
         setT(asked >= start && asked <= end ? asked : incident !== null ? Math.min(end, incident) : end);
         setReplay(r);
         setSource(from);
+        setSelected(fromLink ? params.get("app") : null);
       } catch (err) {
         setError(err instanceof Error ? err.message : String(err));
       } finally {
         setBusy(false);
       }
     },
-    [params],
+    [params, linked],
   );
 
   const fetchAndOpen = useCallback(
@@ -97,19 +100,14 @@ export function Player() {
     };
   }, [linked, linkedURL, open]);
 
-  // Playback.
+  // Playback; it stops by itself at the end of the recording.
+  const end = replay ? Date.parse(replay.header.to) : 0;
+  const running = playing && t < end;
   useEffect(() => {
-    if (!playing || !replay) return;
-    const end = Date.parse(replay.header.to);
-    const timer = setInterval(() => {
-      setT((now) => {
-        const next = now + TICK * SPEED;
-        if (next >= end) setPlaying(false);
-        return Math.min(next, end);
-      });
-    }, TICK);
+    if (!running) return;
+    const timer = setInterval(() => setT((now) => Math.min(now + TICK * SPEED, end)), TICK);
     return () => clearInterval(timer);
-  }, [playing, replay]);
+  }, [running, end]);
 
   const state = useMemo(() => (replay ? stateAt(replay, t) : null), [replay, t]);
   const incidents = useMemo(() => (replay ? incidentsAt(replay, t) : null), [replay, t]);
@@ -178,7 +176,13 @@ export function Player() {
               {copied ? "Link copied" : "Copy link to this moment"}
             </button>
           )}
-          <button type="button" onClick={() => setReplay(null)}>
+          <button
+            type="button"
+            onClick={() => {
+              setPlaying(false);
+              setReplay(null);
+            }}
+          >
             Open another replay
           </button>
         </div>
@@ -188,7 +192,7 @@ export function Player() {
       groups={incidents?.groups ?? []}
       events={events}
       at={at}
-      initialSelection={params.get("app")}
+      initialSelection={selected}
       onSelectionChange={setSelected}
       canRewindTo={(ts) => Date.parse(ts) >= Date.parse(h.from)}
       onRewind={(ts) => {
@@ -202,10 +206,10 @@ export function Player() {
           mode="replay"
           events={events}
           incidents={incidents?.incidents ?? []}
-          playing={playing}
+          playing={running}
           onPlay={() => {
-            if (t >= Date.parse(h.to)) setT(Date.parse(h.from));
-            setPlaying(!playing);
+            if (t >= end) setT(Date.parse(h.from));
+            setPlaying(!running);
           }}
           onSeek={(ts) => {
             setPlaying(false);

@@ -27,7 +27,8 @@ interface Props {
   /** An explanation for the selected app when the incident list has none. */
   why?: Incident | null;
   initialSelection?: string | null;
-  onSelectionChange?: (id: string | null) => void;
+  /** The selected node, and the app it belongs to (a pod's workload). */
+  onSelectionChange?: (id: string | null, app: string | null) => void;
 }
 
 /** Everything live mode and replay mode share: incident card, map, side
@@ -39,12 +40,13 @@ export function Workspace(props: Props) {
   const [selected, setSelectedState] = useState<string | null>(props.initialSelection ?? null);
   const [hovered, setHovered] = useState<string | null>(null);
   const [open, setOpen] = useState(new Map<string, boolean>());
+  const appOf = useCallback((id: string | null) => (id ? (allWorkloads(view).find(({ w }) => w.pods.some((p) => p.id === id))?.w.node.id ?? id) : null), [view]);
   const setSelected = useCallback(
     (id: string | null) => {
       setSelectedState(id);
-      onSelectionChange?.(id);
+      onSelectionChange?.(id, appOf(id));
     },
-    [onSelectionChange],
+    [onSelectionChange, appOf],
   );
 
   const list = useMemo(() => entries(incidents, groups), [incidents, groups]);
@@ -71,7 +73,7 @@ export function Workspace(props: Props) {
   );
   const toggle = useCallback((ns: string, isOpen: boolean) => setOpen((o) => new Map(o).set(ns, isOpen)), []);
 
-  const selectedApp = selected ? (allWorkloads(view).find(({ w }) => w.pods.some((p) => p.id === selected))?.w.node.id ?? selected) : null;
+  const selectedApp = appOf(selected);
   const listed = incidents.find((i) => i.app === selectedApp) ?? null;
 
   // The broken paths of the top incident, or of every app in its group.

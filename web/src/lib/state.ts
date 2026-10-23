@@ -53,6 +53,12 @@ export function applyDelta(state: ClusterState, msg: Message): ClusterState {
 
   const nodes = new Map(state.nodes);
   const edges = new Map(state.edges);
+  applyOps(nodes, edges, msg);
+  return { seq: msg.seq, ts: msg.ts, nodes, edges };
+}
+
+/** Applies a delta's operations to maps in place (for bulk replay loading). */
+export function applyOps(nodes: Map<string, Node>, edges: Map<string, Edge>, msg: Message): void {
   for (const op of msg.ops ?? []) {
     switch (op.op) {
       case "upsertNode":
@@ -69,5 +75,4 @@ export function applyDelta(state: ClusterState, msg: Message): ClusterState {
         break;
     }
   }
-  return { seq: msg.seq, ts: msg.ts, nodes, edges };
 }
