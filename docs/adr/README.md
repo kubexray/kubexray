@@ -11,6 +11,7 @@ Short documents capturing significant decisions, their context and consequences.
 | [0005](0005-change-facts-and-attribution.md) | Change facts and attribution | Accepted |
 | [0006](0006-likely-cause-engine.md) | Likely-cause engine | Accepted |
 | [0007](0007-local-web-ui.md) | Local web UI: server, security and build | Accepted |
+| [0008](0008-replays-and-sharing.md) | Replays, sharing and grouped incidents | Accepted |
 
 ## Template
 
