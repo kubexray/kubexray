@@ -70,7 +70,17 @@ export function Workspace(props: Props) {
     toggle: () => setBase(base ? null : { at: at ?? new Date().toISOString(), state }),
   };
   const [hovered, setHovered] = useState<string | null>(null);
-  const [open, setOpen] = useState(new Map<string, boolean>());
+  // A selection passed in (a jump from the feed, a link) opens its namespace,
+  // which may be collapsed, and is scrolled to once drawn.
+  const [open, setOpen] = useState(() => {
+    const ns = props.initialSelection ? state.nodes.get(props.initialSelection)?.ns : undefined;
+    return new Map<string, boolean>(ns ? [[ns, true]] : []);
+  });
+  const initial = useRef(props.initialSelection);
+  useEffect(() => {
+    const id = initial.current;
+    if (id) requestAnimationFrame(() => document.querySelector(`[data-key="${CSS.escape(id)}"]`)?.scrollIntoView({ block: "center" }));
+  }, []);
   const appOf = useCallback((id: string | null) => (id ? (allWorkloads(view).find(({ w }) => w.pods.some((p) => p.id === id))?.w.node.id ?? id) : null), [view]);
   const setSelected = useCallback(
     (id: string | null) => {
@@ -124,11 +134,15 @@ export function Workspace(props: Props) {
     [incidents],
   );
 
+  // Escape clears the selection on the map; on another view it belongs to
+  // that view (closing a dialog).
+  const onMap = !props.page;
   useEffect(() => {
+    if (!onMap) return;
     const esc = (e: KeyboardEvent) => e.key === "Escape" && setSelected(null);
     addEventListener("keydown", esc);
     return () => removeEventListener("keydown", esc);
-  }, [setSelected]);
+  }, [setSelected, onMap]);
 
   const mapView = useMemo(() => searchView(view, props.search ?? ""), [view, props.search]);
 

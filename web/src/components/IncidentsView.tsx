@@ -1,8 +1,7 @@
 import type { Group, Incident } from "../gen/cause";
 import type { Set as ChangeSet } from "../gen/feed";
-import { author } from "../lib/feed";
+import { author, verdictNote } from "../lib/feed";
 import { duration, hm } from "../lib/format";
-import { verdictNote } from "./ChangesView";
 import { CauseLine, DiagnosisLine, entries, stateText } from "./IncidentCard";
 
 interface Props {

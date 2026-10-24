@@ -12,7 +12,6 @@ import type { FeedResponse, HistoryResponse } from "./gen/server";
 import { fetchAt, fetchChanges, fetchFeed, fetchHistory, fetchWhy } from "./lib/api";
 import { changeEvents, mergeEvents } from "./lib/events";
 import { type ClusterState, fromSnapshot } from "./lib/state";
-import { useNow } from "./lib/useNow";
 import { MAX_EVENTS, useStream } from "./lib/useStream";
 
 /** Polls an API endpoint, keeping the last good answer. */
@@ -118,7 +117,6 @@ export function App() {
   const history = usePoll<HistoryResponse>(fetchHistory, 5000);
   const changes = usePoll<Change[]>(fetchChanges, 10_000);
   const feed = usePoll<FeedResponse>(fetchFeed, 5000);
-  const tick = useNow(60_000); // only until the first feed arrives
   const [view, setView] = useState<View>("map");
   const [query, setQuery] = useState("");
   // Jumping to the map from the feed or incidents selects an object there
@@ -174,12 +172,12 @@ export function App() {
     setView("map");
   };
   const sets = feed?.sets ?? [];
-  const now = feed ? Date.parse(feed.now) : tick;
+  const now = Date.parse(feed?.now ?? state.ts); // the server's clock, like the sets' times
   const page =
     view === "changes" ? (
       <ChangesView sets={sets} now={now} query={query} live canRewindTo={canRewindTo} onRewind={(ts, id) => showOnMap(id, ts)} />
     ) : view === "incidents" ? (
-      <IncidentsView incidents={stream.incidents} groups={stream.groups} sets={sets} now={now} onShow={(id) => showOnMap(id, null)} />
+      <IncidentsView incidents={incidents} groups={groups} sets={sets} now={at ? Date.parse(at) : now} onShow={(id) => showOnMap(id, at)} />
     ) : undefined;
 
   return (
@@ -193,7 +191,7 @@ export function App() {
             view={v}
             status={stream.status}
             rewound={!!at}
-            nav={{ active: view, onChange: setView, incidents: stream.incidents.length }}
+            nav={{ active: view, onChange: setView, incidents: incidents.length }}
             search={{ value: query, onChange: setQuery }}
           />
         )}

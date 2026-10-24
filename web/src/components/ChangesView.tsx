@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Set as ChangeSet } from "../gen/feed";
-import { applyFilter, author, FILTERS, type Filter, filterCounts, hasDrift, hourly, summarize } from "../lib/feed";
+import { applyFilter, author, FILTERS, type Filter, filterCounts, hasDrift, hourly, justBefore, shortName, summarize, verdictLabel, verdictNote } from "../lib/feed";
 import { clock, hm } from "../lib/format";
 
 interface Props {
@@ -33,24 +33,6 @@ function writeSeen(t: number) {
   }
 }
 
-const VERDICT: Record<string, string> = {
-  healthy: "Healthy",
-  fixed: "Fixed it",
-  settling: "Settling",
-  stuck: "Didn't settle",
-  none: "No effect",
-  "": "Judging…",
-};
-
-export function verdictLabel(s: ChangeSet): string {
-  if (s.verdict === "broke") return `Broke ${s.incident ? s.incident.slice(s.incident.lastIndexOf("/") + 1) : "an app"}`;
-  return VERDICT[s.verdict] ?? s.verdict;
-}
-
-export function verdictNote(s: ChangeSet): string {
-  return [s.note, s.ended ? `over at ${hm(s.ended)}` : ""].filter(Boolean).join(" · ");
-}
-
 /** The lines under a set's title: each entry, unless the title already says it. */
 function details(s: ChangeSet): string[] {
   if (s.entries.length === 1) {
@@ -61,19 +43,21 @@ function details(s: ChangeSet): string[] {
 }
 
 function touches(s: ChangeSet): string {
-  const apps = (s.apps ?? []).filter((a) => !s.entries.some((e) => e.object === a)).map((a) => a.slice(a.lastIndexOf("/") + 1));
+  const apps = (s.apps ?? []).filter((a) => !s.entries.some((e) => e.object === a)).map(shortName);
   return apps.length ? `used by ${apps.join(", ")}` : "";
 }
 
 /** The change feed (ADR-0012): every change, and what it did. */
 export function ChangesView({ sets, now, query, live, canRewindTo, onRewind }: Props) {
   const [filter, setFilter] = useState<Filter>("all");
-  const [open, setOpen] = useState<ChangeSet | null>(null);
+  const [openId, setOpenId] = useState<string | null>(null);
+  const open = sets.find((s) => s.id === openId) ?? null; // the live set: its verdict updates
   const [seen, setSeen] = useState<number | null>(() => (live ? readSeen() : null));
-  // First visit: remember now, so the next one has something to compare with.
+  // First visit: remember now (the server's clock, like the sets' times), so
+  // the next one has something to compare with.
   useEffect(() => {
-    if (live && readSeen() === null) writeSeen(Date.now());
-  }, [live]);
+    if (live && readSeen() === null) writeSeen(now);
+  }, [live, now]);
 
   const shown = useMemo(() => applyFilter(sets, filter, query), [sets, filter, query]);
   const counts = useMemo(() => filterCounts(sets, query), [sets, query]);
@@ -88,8 +72,8 @@ export function ChangesView({ sets, now, query, live, canRewindTo, onRewind }: P
     setSeen(now);
   };
   const rewind = (s: ChangeSet) => {
-    setOpen(null);
-    onRewind(new Date(Date.parse(s.at) - 1000).toISOString(), s.incident ?? s.apps?.[0] ?? s.entries[0]?.object ?? "");
+    setOpenId(null);
+    onRewind(justBefore(s), s.incident ?? s.apps?.[0] ?? s.entries[0]?.object ?? "");
   };
 
   return (
@@ -198,8 +182,8 @@ export function ChangesView({ sets, now, query, live, canRewindTo, onRewind }: P
               </div>
               {details(s).length > 0 && (
                 <ul className="feed-details">
-                  {details(s).map((d) => (
-                    <li key={d}>{d}</li>
+                  {details(s).map((d, i) => (
+                    <li key={`${i}-${d}`}>{d}</li>
                   ))}
                 </ul>
               )}
@@ -213,12 +197,12 @@ export function ChangesView({ sets, now, query, live, canRewindTo, onRewind }: P
               <span className={`verdict ${s.verdict || "judging"}`}>{verdictLabel(s)}</span>
               <span className="feed-note">{verdictNote(s)}</span>
               <div className="feed-buttons">
-                {canRewindTo(s.at) && (
+                {canRewindTo(justBefore(s)) && (
                   <button type="button" onClick={() => rewind(s)}>
                     Rewind
                   </button>
                 )}
-                <button type="button" onClick={() => setOpen(s)}>
+                <button type="button" onClick={() => setOpenId(s.id)}>
                   Details
                 </button>
               </div>
@@ -227,7 +211,7 @@ export function ChangesView({ sets, now, query, live, canRewindTo, onRewind }: P
         ))}
       </section>
 
-      {open && <ChangeDetail set={open} canRewind={canRewindTo(open.at)} onRewind={() => rewind(open)} onClose={() => setOpen(null)} />}
+      {open && <ChangeDetail set={open} canRewind={canRewindTo(justBefore(open))} onRewind={() => rewind(open)} onClose={() => setOpenId(null)} />}
     </main>
   );
 }
@@ -239,7 +223,7 @@ function ChangeDetail({ set: s, canRewind, onRewind, onClose }: { set: ChangeSet
     d?.showModal();
     return () => d?.close();
   }, []);
-  const apps = (s.apps ?? []).map((a) => a.slice(a.lastIndexOf("/") + 1));
+  const apps = (s.apps ?? []).map(shortName);
   return (
     <dialog ref={dialog} className="feed-drawer" onClose={onClose} aria-labelledby="feed-drawer-title">
       <div className="feed-drawer-head">

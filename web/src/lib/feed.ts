@@ -2,7 +2,7 @@
 // cards and the hourly strip. The engine (Go) builds and judges the sets;
 // this only arranges them.
 import type { Set as ChangeSet } from "../gen/feed";
-import { who } from "./format";
+import { hm, who } from "./format";
 import type { NamespaceView } from "./view";
 
 export type Filter = "all" | "people" | "broke" | "drift" | "settling";
@@ -22,6 +22,31 @@ export function author(s: ChangeSet): string {
 
 export const hasDrift = (s: ChangeSet) => s.entries.some((e) => !!e.drift);
 
+/** The name in a node ID: "Deployment/shop/api" → "api". */
+export const shortName = (id: string) => id.slice(id.lastIndexOf("/") + 1);
+
+const VERDICT: Record<string, string> = {
+  healthy: "Healthy",
+  fixed: "Fixed it",
+  settling: "Settling",
+  stuck: "Didn't settle",
+  none: "No effect",
+  "": "Judging…",
+};
+
+export function verdictLabel(s: ChangeSet): string {
+  if (s.verdict === "broke") return `Broke ${s.incident ? shortName(s.incident) : "an app"}`;
+  return VERDICT[s.verdict] ?? s.verdict;
+}
+
+/** The verdict's note, with when an incident it caused ended. */
+export function verdictNote(s: ChangeSet): string {
+  return [s.note, s.ended ? `over at ${hm(s.ended)}` : ""].filter(Boolean).join(" · ");
+}
+
+/** The moment just before a set, for rewinding to it. */
+export const justBefore = (s: ChangeSet) => new Date(Date.parse(s.at) - 1000).toISOString();
+
 /** Made by a person's tool or a deploy tool, not a controller (autoscalers, nodes). */
 export const byPeople = (s: ChangeSet) => !!s.by && s.by.tool !== "controller";
 
@@ -37,7 +62,7 @@ const tests: Record<Filter, (s: ChangeSet) => boolean> = {
 export function matches(s: ChangeSet, query: string): boolean {
   const words = query.toLowerCase().split(/\s+/).filter(Boolean);
   if (!words.length) return true;
-  const text = [s.title, s.namespace ?? "", author(s), ...s.entries.flatMap((e) => [e.kind, e.name, e.summary])].join(" ").toLowerCase();
+  const text = [s.title, s.namespace ?? "", author(s), ...(s.apps ?? []).map(shortName), ...s.entries.flatMap((e) => [e.kind, e.name, e.summary])].join(" ").toLowerCase();
   return words.every((w) => text.includes(w));
 }
 
