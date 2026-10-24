@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -50,6 +51,7 @@ Usage:
   kubexray why <kind>/<name>   explain why an app is broken, and what changed
   kubexray changes             list recent changes and who made them
   kubexray play <file.kxr>     watch a replay in your browser (no cluster needed)
+  kubexray serve               record around the clock inside the cluster (see the Helm chart)
   kubexray dump                stream the cluster graph as JSON lines
   kubexray version             print the version
 
@@ -85,6 +87,8 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return dump(ctx, rest, stdout, stderr)
 	case "play":
 		return play(ctx, rest, stdout, stderr)
+	case "serve":
+		return serve(ctx, rest, stderr)
 	case "version", "--version", "-version":
 		_, err := fmt.Fprintln(stdout, version.String())
 		return err
@@ -99,12 +103,13 @@ func run(args []string, stdout, stderr io.Writer) error {
 
 var (
 	helpAndVersion = []string{"-h", "-help", "--help", "-version", "--version"}
-	commands       = []string{"why", "incidents", "changes", "dump", "play", "version", "help"}
+	commands       = []string{"why", "incidents", "changes", "dump", "play", "serve", "version", "help"}
 )
 
 // connection holds the flags every command that reads a cluster shares.
 type connection struct {
 	kubeconfig, context, namespace string
+	noSecrets                      bool // don't watch Secrets (serve --no-secrets)
 
 	// Set by resolve.
 	cfg      *rest.Config
@@ -168,7 +173,11 @@ func (c *connection) sync(ctx context.Context, log *slog.Logger, stderr io.Write
 		return nil, "", fmt.Errorf("creating metadata client: %w", err)
 	}
 	g := graph.New()
-	if err := cluster.New(client, metaClient, g, log).Start(ctx); err != nil {
+	w := cluster.New(client, metaClient, g, log)
+	if c.noSecrets {
+		w.WithoutSecrets()
+	}
+	if err := w.Start(ctx); err != nil {
 		return nil, "", err
 	}
 	return g, c.ns, nil
@@ -386,6 +395,20 @@ func ui(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 
+	return recordAndServe(ctx, g, rec, hub, srv, ln, log, func() {
+		_, _ = fmt.Fprintf(stdout, "kubexray is running at %s   (Ctrl-C to stop)\n", srv.URL())
+		if !*noBrowser {
+			if err := openBrowser(ctx, srv.URL()); err != nil {
+				_, _ = fmt.Fprintf(stderr, "Couldn't open the browser (%v); open the link above.\n", err)
+			}
+		}
+	})
+}
+
+// recordAndServe runs the pump (recording and streaming) and the web server
+// until either stops or ctx is cancelled. ready runs once the first snapshot
+// can be streamed.
+func recordAndServe(ctx context.Context, g *graph.Graph, rec *recorder.Recorder, hub *server.Hub, srv *server.Server, ln net.Listener, log *slog.Logger, ready func()) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	var wg sync.WaitGroup
@@ -401,15 +424,9 @@ func ui(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	run(func() error { return recorder.Pump(ctx, g, rec, flushInterval, log, hub.Emit) })
 	run(func() error { return srv.Serve(ctx, ln) })
 
-	// Open the browser only once the first snapshot is ready to stream.
 	select {
 	case <-hub.Ready():
-		_, _ = fmt.Fprintf(stdout, "kubexray is running at %s   (Ctrl-C to stop)\n", srv.URL())
-		if !*noBrowser {
-			if err := openBrowser(ctx, srv.URL()); err != nil {
-				_, _ = fmt.Fprintf(stderr, "Couldn't open the browser (%v); open the link above.\n", err)
-			}
-		}
+		ready()
 	case <-ctx.Done():
 	}
 

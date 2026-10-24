@@ -1,0 +1,9 @@
+apiVersion: v2
+name: kubexray
+description: The flight recorder for your Kubernetes cluster, recording around the clock.
+type: application
+version: 0.4.0
+appVersion: "0.4.0"
+home: https://github.com/kubexray/kubexray
+sources: [https://github.com/kubexray/kubexray]
+keywords: [kubernetes, incidents, observability, debugging]

@@ -103,6 +103,7 @@ type req struct {
 	host   string // overrides the Host header
 	cookie bool
 	origin string
+	bearer string
 }
 
 var noRedirects = &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
@@ -125,10 +126,13 @@ func (f *fixture) do(r req) response {
 		hr.Host = r.host
 	}
 	if r.cookie {
-		hr.AddCookie(&http.Cookie{Name: f.srv.cookie, Value: f.srv.token}) //nolint:gosec // a client-side test cookie
+		hr.AddCookie(&http.Cookie{Name: f.srv.cookieName(hr.Host), Value: f.srv.token}) //nolint:gosec // a client-side test cookie
 	}
 	if r.origin != "" {
 		hr.Header.Set("Origin", r.origin)
+	}
+	if r.bearer != "" {
+		hr.Header.Set("Authorization", "Bearer "+r.bearer)
 	}
 	resp, err := noRedirects.Do(hr)
 	if err != nil {

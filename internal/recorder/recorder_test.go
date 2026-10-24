@@ -203,13 +203,27 @@ func TestPruneDuringQuietPeriods(t *testing.T) {
 	assertAt(t, r, at(3600), "a", "b") // the current state is still there
 }
 
-func TestReset(t *testing.T) {
+func TestBreakKeepsHistoryAndStartsAnEpoch(t *testing.T) {
 	t.Parallel()
 	r := New(DefaultOptions)
 	keyframe(t, r, snapshot(0, at(0), "a"))
-	r.Reset()
-	if _, _, ok := r.Bounds(); ok || r.Size() != 0 || !r.NeedsKeyframe(at(1)) {
-		t.Error("Reset left history behind")
+	record(t, r, delta(1, at(1), add("b")))
+	r.Break()
+	if !r.NeedsKeyframe(at(2)) {
+		t.Error("no keyframe asked for after a break")
+	}
+	// Deltas wait for the keyframe, which includes them.
+	if err := r.Record(delta(7, at(2), add("x")), nil); err != nil {
+		t.Errorf("Record after Break = %v, want it dropped", err)
+	}
+	keyframe(t, r, snapshot(1, at(3), "c")) // a new sequence: the process restarted
+	record(t, r, delta(2, at(4), add("d")))
+	assertAt(t, r, at(1.5), "a", "b") // before the break: still there
+	assertAt(t, r, at(5), "c", "d")
+	// A range across the break keeps the epoch it starts in: one continuous sequence.
+	msgs, err := r.Messages(at(0), at(5))
+	if err != nil || len(msgs) != 2 {
+		t.Errorf("Messages across the break = %d messages, %v; want the first epoch's 2", len(msgs), err)
 	}
 }
 

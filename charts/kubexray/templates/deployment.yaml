@@ -1,0 +1,93 @@
+{{- $proxy := eq .Values.auth.mode "proxy" }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "kubexray.fullname" . }}
+  labels: {{- include "kubexray.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  # One recorder per cluster, and the volume is ReadWriteOnce.
+  strategy: {type: Recreate}
+  selector:
+    matchLabels: {{- include "kubexray.selector" . | nindent 6 }}
+  template:
+    metadata:
+      labels: {{- include "kubexray.labels" . | nindent 8 }}
+      {{- with .Values.podAnnotations }}
+      annotations: {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "kubexray.fullname" . }}
+      securityContext: {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: kubexray
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            - serve
+            - --listen={{ if $proxy }}127.0.0.1{{ end }}:8080
+            {{- if $proxy }}
+            - --auth=none
+            {{- else }}
+            - --token-file=/etc/kubexray/token
+            {{- end }}
+            {{- if .Values.persistence.enabled }}
+            - --data-dir=/data
+            - --retention-size-mb={{ .Values.retentionSizeMB }}
+            {{- end }}
+            - --retention={{ .Values.retention }}
+            {{- if not .Values.rbac.secrets }}
+            - --no-secrets
+            {{- end }}
+            {{- with .Values.clusterName }}
+            - --cluster-name={{ . }}
+            {{- end }}
+            {{- if and .Values.ingress.enabled .Values.ingress.host }}
+            - --allowed-host={{ .Values.ingress.host }}
+            {{- if .Values.ingress.tls }}
+            - --secure-cookie
+            {{- end }}
+            {{- end }}
+          {{- if not $proxy }}
+          ports:
+            - {name: http, containerPort: 8080}
+          readinessProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: {path: /healthz, port: http}
+            initialDelaySeconds: 30
+            periodSeconds: 20
+          {{- end }}
+          securityContext: {{- toYaml .Values.securityContext | nindent 12 }}
+          resources: {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - {name: data, mountPath: /data}
+            {{- if not $proxy }}
+            - {name: token, mountPath: /etc/kubexray, readOnly: true}
+            {{- end }}
+        {{- if $proxy }}
+        - {{- toYaml .Values.auth.proxy.sidecar | nindent 10 }}
+        {{- end }}
+      volumes:
+        - name: data
+          {{- if .Values.persistence.enabled }}
+          persistentVolumeClaim: {claimName: {{ include "kubexray.fullname" . }}}
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+        {{- if not $proxy }}
+        - name: token
+          secret:
+            secretName: {{ include "kubexray.tokenSecret" . }}
+            items: [{key: token, path: token}]
+        {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity: {{- toYaml . | nindent 8 }}
+      {{- end }}

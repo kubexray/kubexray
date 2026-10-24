@@ -13,6 +13,7 @@ Short documents capturing significant decisions, their context and consequences.
 | [0007](0007-local-web-ui.md) | Local web UI: server, security and build | Accepted |
 | [0008](0008-replays-and-sharing.md) | Replays, sharing and grouped incidents | Accepted |
 | [0009](0009-diagnosis.md) | Diagnosis: explaining the symptom itself | Accepted |
+| [0010](0010-in-cluster-mode.md) | In-cluster mode: always-on recording | Accepted |
 
 ## Template
 

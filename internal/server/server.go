@@ -19,11 +19,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"log/slog"
 	"net"
 	"net/http"
+	"os"
 	"strconv"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/coder/websocket"
@@ -67,8 +71,25 @@ type Server struct {
 	csp    string
 	cookie string // session cookie name, set by Listen
 
-	replay []byte // player mode: the one replay file served (kubexray play)
+	replay []byte     // player mode: the one replay file served (kubexray play)
+	remote *Remote    // serve mode (kubexray serve): reachable over the network
+	tokens *tokenFile // serve mode with a token file
 }
+
+// Remote configures serve mode (ADR-0010): the server runs in the cluster and
+// is reachable over the network, so every request needs the token, or an
+// auth proxy in front of a loopback address.
+type Remote struct {
+	Addr         string   // where to listen, e.g. ":8080"
+	Token        string   // required unless NoAuth
+	TokenFile    string   // where Token came from: re-read when it changes (rotation, GitOps)
+	NoAuth       bool     // only with a loopback Addr: an auth proxy is the way in
+	AllowedHosts []string // host names besides localhost, e.g. an Ingress's
+	SecureCookie bool     // behind TLS (an Ingress)
+}
+
+// MinTokenLength is the shortest token serve mode accepts.
+const MinTokenLength = 32
 
 // New returns a server for the hub and recorder fed by the pump.
 func New(hub *Hub, rec *recorder.Recorder, assets fs.FS, log *slog.Logger, info Info) (*Server, error) {
@@ -120,6 +141,94 @@ func (s *Server) Listen(ctx context.Context, port int) (net.Listener, error) {
 	_, p, _ := net.SplitHostPort(s.host)
 	s.cookie = "kubexray_session_" + p
 	return ln, nil
+}
+
+// ListenRemote binds for serve mode. It refuses to run without
+// authentication on an address other machines can reach.
+func (s *Server) ListenRemote(ctx context.Context, r Remote) (net.Listener, error) {
+	if err := r.Check(); err != nil {
+		return nil, err
+	}
+	var lc net.ListenConfig
+	ln, err := lc.Listen(ctx, "tcp", r.Addr)
+	if err != nil {
+		return nil, err
+	}
+	s.remote = &r
+	s.token = r.Token
+	s.host = ln.Addr().String()
+	if r.TokenFile != "" {
+		s.tokens = &tokenFile{path: r.TokenFile, token: r.Token, now: s.now}
+	}
+	return ln, nil
+}
+
+// cookieName is the session cookie's name for a request. Browsers scope
+// cookies by host, not port: two kubexray instances port-forwarded to
+// different local ports must not share one.
+func (s *Server) cookieName(host string) string {
+	if s.remote == nil {
+		return s.cookie
+	}
+	if _, port, err := net.SplitHostPort(host); err == nil {
+		return "kubexray_session_" + port
+	}
+	return "kubexray_session"
+}
+
+// tokenFile follows a token file (a mounted Secret): the kubelet updates it
+// when the Secret changes, and so the token in use.
+type tokenFile struct {
+	path string
+	now  func() time.Time
+
+	mu      sync.Mutex
+	token   string
+	checked time.Time
+	modTime time.Time
+}
+
+const tokenRecheck = 10 * time.Second
+
+func (t *tokenFile) get() string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if now := t.now(); now.Sub(t.checked) >= tokenRecheck {
+		t.checked = now
+		if fi, err := os.Stat(t.path); err == nil && !fi.ModTime().Equal(t.modTime) {
+			// A token that can't be read or is too short keeps the old one.
+			if b, err := os.ReadFile(t.path); err == nil {
+				if tok := strings.TrimSpace(string(b)); len(tok) >= MinTokenLength {
+					t.token, t.modTime = tok, fi.ModTime()
+				}
+			}
+		}
+	}
+	return t.token
+}
+
+// Check refuses settings that would expose the cluster without
+// authentication.
+func (r Remote) Check() error {
+	host, _, err := net.SplitHostPort(r.Addr)
+	if err != nil {
+		return fmt.Errorf("listen address %q: %w", r.Addr, err)
+	}
+	switch {
+	case r.NoAuth && !loopback(host):
+		return fmt.Errorf("refusing to serve without authentication on %s: only a loopback address (an auth proxy in the same pod) may skip it", r.Addr)
+	case !r.NoAuth && len(r.Token) < MinTokenLength:
+		return fmt.Errorf("the token must be at least %d characters", MinTokenLength)
+	}
+	return nil
+}
+
+func loopback(host string) bool {
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 // URL is the launch link: it carries the session token, so it is printed only
@@ -180,7 +289,17 @@ func (s *Server) Handler() http.Handler {
 	}
 	api.Handle("GET /", http.FileServerFS(s.assets))
 
-	return s.checkHost(s.headers(s.session(api)))
+	secured := s.checkHost(s.headers(s.session(api)))
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Liveness and readiness probes: no data, no authentication, and any
+		// Host (the kubelet uses the pod's IP).
+		if s.remote != nil && r.URL.Path == "/healthz" {
+			w.Header().Set("Content-Type", "text/plain")
+			_, _ = io.WriteString(w, "ok\n")
+			return
+		}
+		secured.ServeHTTP(w, r)
+	})
 }
 
 // checkHost rejects requests addressed to any other host name, which is what
@@ -188,8 +307,26 @@ func (s *Server) Handler() http.Handler {
 func (s *Server) checkHost(next http.Handler) http.Handler {
 	_, port, _ := net.SplitHostPort(s.host)
 	allowed := map[string]bool{s.host: true, "localhost:" + port: true}
+	ok := func(h string) bool { return allowed[h] }
+	if s.remote != nil && s.remote.NoAuth {
+		return next // the auth proxy in front is the only way in, and checks the host
+	}
+	if s.remote != nil {
+		// Through kubectl port-forward, any local port; through an Ingress,
+		// the names it was given.
+		for _, h := range s.remote.AllowedHosts {
+			allowed[h] = true
+		}
+		ok = func(h string) bool {
+			name, _, err := net.SplitHostPort(h)
+			if err != nil {
+				name = h
+			}
+			return allowed[h] || allowed[name] || loopback(strings.Trim(name, "[]"))
+		}
+	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !allowed[r.Host] {
+		if !ok(r.Host) {
 			http.Error(w, "unexpected host", http.StatusMisdirectedRequest)
 			return
 		}
@@ -204,10 +341,20 @@ func csp(host string) string {
 		"frame-ancestors 'none'; base-uri 'none'; form-action 'none'; object-src 'none'"
 }
 
+func remoteCSP(host string) string {
+	return "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; " +
+		"connect-src 'self' ws://" + host + " wss://" + host + "; " +
+		"frame-ancestors 'none'; base-uri 'none'; form-action 'none'; object-src 'none'"
+}
+
 func (s *Server) headers(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h := w.Header()
-		h.Set("Content-Security-Policy", s.csp)
+		policy := s.csp
+		if s.remote != nil {
+			policy = remoteCSP(r.Host) // the Host was checked against the allow-list
+		}
+		h.Set("Content-Security-Policy", policy)
 		h.Set("X-Content-Type-Options", "nosniff")
 		h.Set("Referrer-Policy", "no-referrer")
 		h.Set("Cross-Origin-Opener-Policy", "same-origin")
@@ -221,6 +368,21 @@ func (s *Server) headers(next http.Handler) http.Handler {
 // on every other request.
 func (s *Server) session(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if s.remote != nil {
+			if s.remote.NoAuth {
+				next.ServeHTTP(w, r) // the auth proxy in front has checked
+				return
+			}
+			// API clients (scripts, curl) send the token as a bearer token.
+			if tok, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer "); ok {
+				if !s.valid(tok) {
+					http.Error(w, "invalid token", http.StatusUnauthorized)
+					return
+				}
+				next.ServeHTTP(w, r)
+				return
+			}
+		}
 		if tok := r.URL.Query().Get("token"); tok != "" && r.URL.Path == "/" {
 			if !s.valid(tok) {
 				http.Error(w, "This link is out of date. Use the one kubexray printed when it started.", http.StatusUnauthorized)
@@ -230,8 +392,9 @@ func (s *Server) session(next http.Handler) http.Handler {
 			// browsers drop Secure cookies there. Loopback-only, HttpOnly and
 			// SameSite=Strict carry the protection (ADR-0007).
 			http.SetCookie(w, &http.Cookie{ //nolint:gosec // see above
-				Name: s.cookie, Value: s.token, Path: "/",
+				Name: s.cookieName(r.Host), Value: tok, Path: "/",
 				HttpOnly: true, SameSite: http.SameSiteStrictMode,
+				Secure: s.remote != nil && s.remote.SecureCookie, // serve mode behind TLS
 			})
 			// Drop the token from the address bar and history. In player
 			// mode, land on the player with the replay loaded.
@@ -242,9 +405,13 @@ func (s *Server) session(next http.Handler) http.Handler {
 			http.Redirect(w, r, landing, http.StatusSeeOther)
 			return
 		}
-		c, err := r.Cookie(s.cookie)
+		c, err := r.Cookie(s.cookieName(r.Host))
 		if err != nil || !s.valid(c.Value) {
-			http.Error(w, "Open kubexray with the link it printed in your terminal.", http.StatusUnauthorized)
+			msg := "Open kubexray with the link it printed in your terminal."
+			if s.remote != nil {
+				msg = "Open kubexray with /?token=<token>. The token is in the kubexray Secret; see the chart's notes."
+			}
+			http.Error(w, msg, http.StatusUnauthorized)
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -252,14 +419,21 @@ func (s *Server) session(next http.Handler) http.Handler {
 }
 
 func (s *Server) valid(tok string) bool {
-	return subtle.ConstantTimeCompare([]byte(tok), []byte(s.token)) == 1
+	return subtle.ConstantTimeCompare([]byte(tok), []byte(s.currentToken())) == 1
+}
+
+func (s *Server) currentToken() string {
+	if s.tokens != nil {
+		return s.tokens.get()
+	}
+	return s.token
 }
 
 // stream upgrades to a WebSocket and sends the graph: a snapshot, the current
 // incidents, then every change.
 func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 	// Only the UI served from this origin may open the stream.
-	if r.Header.Get("Origin") != "http://"+r.Host {
+	if o := r.Header.Get("Origin"); o != "http://"+r.Host && (s.remote == nil || o != "https://"+r.Host) {
 		http.Error(w, "cross-origin WebSocket refused", http.StatusForbidden)
 		return
 	}
@@ -426,8 +600,14 @@ func (s *Server) export(w http.ResponseWriter, r *http.Request) {
 	if to.After(now) {
 		to = now
 	}
-	msgs, err := s.rec.Messages(from, to)
-	if err != nil {
+	// Read no more than a replay may hold; a window across a restart is cut
+	// to the run it starts in, and the replay says so in its header.
+	msgs, from, to, err := s.rec.Range(from, to, replay.MaxUncompressed)
+	switch {
+	case errors.Is(err, recorder.ErrTooLarge):
+		http.Error(w, "that window holds more history than one replay can (50 MiB); export a shorter one", http.StatusRequestEntityTooLarge)
+		return
+	case err != nil:
 		http.Error(w, "kubexray has no history for that window", http.StatusNotFound)
 		return
 	}

@@ -104,6 +104,11 @@ e2e: go-build ## Run every break-it scenario on the demo cluster and check kubex
 	scripts/demo.sh up
 	scripts/e2e.sh
 
+.PHONY: e2e-helm
+e2e-helm: ## Install the Helm chart on the demo cluster and check auth, RBAC and persistence
+	scripts/demo.sh up
+	scripts/e2e-helm.sh
+
 .PHONY: demo-down
 demo-down: ## Delete the demo cluster
 	scripts/demo.sh down

@@ -74,10 +74,10 @@ func (c *testCluster) eventually(t *testing.T, what string, check func(nodes map
 
 func hasEdge(edges []string, id string) bool { return slices.Contains(edges, id) }
 
-func metaObj(kind, ns, name string) *metav1.PartialObjectMetadata {
+func metaObj(kind, name string) *metav1.PartialObjectMetadata {
 	return &metav1.PartialObjectMetadata{
 		TypeMeta:   metav1.TypeMeta{APIVersion: "v1", Kind: kind},
-		ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: name},
+		ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: name},
 	}
 }
 
@@ -124,8 +124,8 @@ func TestInitialSyncBuildsGraph(t *testing.T) {
 				}},
 			},
 		},
-		metaObj(KindConfigMap, "shop", "cfg"),
-		metaObj(KindSecret, "shop", "tls"),
+		metaObj(KindConfigMap, "cfg"),
+		metaObj(KindSecret, "tls"),
 	)
 
 	const pod = "Pod/shop/api-1-a"
@@ -349,5 +349,25 @@ func TestPodStatusUpdateKeepsSelection(t *testing.T) {
 	}
 	c.eventually(t, "status applied, still selected", func(nodes map[string]graph.Node, edges []string) bool {
 		return nodes["Pod/shop/p"].Status.Phase == "Running" && hasEdge(edges, edge)
+	})
+}
+
+func TestWithoutSecrets(t *testing.T) {
+	t.Parallel()
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	scheme := metadatafake.NewTestScheme()
+	if err := metav1.AddMetaToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	g := graph.New()
+	w := New(kubefake.NewClientset(apiPod("api-1-a", nil)), metadatafake.NewSimpleMetadataClient(scheme, metaObj(KindConfigMap, "cfg"), metaObj(KindSecret, "tls")), g, slog.New(slog.DiscardHandler)).WithoutSecrets()
+	if err := w.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	c := &testCluster{graph: g, watcher: w}
+	c.eventually(t, "the pod and its ConfigMap, without the Secret", func(nodes map[string]graph.Node, edges []string) bool {
+		_, secret := nodes["Secret/shop/tls"]
+		return hasEdge(edges, "mounts:Pod/shop/api-1-a:ConfigMap/shop/cfg") && !secret && !hasEdge(edges, "mounts:Pod/shop/api-1-a:Secret/shop/tls")
 	})
 }

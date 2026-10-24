@@ -97,6 +97,18 @@ checkout (Deployment, shop) is degraded: 2 of 3 pods ready, since 00:10:47 (50s 
                     kubectl -n shop rollout restart deployment/checkout        # after fixing checkout-config
 ```
 
+## Record around the clock in your cluster
+
+Run kubexray in the cluster so the incident from 3 a.m. is still there in the morning ([ADR-0010](docs/adr/0010-in-cluster-mode.md)):
+
+```sh
+helm install kubexray charts/kubexray -n kubexray --create-namespace
+```
+
+It records to a volume (7 days or 1 GiB by default, whichever comes first), keeps its history across restarts, and has read-only access to the kinds it maps. There's no anonymous mode: every request needs the token from the `kubexray` Secret (the install notes print how to open it), or you put an auth proxy such as oauth2-proxy in front with `auth.mode: proxy`. Secrets aren't watched unless you set `rbac.secrets: true`, because Kubernetes can't grant "list Secrets" without their contents.
+
+The images aren't published yet; until the first release, build one with `make docker`.
+
 ## Compare two moments
 
 Press **Compare** on the timeline, then move to another moment: the side panel lists what changed in between. You see what was added or removed, new images, resources and probes, revisions, replicas and readiness, pods replaced or failing, and who edited a ConfigMap or Secret (never its contents). It works live, rewound and in replays.
