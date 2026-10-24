@@ -2,14 +2,17 @@ package server
 
 import (
 	"context"
+	"io"
 	"log/slog"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/kubexray/kubexray/internal/alert"
 	"github.com/kubexray/kubexray/internal/graph"
 	"github.com/kubexray/kubexray/internal/recorder"
 	"github.com/kubexray/kubexray/internal/web"
@@ -106,9 +109,16 @@ func TestServeModeHostsAndOrigins(t *testing.T) {
 		"evil.example":              http.StatusMisdirectedRequest,
 		"kubexray.example.com.evil": http.StatusMisdirectedRequest,
 	} {
-		if got := f.status(req{path: "/api/history", host: host, bearer: testToken}); got != want {
+		if got := f.status(req{path: "/api/history", host: host, cookie: true}); got != want {
 			t.Errorf("Host %s = %d, want %d", host, got, want)
 		}
+	}
+	// Bearer clients send no cookies: the in-cluster Service name is fine.
+	if got := f.status(req{path: "/api/history", host: "kx-kubexray.kubexray.svc", bearer: testToken}); got != http.StatusOK {
+		t.Errorf("bearer client on the Service name = %d, want 200", got)
+	}
+	if got := f.status(req{path: "/api/history", host: "kx-kubexray.kubexray.svc", bearer: "wrong-" + testToken}); got != http.StatusUnauthorized {
+		t.Errorf("wrong bearer token on the Service name = %d, want 401", got)
 	}
 	resp := f.do(req{path: "/?token=" + testToken, host: "kubexray.example.com"})
 	if len(resp.cookies) != 1 || !resp.cookies[0].Secure {
@@ -177,5 +187,89 @@ func TestServeModeProxyAcceptsAnyHost(t *testing.T) {
 	f := startRemote(t, Remote{NoAuth: true})
 	if got := f.status(req{path: "/api/history", host: "kubexray.example.com"}); got != http.StatusOK {
 		t.Errorf("Host through the proxy = %d, want 200", got)
+	}
+}
+
+func TestAlertmanagerReceiver(t *testing.T) {
+	t.Parallel()
+	got := make(chan string, 4)
+	slack := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		got <- string(b)
+	}))
+	defer slack.Close()
+
+	g := graph.New()
+	brokenApp(g)
+	hub := NewHub(MaxClients, 4)
+	rec := recorder.New(recorder.DefaultOptions)
+	_, _, snap := g.FlushAndSnapshot()
+	f := &fixture{t: t, hub: hub, g: g, rec: rec}
+	f.emit(snap, true)
+	srv, err := New(hub, rec, web.Assets(), slog.New(slog.DiscardHandler), Info{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	notifier := alert.NewNotifier(slack.URL, "", slog.New(slog.DiscardHandler))
+	srv.SetAlerts(notifier, "https://kubexray.example.com")
+	ln, err := srv.ListenRemote(t.Context(), Remote{Addr: "127.0.0.1:0", Token: testToken})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	go func() { _ = srv.Serve(ctx, ln) }()
+	go notifier.Run(ctx)
+
+	post := func(token, body string) int {
+		req, _ := http.NewRequestWithContext(t.Context(), http.MethodPost, "http://"+ln.Addr().String()+"/api/alertmanager", strings.NewReader(body))
+		req.Host = "kx-kubexray.kubexray.svc" // Alertmanager uses the Service name
+		if token != "" {
+			req.Header.Set("Authorization", "Bearer "+token)
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = resp.Body.Close()
+		return resp.StatusCode
+	}
+	const firing = `{"version":"4","status":"firing","alerts":[
+		{"status":"firing","fingerprint":"a1","labels":{"alertname":"KubePodCrashLooping","namespace":"shop","pod":"api-x"},"startsAt":"2026-10-24T14:00:00Z"},
+		{"status":"firing","fingerprint":"a4","labels":{"alertname":"KubeNodeNotReady","namespace":"monitoring","pod":"kube-state-metrics-x"}},
+		{"status":"resolved","fingerprint":"a2","labels":{"alertname":"KubePodCrashLooping","namespace":"shop","deployment":"api"}},
+		{"status":"firing","fingerprint":"a3","labels":{"alertname":"KubeNodeNotReady","node":"worker-2"}}]}`
+	// Without the token: refused (by the Host check, before authentication).
+	if code := post("", firing); code != http.StatusMisdirectedRequest && code != http.StatusUnauthorized {
+		t.Errorf("without the token = %d, want it refused", code)
+	}
+	if code := post(testToken, "not json"); code != http.StatusBadRequest {
+		t.Errorf("a bad payload = %d, want 400", code)
+	}
+	if code := post(testToken, firing); code != http.StatusAccepted {
+		t.Fatalf("a notification = %d, want 202", code)
+	}
+	select {
+	case body := <-got:
+		// The pod alert is explained through its app.
+		if !strings.Contains(body, "*api is down*") || !strings.Contains(body, "kubexray.example.com/?app=Deployment%2Fshop%2Fapi") {
+			t.Errorf("Slack message = %s", body)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("nothing sent to Slack")
+	}
+	select {
+	case body := <-got: // only the firing alert about an app is sent
+		t.Errorf("a second message was sent: %s", body)
+	case <-time.After(200 * time.Millisecond):
+	}
+}
+
+func TestServeModeCSPIgnoresMalformedHosts(t *testing.T) {
+	t.Parallel()
+	f := startRemote(t, Remote{Token: testToken})
+	resp := f.do(req{path: "/api/history", host: "x;script-src*", bearer: testToken})
+	if csp := resp.header.Get("Content-Security-Policy"); strings.Contains(csp, "script-src*") || !strings.Contains(csp, "connect-src 'self';") {
+		t.Errorf("CSP for a malformed Host = %q", csp)
 	}
 }

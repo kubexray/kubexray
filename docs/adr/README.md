@@ -14,6 +14,7 @@ Short documents capturing significant decisions, their context and consequences.
 | [0008](0008-replays-and-sharing.md) | Replays, sharing and grouped incidents | Accepted |
 | [0009](0009-diagnosis.md) | Diagnosis: explaining the symptom itself | Accepted |
 | [0010](0010-in-cluster-mode.md) | In-cluster mode: always-on recording | Accepted |
+| [0011](0011-alerts.md) | Alerts: from Alertmanager to the likely cause | Accepted |
 
 ## Template
 

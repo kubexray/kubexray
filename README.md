@@ -109,6 +109,16 @@ It records to a volume (7 days or 1 GiB by default, whichever comes first), keep
 
 The images aren't published yet; until the first release, build one with `make docker`.
 
+**Alerts with the cause attached.** Add kubexray as an Alertmanager receiver and give it a Slack incoming webhook (`alerts.slack.existingSecret`) or any webhook (`alerts.webhook.existingSecret`). When an alert about an app fires, kubexray sends the app's state, what Kubernetes says is wrong, the likely cause and who made the change, with a link that opens kubexray at the moment it started ([ADR-0011](docs/adr/0011-alerts.md)):
+
+```text
+KubePodCrashLooping in shop: Pod is crash looping
+checkout is degraded: 1 pod CrashLoopBackOff
+What's wrong: The container checkout keeps exiting with code 1
+Likely cause: ConfigMap checkout-config was edited by kubectl patch at 13:59:00 UTC
+Open in kubexray at the moment it started
+```
+
 ## Compare two moments
 
 Press **Compare** on the timeline, then move to another moment: the side panel lists what changed in between. You see what was added or removed, new images, resources and probes, revisions, replicas and readiness, pods replaced or failing, and who edited a ConfigMap or Secret (never its contents). It works live, rewound and in replays.

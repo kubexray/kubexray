@@ -25,6 +25,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -32,6 +33,7 @@ import (
 
 	"github.com/coder/websocket"
 
+	"github.com/kubexray/kubexray/internal/alert"
 	"github.com/kubexray/kubexray/internal/cause"
 	"github.com/kubexray/kubexray/internal/graph"
 	"github.com/kubexray/kubexray/internal/recorder"
@@ -74,6 +76,15 @@ type Server struct {
 	replay []byte     // player mode: the one replay file served (kubexray play)
 	remote *Remote    // serve mode (kubexray serve): reachable over the network
 	tokens *tokenFile // serve mode with a token file
+
+	alerts    *alert.Notifier // serve mode: Alertmanager notifications (ADR-0011)
+	publicURL string          // where people open kubexray, for links in alerts
+}
+
+// SetAlerts makes the server an Alertmanager receiver that sends kubexray's
+// explanation to the notifier's destinations, linking to publicURL.
+func (s *Server) SetAlerts(n *alert.Notifier, publicURL string) {
+	s.alerts, s.publicURL = n, publicURL
 }
 
 // Remote configures serve mode (ADR-0010): the server runs in the cluster and
@@ -286,6 +297,9 @@ func (s *Server) Handler() http.Handler {
 		api.HandleFunc("GET /api/why", s.why)
 		api.HandleFunc("GET /api/changes", s.changes)
 		api.HandleFunc("GET /api/export", s.export)
+		if s.alerts.Enabled() {
+			api.HandleFunc("POST /api/alertmanager", s.alertmanager)
+		}
 	}
 	api.Handle("GET /", http.FileServerFS(s.assets))
 
@@ -326,7 +340,11 @@ func (s *Server) checkHost(next http.Handler) http.Handler {
 		}
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !ok(r.Host) {
+		// The check keeps cookies from reaching a rebound host name. Bearer
+		// clients (Alertmanager, scripts) send none, and may use any name,
+		// such as the in-cluster Service's; the token is still checked.
+		bearer := s.remote != nil && strings.HasPrefix(r.Header.Get("Authorization"), "Bearer ")
+		if !bearer && !ok(r.Host) {
 			http.Error(w, "unexpected host", http.StatusMisdirectedRequest)
 			return
 		}
@@ -341,10 +359,16 @@ func csp(host string) string {
 		"frame-ancestors 'none'; base-uri 'none'; form-action 'none'; object-src 'none'"
 }
 
+// validHost is a host name or address with an optional port.
+var validHost = regexp.MustCompile(`^(\[[0-9a-fA-F:.]+\]|[a-zA-Z0-9.-]+)(:[0-9]{1,5})?$`)
+
 func remoteCSP(host string) string {
+	connect := "'self'"
+	if host != "" {
+		connect += " ws://" + host + " wss://" + host
+	}
 	return "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; " +
-		"connect-src 'self' ws://" + host + " wss://" + host + "; " +
-		"frame-ancestors 'none'; base-uri 'none'; form-action 'none'; object-src 'none'"
+		"connect-src " + connect + "; frame-ancestors 'none'; base-uri 'none'; form-action 'none'; object-src 'none'"
 }
 
 func (s *Server) headers(next http.Handler) http.Handler {
@@ -352,7 +376,13 @@ func (s *Server) headers(next http.Handler) http.Handler {
 		h := w.Header()
 		policy := s.csp
 		if s.remote != nil {
-			policy = remoteCSP(r.Host) // the Host was checked against the allow-list
+			// Bearer clients skip the Host allow-list, so check its form
+			// before it goes into a header.
+			host := r.Host
+			if !validHost.MatchString(host) {
+				host = ""
+			}
+			policy = remoteCSP(host)
 		}
 		h.Set("Content-Security-Policy", policy)
 		h.Set("X-Content-Type-Options", "nosniff")
@@ -551,6 +581,51 @@ func (s *Server) why(w http.ResponseWriter, r *http.Request) {
 func (s *Server) serveReplay(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/gzip")
 	_, _ = w.Write(s.replay)
+}
+
+// maxAlertPayload bounds an Alertmanager notification.
+const maxAlertPayload = 1 << 20
+
+// alertmanager receives Alertmanager's webhook and queues kubexray's
+// explanation of every firing alert about a known app (ADR-0011).
+func (s *Server) alertmanager(w http.ResponseWriter, r *http.Request) {
+	var n alert.Notification
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxAlertPayload)).Decode(&n); err != nil {
+		http.Error(w, "not an Alertmanager notification", http.StatusBadRequest)
+		return
+	}
+	ids := make([]string, 0, len(n.Alerts))
+	for _, a := range n.Alerts {
+		if id, _ := a.Target(); id != "" {
+			ids = append(ids, id)
+		}
+	}
+	incidents, err := s.hub.explainAll(ids, s.now()) // one index for the whole notification
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusServiceUnavailable) // Alertmanager retries
+		return
+	}
+	for _, a := range n.Alerts {
+		id, byPod := a.Target()
+		inc, known := incidents[id]
+		switch {
+		case !known:
+			continue // not about an app, or not one kubexray knows
+		case a.Status == "resolved":
+			s.alerts.Resolve(a.Name(), inc.App) // firing again soon is a regression worth a message
+			continue
+		case a.Status != "firing", byPod && inc.Healthy:
+			// A pod label alone may be the scraped target's, not the alert's
+			// subject: say nothing about an app that's fine.
+			continue
+		}
+		at := inc.Since
+		if at.IsZero() {
+			at = a.StartsAt
+		}
+		s.alerts.Queue(alert.Message{Alert: a, Incident: inc, Link: alert.Link(s.publicURL, at, inc.App)})
+	}
+	w.WriteHeader(http.StatusAccepted)
 }
 
 // changes lists who changed what since the recording began (cause.Changes).
