@@ -8,7 +8,9 @@ package cluster
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -53,7 +55,7 @@ func TestWatcherAgainstAnAPIServer(t *testing.T) {
 	cfg := apiServer(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
-	helm, kubectl := as(t, cfg, "helm"), as(t, cfg, "kubectl-client-side-apply")
+	helm, kubectl := as(t, cfg, "helm"), as(t, cfg, "kubectl-patch")
 	create := metav1.CreateOptions{FieldManager: "helm"}
 
 	if _, err := helm.CoreV1().Namespaces().Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "shop"}}, create); err != nil {
@@ -132,8 +134,15 @@ func TestWatcherAgainstAnAPIServer(t *testing.T) {
 	// ConfigMaps come through the metadata-only informer: contents never
 	// reach kubexray. The model has no field for them; the attribution above
 	// proves the object itself arrived.
-	if spec := nodes["Deployment/shop/api"].Spec; spec == nil || spec.Containers[0].Image != "nginx:1.27" || spec.Labels["app"] != "api" {
+	if spec := nodes["Deployment/shop/api"].Spec; spec == nil || len(spec.Containers) == 0 || spec.Containers[0].Image != "nginx:1.27" || spec.Labels["app"] != "api" {
 		t.Errorf("Deployment spec = %+v", spec)
+	}
+	raw, err := json.Marshal(g.Snapshot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "never-in-the-graph") {
+		t.Error("a ConfigMap's contents reached the graph")
 	}
 }
 
@@ -157,10 +166,14 @@ func TestWithoutSecretsAgainstAnAPIServer(t *testing.T) {
 	if err := w.Start(ctx); err != nil {
 		t.Fatal(err)
 	}
-	c := &testCluster{graph: g, watcher: w}
-	c.eventually(t, "the namespace, without the Secret", func(nodes map[string]graph.Node, _ []string) bool {
-		_, ns := nodes["Namespace/shop"]
-		_, secret := nodes["Secret/shop/tls"]
-		return ns && !secret
-	})
+	// Start returns once every handler has processed the initial list: what
+	// isn't in the graph now wasn't listed.
+	g.Flush()
+	nodes := map[string]bool{}
+	for _, n := range g.Snapshot().Nodes {
+		nodes[n.ID] = true
+	}
+	if !nodes["Namespace/shop"] || nodes["Secret/shop/tls"] {
+		t.Errorf("after the initial sync: namespace %v, Secret %v; want the namespace and no Secret", nodes["Namespace/shop"], nodes["Secret/shop/tls"])
+	}
 }

@@ -68,9 +68,9 @@ test("a link opens the replay with the app selected", async ({ page }) => {
   await expect(page.locator(".details .name")).toHaveText("checkout");
 });
 
-test("replay links must be https", async ({ page }) => {
+test("replay links must be https or on this site", async ({ page }) => {
   await page.goto("/?replay=http%3A%2F%2Fexample.com%2Fx.kxr");
-  await expect(page.getByText("Replay links must start with https://.")).toBeVisible();
+  await expect(page.getByText("Replay links must use https, or be on this site.")).toBeVisible();
 });
 
 test("dark mode", async ({ page }) => {

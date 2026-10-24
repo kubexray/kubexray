@@ -31,7 +31,7 @@ export function Player() {
   const linkedURL = useMemo(() => (linked ? safeReplayURL(linked) : null), [linked]);
   const [replay, setReplay] = useState<Replay | null>(null);
   const [source, setSource] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(linked && !linkedURL ? "Replay links must start with https://." : null);
+  const [error, setError] = useState<string | null>(linked && !linkedURL ? "Replay links must use https, or be on this site." : null);
   const [busy, setBusy] = useState(!!linkedURL);
   const [t, setT] = useState(0);
   const [playing, setPlaying] = useState(false);
@@ -68,7 +68,7 @@ export function Player() {
     async (raw: string) => {
       const url = safeReplayURL(raw);
       if (!url) {
-        setError("Replay links must start with https://.");
+        setError("Replay links must use https, or be on this site.");
         return;
       }
       setBusy(true);
