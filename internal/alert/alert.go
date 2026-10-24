@@ -203,7 +203,7 @@ func (n *Notifier) Queue(m Message) {
 			select {
 			case dropped := <-n.queue:
 				n.done(dropped, false) // not delivered: a repeat may try again
-				n.log.Warn("alert queue full; dropping the oldest", "alert", dropped.Alert.Name())
+				n.log.Warn("alert queue full; dropping the oldest", "alert", oneLine(dropped.Alert.Name()))
 			default:
 			}
 		}
@@ -226,6 +226,11 @@ func (n *Notifier) done(m Message, delivered bool) {
 	if delivered {
 		n.sent[key] = n.now()
 	}
+}
+
+// oneLine keeps a value from Alertmanager's payload on one log line.
+func oneLine(s string) string {
+	return strings.ReplaceAll(strings.ReplaceAll(s, "\n", " "), "\r", " ")
 }
 
 // Run sends queued messages until ctx is cancelled.
