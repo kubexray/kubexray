@@ -335,7 +335,7 @@ func specEntries(old, n graph.Node, at time.Time, by *graph.Change) []Entry {
 			detailed = true
 		}
 		if p.Requests != c.Requests || p.Limits != c.Limits {
-			add("resources", fmt.Sprintf("%sresources %s → %s", label, resources(p), resources(c)))
+			add("resources", label+resourceChanges(p, c))
 			detailed = true
 		}
 		for _, k := range probeKinds {
@@ -374,19 +374,18 @@ var probeKinds = []struct {
 	{"startup", func(p graph.Probes) bool { return p.Startup }},
 }
 
-func resources(c graph.Container) string {
+// resourceChanges lists only what changed: "memory limit 64Mi → 16Mi".
+func resourceChanges(p, c graph.Container) string {
 	var parts []string
-	add := func(label, v string) {
-		if v != "" {
-			parts = append(parts, label+" "+v)
+	for _, f := range []struct{ label, was, now string }{
+		{"cpu request", p.Requests.CPU, c.Requests.CPU},
+		{"memory request", p.Requests.Memory, c.Requests.Memory},
+		{"cpu limit", p.Limits.CPU, c.Limits.CPU},
+		{"memory limit", p.Limits.Memory, c.Limits.Memory},
+	} {
+		if f.was != f.now {
+			parts = append(parts, fmt.Sprintf("%s %s → %s", f.label, cmp.Or(f.was, "none"), cmp.Or(f.now, "none")))
 		}
-	}
-	add("cpu request", c.Requests.CPU)
-	add("memory request", c.Requests.Memory)
-	add("cpu limit", c.Limits.CPU)
-	add("memory limit", c.Limits.Memory)
-	if len(parts) == 0 {
-		return "none"
 	}
 	return strings.Join(parts, ", ")
 }

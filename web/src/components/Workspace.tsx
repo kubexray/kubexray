@@ -3,6 +3,7 @@ import type { Group, Incident } from "../gen/cause";
 import type { ClusterEvent } from "../lib/events";
 import { clock } from "../lib/format";
 import type { ClusterState } from "../lib/state";
+import { searchView } from "../lib/feed";
 import { allWorkloads, buildView, chainOf } from "../lib/view";
 import { DetailsPanel } from "./DetailsPanel";
 import { DiffPanel } from "./DiffPanel";
@@ -23,6 +24,10 @@ interface Props {
   loading?: boolean;
   /** Renders the timeline, given diff mode's controls. */
   timeline: (compare: Compare) => ReactNode;
+  /** Another view (Changes, Incidents) shown instead of the map. */
+  page?: ReactNode;
+  /** Narrows the map to matching apps. */
+  search?: string;
   canRewindTo: (ts: string) => boolean;
   onRewind: (ts: string) => void;
   actions?: (entry: Entry) => ReactNode;
@@ -125,6 +130,18 @@ export function Workspace(props: Props) {
     return () => removeEventListener("keydown", esc);
   }, [setSelected]);
 
+  const mapView = useMemo(() => searchView(view, props.search ?? ""), [view, props.search]);
+
+  if (props.page) {
+    return (
+      <div className="app page">
+        {props.header(view)}
+        {props.notice}
+        {props.page}
+      </div>
+    );
+  }
+
   return (
     <div className="app">
       {props.header(view)}
@@ -135,7 +152,7 @@ export function Workspace(props: Props) {
         Read each row left to right: requests come in, a load balancer spreads them across the app's pods, and the app reads its config and storage.
       </p>
       <main className={`main${props.loading ? " loading" : ""}`}>
-        <MapView view={view} open={open} highlight={highlight} causeOf={causeOf} onToggle={toggle} onSelect={setSelected} onHover={setHovered} />
+        <MapView view={mapView} open={open} highlight={highlight} causeOf={causeOf} onToggle={toggle} onSelect={setSelected} onHover={setHovered} />
         <aside>
           <DetailsPanel id={selected} state={state} view={view} incident={listed ?? props.why ?? null} onSelect={show} />
           {base ? (
