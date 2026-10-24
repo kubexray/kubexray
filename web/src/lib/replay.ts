@@ -3,7 +3,8 @@
 // order and every operation are checked, like the Go reader does.
 import type { Change, IncidentsMessage } from "../gen/cause";
 import { type Edge, type Message, type Node, SchemaVersion } from "../gen/graph";
-import { MaxLine, MaxUncompressed, type ChangesMessage, type Header } from "../gen/replay";
+import type { Set as ChangeSet } from "../gen/feed";
+import { MaxLine, MaxUncompressed, type ChangesMessage, type FeedMessage, type Header } from "../gen/replay";
 import { type ClusterEvent, statusEvents } from "./events";
 import { applyOps, type ClusterState, fromSnapshot, validateDelta } from "./state";
 
@@ -14,6 +15,7 @@ export interface Replay {
   incidents: IncidentsMessage[];
   incidentTimes: number[]; // incidents' timestamps, for binary search
   changes: Change[];
+  feed: ChangeSet[]; // the change feed for the window (ADR-0012), newest first
   events: ClusterEvent[]; // status events from every delta
   checkpoints: { index: number; state: ClusterState }[];
 }
@@ -63,7 +65,7 @@ export async function loadReplay(data: Blob, limit = MaxUncompressed): Promise<R
   }
   const lines = text.split("\n").filter((l) => l.length > 0);
   let header: Header | null = null;
-  const r: Omit<Replay, "header"> = { messages: [], times: [], incidents: [], incidentTimes: [], changes: [], events: [], checkpoints: [] };
+  const r: Omit<Replay, "header"> = { messages: [], times: [], incidents: [], incidentTimes: [], changes: [], feed: [], events: [], checkpoints: [] };
   // One working state, changed in place; only checkpoints are copies, so
   // loading is linear in the file's size.
   let seq = -1;
@@ -117,6 +119,11 @@ export async function loadReplay(data: Blob, limit = MaxUncompressed): Promise<R
         const m = msg as IncidentsMessage;
         forward(r.incidentTimes, time(m.ts, `line ${i + 1}`));
         r.incidents.push({ ...m, incidents: Array.isArray(m.incidents) ? m.incidents : [], groups: Array.isArray(m.groups) ? m.groups : [] });
+        break;
+      }
+      case "feed": {
+        const sets = (msg as FeedMessage).sets;
+        r.feed = Array.isArray(sets) ? sets : [];
         break;
       }
       case "changes": {

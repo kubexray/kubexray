@@ -1,11 +1,16 @@
 package recorder
 
 import (
+	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/kubexray/kubexray/internal/graph"
 )
 
 func diskOptions(dir string) Options {
@@ -183,5 +188,36 @@ func TestStaleRunIsPrunedAfterAnOutage(t *testing.T) {
 	keyframe(t, r, snapshot(0, at(36000), "b"))
 	if from, _, _ := r.Bounds(); !from.Equal(at(36000)) {
 		t.Errorf("history starts %v, want the new run: the old one is entirely before the window", from.Sub(t0))
+	}
+}
+
+func TestWalkStreamsEveryEpoch(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	r := open(t, diskOptions(dir))
+	keyframe(t, r, snapshot(0, at(0), "a"))
+	record(t, r, delta(1, at(1), add("b")))
+	keyframe(t, r, snapshot(1, at(30), "a", "b"))
+	record(t, r, delta(2, at(31), add("c")))
+	if err := r.Close(); err != nil {
+		t.Fatal(err)
+	}
+	r = open(t, diskOptions(dir)) // restarted: a new sequence
+	keyframe(t, r, snapshot(1, at(60), "x"))
+	record(t, r, delta(2, at(61), add("y")))
+
+	var got []string
+	err := r.Walk(func(raw []byte) error {
+		var m graph.Message
+		if err := json.Unmarshal(raw, &m); err != nil {
+			return err
+		}
+		got = append(got, fmt.Sprintf("%s%d", m.Type[:1], m.Seq))
+		return nil
+	})
+	// One keyframe per epoch, then every delta: the second segment's own
+	// keyframe is skipped, its deltas continue the sequence.
+	if want := "s0 d1 d2 s1 d2"; err != nil || strings.Join(got, " ") != want {
+		t.Errorf("Walk = %q, %v; want %q", strings.Join(got, " "), err, want)
 	}
 }

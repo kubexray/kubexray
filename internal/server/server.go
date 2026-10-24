@@ -35,6 +35,7 @@ import (
 
 	"github.com/kubexray/kubexray/internal/alert"
 	"github.com/kubexray/kubexray/internal/cause"
+	"github.com/kubexray/kubexray/internal/feed"
 	"github.com/kubexray/kubexray/internal/graph"
 	"github.com/kubexray/kubexray/internal/recorder"
 	"github.com/kubexray/kubexray/internal/replay"
@@ -296,6 +297,7 @@ func (s *Server) Handler() http.Handler {
 		api.HandleFunc("GET /api/at", s.at)
 		api.HandleFunc("GET /api/why", s.why)
 		api.HandleFunc("GET /api/changes", s.changes)
+		api.HandleFunc("GET /api/feed", s.feed)
 		api.HandleFunc("GET /api/export", s.export)
 		if s.alerts.Enabled() {
 			api.HandleFunc("POST /api/alertmanager", s.alertmanager)
@@ -531,9 +533,8 @@ func (s *Server) history(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (s *Server) at(w http.ResponseWriter, r *http.Request) {
-	t, err := time.Parse(time.RFC3339Nano, r.URL.Query().Get("t"))
-	if err != nil {
-		http.Error(w, "t must be an RFC 3339 time", http.StatusBadRequest)
+	t, ok := timeParam(w, r, "t", time.Time{})
+	if !ok {
 		return
 	}
 	snap, err := s.rec.At(t)
@@ -628,6 +629,36 @@ func (s *Server) alertmanager(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusAccepted)
 }
 
+// timeParam reads an RFC 3339 query parameter, or def when it's absent
+// (a zero def makes it required). On a bad value it answers 400 and
+// reports false.
+func timeParam(w http.ResponseWriter, r *http.Request, name string, def time.Time) (time.Time, bool) {
+	v := r.URL.Query().Get(name)
+	if v == "" && !def.IsZero() {
+		return def, true
+	}
+	t, err := time.Parse(time.RFC3339Nano, v)
+	if err != nil {
+		http.Error(w, name+" must be an RFC 3339 time", http.StatusBadRequest)
+		return time.Time{}, false
+	}
+	return t, true
+}
+
+// feed serves the change feed since ?since= (default: a week), newest first.
+func (s *Server) feed(w http.ResponseWriter, r *http.Request) {
+	now := s.now()
+	since, ok := timeParam(w, r, "since", now.Add(-7*24*time.Hour))
+	if !ok {
+		return
+	}
+	sets := s.hub.Feed().Sets(since)
+	if sets == nil {
+		sets = []feed.Set{}
+	}
+	writeJSON(w, FeedResponse{Sets: sets, Now: now})
+}
+
 // changes lists who changed what since the recording began (cause.Changes).
 func (s *Server) changes(w http.ResponseWriter, _ *http.Request) {
 	from, _, ok := s.rec.Bounds()
@@ -651,18 +682,15 @@ func (s *Server) export(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	now := s.now()
-	from, to := first, now
-	q := r.URL.Query()
-	for name, dst := range map[string]*time.Time{"from": &from, "to": &to} {
-		if v := q.Get(name); v != "" {
-			t, err := time.Parse(time.RFC3339Nano, v)
-			if err != nil {
-				http.Error(w, name+" must be an RFC 3339 time", http.StatusBadRequest)
-				return
-			}
-			*dst = t
-		}
+	from, ok := timeParam(w, r, "from", first)
+	if !ok {
+		return
 	}
+	to, ok := timeParam(w, r, "to", now)
+	if !ok {
+		return
+	}
+	q := r.URL.Query()
 	if to.Before(from) {
 		http.Error(w, "to is before from", http.StatusBadRequest)
 		return

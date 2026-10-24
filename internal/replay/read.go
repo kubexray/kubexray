@@ -9,6 +9,7 @@ import (
 	"io"
 
 	"github.com/kubexray/kubexray/internal/cause"
+	"github.com/kubexray/kubexray/internal/feed"
 	"github.com/kubexray/kubexray/internal/graph"
 )
 
@@ -18,6 +19,7 @@ type File struct {
 	Messages  []graph.Message // a snapshot, then deltas
 	Incidents []cause.IncidentsMessage
 	Changes   []cause.Change
+	Feed      []feed.Set
 }
 
 // Read reads and validates an untrusted replay: size limits, schema version,
@@ -79,6 +81,12 @@ func read(r io.Reader, limit int64) (*File, error) {
 				return nil, fmt.Errorf("replay: line %d: %w", line, err)
 			}
 			f.Incidents = append(f.Incidents, m)
+		case MessageFeed:
+			var m FeedMessage
+			if err := json.Unmarshal(raw, &m); err != nil {
+				return nil, fmt.Errorf("replay: line %d: %w", line, err)
+			}
+			f.Feed = m.Sets
 		case MessageChanges:
 			var m ChangesMessage
 			if err := json.Unmarshal(raw, &m); err != nil {

@@ -19,6 +19,16 @@ packages:
     frontmatter: |
       import type * as graph from "./graph";
 
+  - path: "github.com/kubexray/kubexray/internal/feed"
+    output_path: "web/src/gen/feed.ts"
+    enum_style: "union"
+    exclude_files: ["rebuild.go", "tracker.go", "verdict.go"]
+    type_mappings:
+      graph.Change: "graph.Change"
+      graph.Origin: "graph.Origin"
+    frontmatter: |
+      import type * as graph from "./graph";
+
   - path: "github.com/kubexray/kubexray/internal/server"
     output_path: "web/src/gen/server.ts"
     enum_style: "union"
@@ -26,8 +36,10 @@ packages:
     type_mappings:
       cause.Incident: "cause.Incident"
       cause.Group: "cause.Group"
+      feed.Set: "feed.Set"
     frontmatter: |
       import type * as cause from "./cause";
+      import type * as feed from "./feed";
       import type * as graph from "./graph";
 
   - path: "github.com/kubexray/kubexray/internal/replay"
@@ -35,5 +47,7 @@ packages:
     exclude_files: ["anonymize.go", "write.go", "read.go"]
     type_mappings:
       cause.Change: "cause.Change"
+      feed.Set: "feed.Set"
     frontmatter: |
       import type * as cause from "./cause";
+      import type * as feed from "./feed";

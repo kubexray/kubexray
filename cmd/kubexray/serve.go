@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/kubexray/kubexray/internal/alert"
+	"github.com/kubexray/kubexray/internal/feed"
 	"github.com/kubexray/kubexray/internal/recorder"
 	"github.com/kubexray/kubexray/internal/server"
 	"github.com/kubexray/kubexray/internal/version"
@@ -115,6 +116,16 @@ func serve(ctx context.Context, args []string, stderr io.Writer) error {
 		name = "in-cluster"
 	}
 	hub := server.NewHub(server.MaxClients, server.ClientQueue)
+	// The change feed of what was recorded before this start (ADR-0012),
+	// rebuilt in the background while recording goes on.
+	go func() {
+		history := feed.New(feed.MaxSets)
+		if err := feed.Rebuild(history, rec.Walk); err != nil {
+			log.Warn("rebuilding the change feed from history", "err", err)
+			return
+		}
+		hub.Feed().Seed(history)
+	}()
 	srv, err := server.New(hub, rec, web.Assets(), log, server.Info{Cluster: name, Version: version.Version})
 	if err != nil {
 		return err

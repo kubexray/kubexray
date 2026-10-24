@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/kubexray/kubexray/internal/cause"
+	"github.com/kubexray/kubexray/internal/feed"
 	"github.com/kubexray/kubexray/internal/graph"
 )
 
@@ -60,6 +61,8 @@ func Write(ctx context.Context, w io.Writer, msgs [][]byte, opts Options) error 
 		state    *graph.State
 		checked  time.Time
 		lastSaid []byte
+		tracker  = feed.New(feed.MaxSets)
+		assessed time.Time
 	)
 	// analyze writes the incidents at ts if they changed since last written.
 	analyze := func(ts time.Time) error {
@@ -68,6 +71,12 @@ func Write(ctx context.Context, w io.Writer, msgs [][]byte, opts Options) error 
 		key, err := json.Marshal([]any{m.Incidents, m.Groups})
 		if err != nil {
 			return err
+		}
+		// Verdicts follow incidents, and rollouts settle: judge on changes
+		// and every recheck, not on every message.
+		if changed := !bytes.Equal(key, lastSaid); changed || ts.Sub(assessed) >= recheck {
+			tracker.Assess(state, m.Incidents, ts)
+			assessed = ts
 		}
 		if bytes.Equal(key, lastSaid) {
 			return nil
@@ -99,6 +108,7 @@ func Write(ctx context.Context, w io.Writer, msgs [][]byte, opts Options) error 
 		if err := catchUp(m.TS); err != nil {
 			return err
 		}
+		tracker.Observe(state, m)
 		var err error
 		if state, err = graph.Step(state, m); err != nil {
 			return fmt.Errorf("replay: message %d: %w", i, err)
@@ -117,6 +127,13 @@ func Write(ctx context.Context, w io.Writer, msgs [][]byte, opts Options) error 
 		return err
 	}
 	if err := analyze(opts.To); err != nil {
+		return err
+	}
+	sets := tracker.Sets(opts.From)
+	if sets == nil {
+		sets = []feed.Set{}
+	}
+	if err := emit(FeedMessage{V: graph.SchemaVersion, Type: MessageFeed, Sets: sets}); err != nil {
 		return err
 	}
 	changes := cause.Changes(state, opts.From, false)

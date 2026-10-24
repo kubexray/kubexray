@@ -467,6 +467,27 @@ func TestChanges(t *testing.T) {
 	}
 }
 
+func TestFeed(t *testing.T) {
+	t.Parallel()
+	f := start(t, 4)
+	f.g.UpsertNode(graph.Node{
+		ID: "ConfigMap/shop/cfg", Kind: "ConfigMap", Namespace: "shop", Name: "cfg",
+		Change: &graph.Change{At: time.Now(), By: "kubectl-create", Tool: "kubectl", Via: "create"},
+	})
+	delta, _ := f.g.Flush()
+	f.emit(delta, false)
+	var resp FeedResponse
+	if err := json.Unmarshal(f.do(req{path: "/api/feed", cookie: true}).body, &resp); err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Sets) != 1 || resp.Sets[0].Title != "ConfigMap cfg created" || resp.Sets[0].By.Via != "create" {
+		t.Errorf("feed = %+v", resp.Sets)
+	}
+	if got := f.status(req{path: "/api/feed?since=yesterday", cookie: true}); got != http.StatusBadRequest {
+		t.Errorf("a bad since = %d, want 400", got)
+	}
+}
+
 func TestExport(t *testing.T) {
 	t.Parallel()
 	f := start(t, 4)
