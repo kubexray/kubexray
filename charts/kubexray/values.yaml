@@ -45,6 +45,30 @@ retentionSizeMB: 1024
 # The cluster's name in shared replays. Default: "in-cluster".
 clusterName: ""
 
+# Where people open kubexray, for links in alerts. Default: the Ingress host
+# (https when it has TLS).
+publicURL: ""
+
+alerts:
+  # kubexray as an Alertmanager receiver (ADR-0011): firing alerts about an
+  # app are sent on with kubexray's diagnosis, the likely cause, who made the
+  # change and a link to the moment it started. Webhook URLs are credentials,
+  # so they come from Secrets. Point Alertmanager at kubexray with:
+  #
+  #   receivers:
+  #     - name: kubexray
+  #       webhook_configs:
+  #         - url: http://<release>-kubexray.<namespace>.svc/api/alertmanager
+  #           http_config:
+  #             authorization:
+  #               credentials_file: /etc/alertmanager/secrets/kubexray/token
+  slack:
+    existingSecret: ""  # a Secret holding a Slack incoming webhook URL
+    key: url
+  webhook:
+    existingSecret: ""  # a Secret holding a URL that receives JSON
+    key: url
+
 service:
   type: ClusterIP
   port: 80

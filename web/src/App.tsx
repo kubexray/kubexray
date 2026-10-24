@@ -90,6 +90,14 @@ function useWhy(id: string | null, enabled: boolean): Incident | null {
   return enabled && why?.id === id ? why.inc : null;
 }
 
+// A link can open a moment with an app selected (alerts link to the moment
+// an incident started, ADR-0011): ?t=<time>&app=<id>.
+const LINK = new URLSearchParams(location.search);
+function linkedMoment(): string | null {
+  const t = Date.parse(LINK.get("t") ?? "");
+  return Number.isFinite(t) ? new Date(t).toISOString() : null;
+}
+
 /** Status events are only seen while the page is open (ADR-0007). */
 const OPENED = new Date().toISOString();
 
@@ -100,7 +108,7 @@ export function App() {
   const stream = useStream();
   const history = usePoll<HistoryResponse>(fetchHistory, 5000);
   const changes = usePoll<Change[]>(fetchChanges, 10_000);
-  const [at, setAt] = useState<string | null>(null);
+  const [at, setAt] = useState<string | null>(linkedMoment);
   const { past, last } = usePast(at);
   const [selected, setSelected] = useState<{ id: string; app: string } | null>(null);
   const [sharing, setSharing] = useState<Entry | null>(null);
@@ -154,6 +162,7 @@ export function App() {
         at={at}
         loading={loading}
         why={why}
+        initialSelection={LINK.get("app")}
         onSelectionChange={onSelectionChange}
         canRewindTo={(ts) => !!history && Date.parse(ts) >= Date.parse(history.from)}
         onRewind={(ts) => setAt(new Date(Date.parse(ts) + 1000).toISOString())}

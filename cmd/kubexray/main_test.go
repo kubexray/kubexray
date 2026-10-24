@@ -51,6 +51,8 @@ func TestRunWithoutACluster(t *testing.T) {
 		{[]string{"serve", "--auth", "none", "--listen", "0.0.0.0:8080"}, "refusing to serve without authentication", ""},
 		{[]string{"serve", "--auth", "basic"}, `--auth must be "token" or "none"`, ""},
 		{[]string{"serve", "extra"}, "serve takes no arguments", ""},
+		{[]string{"serve", "--auth", "none", "--listen", "127.0.0.1:8080", "--public-url", "kubexray.example.com"}, "--public-url must be an http(s) URL", ""},
+		{[]string{"serve", "--auth", "none", "--listen", "127.0.0.1:8080", "--slack-webhook-file", "/no/such"}, "--slack-webhook-file", ""},
 	}
 	for _, tt := range tests {
 		var stdout, stderr strings.Builder
@@ -81,5 +83,32 @@ func TestReadToken(t *testing.T) {
 	}
 	if _, err := readToken(path); err == nil || !strings.Contains(err.Error(), "at least 32") {
 		t.Errorf("readToken(short) = %v", err)
+	}
+}
+
+func TestReadURL(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	write := func(name, content string) string {
+		p := filepath.Join(dir, name)
+		if err := os.WriteFile(p, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	if u, err := readURL(write("slack", " https://hooks.slack.com/services/T0/B0/x\n"), true); err != nil || u != "https://hooks.slack.com/services/T0/B0/x" {
+		t.Errorf("readURL(slack) = %q, %v", u, err)
+	}
+	if _, err := readURL(write("plain", "http://hooks.slack.com/x"), true); err == nil {
+		t.Error("an http Slack URL was accepted")
+	}
+	if u, err := readURL(write("hook", "http://receiver.monitoring.svc/kubexray"), false); err != nil || u == "" {
+		t.Errorf("readURL(in-cluster webhook) = %q, %v", u, err)
+	}
+	if _, err := readURL(write("bad", "secret-token-not-a-url"), false); err == nil || strings.Contains(err.Error(), "secret-token") {
+		t.Errorf("readURL(bad) = %v: want an error that doesn't echo the content", err)
+	}
+	if u, err := readURL("", true); err != nil || u != "" {
+		t.Errorf("readURL(none) = %q, %v", u, err)
 	}
 }

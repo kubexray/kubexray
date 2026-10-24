@@ -126,7 +126,7 @@ kubexray answers all three, free and open source, from a single binary on your l
 
 - [x] In-cluster mode via Helm: least-privilege read-only ClusterRole, recording persisted to a volume with size-based retention.
 - [x] Authentication for in-cluster access: bearer token or an auth proxy; no anonymous mode.
-- [ ] **Alert → replay:** when Prometheus Alertmanager fires, kubexray posts the likely cause, who made the change and a replay link to Slack or a webhook.
+- [x] **Alert → replay:** when Prometheus Alertmanager fires, kubexray posts the likely cause, who made the change and a replay link to Slack or a webhook.
 - [ ] Release engineering: GoReleaser (multi-arch binaries and images, Homebrew tap), cosign signatures, SBOM and provenance.
 - [ ] CI: envtest, an end-to-end run on kind, and Playwright UI screenshots.
 

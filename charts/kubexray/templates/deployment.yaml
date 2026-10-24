@@ -1,4 +1,8 @@
 {{- $proxy := eq .Values.auth.mode "proxy" }}
+{{- $publicURL := .Values.publicURL }}
+{{- if and (not $publicURL) .Values.ingress.enabled .Values.ingress.host }}
+{{- $publicURL = printf "%s://%s" (ternary "https" "http" (not (empty .Values.ingress.tls))) .Values.ingress.host }}
+{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -42,6 +46,15 @@ spec:
             {{- with .Values.clusterName }}
             - --cluster-name={{ . }}
             {{- end }}
+            {{- with $publicURL }}
+            - --public-url={{ . }}
+            {{- end }}
+            {{- if .Values.alerts.slack.existingSecret }}
+            - --slack-webhook-file=/etc/kubexray-alerts/slack/url
+            {{- end }}
+            {{- if .Values.alerts.webhook.existingSecret }}
+            - --webhook-url-file=/etc/kubexray-alerts/webhook/url
+            {{- end }}
             {{- if and .Values.ingress.enabled .Values.ingress.host }}
             - --allowed-host={{ .Values.ingress.host }}
             {{- if .Values.ingress.tls }}
@@ -66,6 +79,12 @@ spec:
             {{- if not $proxy }}
             - {name: token, mountPath: /etc/kubexray, readOnly: true}
             {{- end }}
+            {{- if .Values.alerts.slack.existingSecret }}
+            - {name: slack, mountPath: /etc/kubexray-alerts/slack, readOnly: true}
+            {{- end }}
+            {{- if .Values.alerts.webhook.existingSecret }}
+            - {name: webhook, mountPath: /etc/kubexray-alerts/webhook, readOnly: true}
+            {{- end }}
         {{- if $proxy }}
         - {{- toYaml .Values.auth.proxy.sidecar | nindent 10 }}
         {{- end }}
@@ -81,6 +100,18 @@ spec:
           secret:
             secretName: {{ include "kubexray.tokenSecret" . }}
             items: [{key: token, path: token}]
+        {{- end }}
+        {{- with .Values.alerts.slack }}
+        {{- if .existingSecret }}
+        - name: slack
+          secret: {secretName: {{ .existingSecret }}, items: [{key: {{ .key }}, path: url}]}
+        {{- end }}
+        {{- end }}
+        {{- with .Values.alerts.webhook }}
+        {{- if .existingSecret }}
+        - name: webhook
+          secret: {secretName: {{ .existingSecret }}, items: [{key: {{ .key }}, path: url}]}
+        {{- end }}
         {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector: {{- toYaml . | nindent 8 }}

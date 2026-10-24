@@ -32,6 +32,7 @@ import (
 
 	"github.com/coder/websocket"
 
+	"github.com/kubexray/kubexray/internal/alert"
 	"github.com/kubexray/kubexray/internal/cause"
 	"github.com/kubexray/kubexray/internal/graph"
 	"github.com/kubexray/kubexray/internal/recorder"
@@ -74,6 +75,15 @@ type Server struct {
 	replay []byte     // player mode: the one replay file served (kubexray play)
 	remote *Remote    // serve mode (kubexray serve): reachable over the network
 	tokens *tokenFile // serve mode with a token file
+
+	alerts    *alert.Notifier // serve mode: Alertmanager notifications (ADR-0011)
+	publicURL string          // where people open kubexray, for links in alerts
+}
+
+// SetAlerts makes the server an Alertmanager receiver that sends kubexray's
+// explanation to the notifier's destinations, linking to publicURL.
+func (s *Server) SetAlerts(n *alert.Notifier, publicURL string) {
+	s.alerts, s.publicURL = n, publicURL
 }
 
 // Remote configures serve mode (ADR-0010): the server runs in the cluster and
@@ -286,6 +296,9 @@ func (s *Server) Handler() http.Handler {
 		api.HandleFunc("GET /api/why", s.why)
 		api.HandleFunc("GET /api/changes", s.changes)
 		api.HandleFunc("GET /api/export", s.export)
+		if s.alerts.Enabled() {
+			api.HandleFunc("POST /api/alertmanager", s.alertmanager)
+		}
 	}
 	api.Handle("GET /", http.FileServerFS(s.assets))
 
@@ -326,7 +339,11 @@ func (s *Server) checkHost(next http.Handler) http.Handler {
 		}
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !ok(r.Host) {
+		// The check keeps cookies from reaching a rebound host name. Bearer
+		// clients (Alertmanager, scripts) send none, and may use any name,
+		// such as the in-cluster Service's; the token is still checked.
+		bearer := s.remote != nil && strings.HasPrefix(r.Header.Get("Authorization"), "Bearer ")
+		if !bearer && !ok(r.Host) {
 			http.Error(w, "unexpected host", http.StatusMisdirectedRequest)
 			return
 		}
@@ -551,6 +568,36 @@ func (s *Server) why(w http.ResponseWriter, r *http.Request) {
 func (s *Server) serveReplay(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/gzip")
 	_, _ = w.Write(s.replay)
+}
+
+// maxAlertPayload bounds an Alertmanager notification.
+const maxAlertPayload = 1 << 20
+
+// alertmanager receives Alertmanager's webhook and queues kubexray's
+// explanation of every firing alert about a known app (ADR-0011).
+func (s *Server) alertmanager(w http.ResponseWriter, r *http.Request) {
+	var n alert.Notification
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxAlertPayload)).Decode(&n); err != nil {
+		http.Error(w, "not an Alertmanager notification", http.StatusBadRequest)
+		return
+	}
+	now := s.now()
+	for _, a := range n.Alerts {
+		id := a.Target()
+		if a.Status != "firing" || id == "" {
+			continue // resolved, or not about an app
+		}
+		inc, err := s.hub.explain(id, now)
+		if err != nil {
+			continue // not an app kubexray knows
+		}
+		at := inc.Since
+		if at.IsZero() {
+			at = a.StartsAt
+		}
+		s.alerts.Queue(alert.Message{Alert: a, Incident: inc, Link: alert.Link(s.publicURL, at, inc.App)})
+	}
+	w.WriteHeader(http.StatusAccepted)
 }
 
 // changes lists who changed what since the recording began (cause.Changes).

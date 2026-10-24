@@ -7,10 +7,12 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/url"
 	"os"
 	"strings"
 	"time"
 
+	"github.com/kubexray/kubexray/internal/alert"
 	"github.com/kubexray/kubexray/internal/recorder"
 	"github.com/kubexray/kubexray/internal/server"
 	"github.com/kubexray/kubexray/internal/version"
@@ -41,6 +43,9 @@ func serve(ctx context.Context, args []string, stderr io.Writer) error {
 	retentionMB := fs.Int64("retention-size-mb", 1024, "disk budget for history, in MiB (with --data-dir)")
 	fs.BoolVar(&conn.noSecrets, "no-secrets", false, "don't watch Secrets, when kubexray isn't allowed to list them")
 	clusterName := fs.String("cluster-name", "", `the cluster's name in replays (default: the kubeconfig context, or "in-cluster")`)
+	publicURL := fs.String("public-url", "", "where people open kubexray, e.g. https://kubexray.example.com, for links in alerts")
+	slackFile := fs.String("slack-webhook-file", "", "file holding a Slack incoming webhook URL: send Alertmanager alerts there with the likely cause")
+	webhookFile := fs.String("webhook-url-file", "", "file holding a webhook URL: send Alertmanager alerts there as JSON")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -63,6 +68,19 @@ func serve(ctx context.Context, args []string, stderr io.Writer) error {
 	}
 	if err := remote.Check(); err != nil {
 		return err
+	}
+	slackURL, err := readURL(*slackFile, true)
+	if err != nil {
+		return fmt.Errorf("--slack-webhook-file: %w", err)
+	}
+	webhookURL, err := readURL(*webhookFile, false)
+	if err != nil {
+		return fmt.Errorf("--webhook-url-file: %w", err)
+	}
+	if *publicURL != "" {
+		if u, err := url.Parse(*publicURL); err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
+			return fmt.Errorf("--public-url must be an http(s) URL, got %q", *publicURL)
+		}
 	}
 	if *retention <= 0 || *retentionMB <= 0 {
 		return errors.New("--retention and --retention-size-mb must be positive")
@@ -103,6 +121,10 @@ func serve(ctx context.Context, args []string, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
+	if notifier := alert.NewNotifier(slackURL, webhookURL, log); notifier.Enabled() {
+		srv.SetAlerts(notifier, *publicURL)
+		go notifier.Run(ctx)
+	}
 	ln, err := srv.ListenRemote(ctx, remote)
 	if err != nil {
 		return fmt.Errorf("listening: %w", err)
@@ -119,6 +141,24 @@ func serve(ctx context.Context, args []string, stderr io.Writer) error {
 		from, _, _ := rec.Bounds()
 		log.Info("kubexray is serving", "addr", ln.Addr().String(), "cluster", name, "history_from", from, "secrets", !conn.noSecrets)
 	})
+}
+
+// readURL reads a destination URL from a file (a mounted Secret: the URL is
+// a credential). Slack's must be https.
+func readURL(path string, httpsOnly bool) (string, error) {
+	if path == "" {
+		return "", nil
+	}
+	b, err := os.ReadFile(path) //nolint:gosec // the operator's flag (a mounted Secret)
+	if err != nil {
+		return "", err
+	}
+	raw := strings.TrimSpace(string(b))
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" || (u.Scheme != "https" && (httpsOnly || u.Scheme != "http")) {
+		return "", errors.New("not a valid URL") // without echoing it: it's a credential
+	}
+	return raw, nil
 }
 
 // readToken reads the access token from a file (a mounted Secret) or the
