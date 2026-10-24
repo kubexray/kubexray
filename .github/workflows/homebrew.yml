@@ -1,0 +1,43 @@
+name: Homebrew
+
+# Updates the cask in kubexray/homebrew-tap when a release is published (not
+# while it's a draft, whose downloads don't exist yet). Skipped until the
+# HOMEBREW_TAP_TOKEN secret exists (docs/releasing.md).
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  cask:
+    if: ${{ !github.event.release.prerelease }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Render and push the cask
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+          GH_TOKEN: ${{ github.token }}
+          TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          if [ -z "$TAP_TOKEN" ]; then
+            echo "HOMEBREW_TAP_TOKEN isn't set; skipping the cask (docs/releasing.md)"
+            exit 0
+          fi
+          version="${TAG#v}"
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern checksums.txt
+          .github/homebrew/render.sh "$version" checksums.txt > kubexray.rb
+          git clone --depth 1 "https://x-access-token:${TAP_TOKEN}@github.com/kubexray/homebrew-tap.git" tap
+          mkdir -p tap/Casks
+          cp kubexray.rb tap/Casks/kubexray.rb
+          cd tap
+          git config user.name "kubexray release"
+          git config user.email "release@kubexray.com"
+          git add Casks/kubexray.rb
+          git diff --cached --quiet && { echo "the cask is already up to date"; exit 0; }
+          git commit -m "kubexray ${version}"
+          git push

@@ -149,3 +149,4 @@ Other commands:
 - [Contributing](CONTRIBUTING.md)
 - [Security policy](SECURITY.md) and [threat model](docs/threat-model.md)
 - [Architecture decisions](docs/adr/)
+- [Releasing](docs/releasing.md): how releases are built, signed and verified
