@@ -92,10 +92,16 @@ function useWhy(id: string | null, enabled: boolean): Incident | null {
 
 // A link can open a moment with an app selected (alerts link to the moment
 // an incident started, ADR-0011): ?t=<time>&app=<id>.
+// Read once, then dropped from the address bar so a reload shows live.
 const LINK = new URLSearchParams(location.search);
+if (LINK.has("t") || LINK.has("app")) history.replaceState(null, "", location.pathname);
 function linkedMoment(): string | null {
   const t = Date.parse(LINK.get("t") ?? "");
   return Number.isFinite(t) ? new Date(t).toISOString() : null;
+}
+function linkedApp(): { id: string; app: string } | null {
+  const id = LINK.get("app");
+  return id ? { id, app: id } : null; // links name apps, not pods
 }
 
 /** Status events are only seen while the page is open (ADR-0007). */
@@ -110,7 +116,7 @@ export function App() {
   const changes = usePoll<Change[]>(fetchChanges, 10_000);
   const [at, setAt] = useState<string | null>(linkedMoment);
   const { past, last } = usePast(at);
-  const [selected, setSelected] = useState<{ id: string; app: string } | null>(null);
+  const [selected, setSelected] = useState<{ id: string; app: string } | null>(linkedApp);
   const [sharing, setSharing] = useState<Entry | null>(null);
   const [drafting, setDrafting] = useState<Entry | null>(null);
 

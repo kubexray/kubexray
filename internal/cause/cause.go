@@ -169,11 +169,22 @@ var ErrNotAnApp = fmt.Errorf("not an app: kubexray explains deployments, statefu
 // Explain analyzes one app, healthy or not, regardless of the grace period.
 // A pod is explained through the app it belongs to.
 func Explain(st *graph.State, id string, opts Options) (Incident, error) {
+	return NewExplainer(st, opts)(id)
+}
+
+// NewExplainer returns Explain for many apps of one state, indexing the
+// state once.
+func NewExplainer(st *graph.State, opts Options) func(id string) (Incident, error) {
+	x := newIndex(st)
+	return func(id string) (Incident, error) { return x.explainID(id, opts) }
+}
+
+func (x *index) explainID(id string, opts Options) (Incident, error) {
+	st := x.st
 	n, ok := st.Nodes[id]
 	if !ok {
 		return Incident{}, fmt.Errorf("%s not found", id)
 	}
-	x := newIndex(st)
 	if n.Kind != "Pod" && !appKinds[n.Kind] {
 		return Incident{}, ErrNotAnApp
 	}

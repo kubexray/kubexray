@@ -236,6 +236,7 @@ func TestAlertmanagerReceiver(t *testing.T) {
 	}
 	const firing = `{"version":"4","status":"firing","alerts":[
 		{"status":"firing","fingerprint":"a1","labels":{"alertname":"KubePodCrashLooping","namespace":"shop","pod":"api-x"},"startsAt":"2026-10-24T14:00:00Z"},
+		{"status":"firing","fingerprint":"a4","labels":{"alertname":"KubeNodeNotReady","namespace":"monitoring","pod":"kube-state-metrics-x"}},
 		{"status":"resolved","fingerprint":"a2","labels":{"alertname":"KubePodCrashLooping","namespace":"shop","deployment":"api"}},
 		{"status":"firing","fingerprint":"a3","labels":{"alertname":"KubeNodeNotReady","node":"worker-2"}}]}`
 	// Without the token: refused (by the Host check, before authentication).
@@ -261,5 +262,14 @@ func TestAlertmanagerReceiver(t *testing.T) {
 	case body := <-got: // only the firing alert about an app is sent
 		t.Errorf("a second message was sent: %s", body)
 	case <-time.After(200 * time.Millisecond):
+	}
+}
+
+func TestServeModeCSPIgnoresMalformedHosts(t *testing.T) {
+	t.Parallel()
+	f := startRemote(t, Remote{Token: testToken})
+	resp := f.do(req{path: "/api/history", host: "x;script-src*", bearer: testToken})
+	if csp := resp.header.Get("Content-Security-Policy"); strings.Contains(csp, "script-src*") || !strings.Contains(csp, "connect-src 'self';") {
+		t.Errorf("CSP for a malformed Host = %q", csp)
 	}
 }

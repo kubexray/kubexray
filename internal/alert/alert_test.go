@@ -3,6 +3,7 @@ package alert
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -35,8 +36,9 @@ func TestTarget(t *testing.T) {
 			k, v, _ := strings.Cut(kv, "=")
 			a.Labels[k] = v
 		}
-		if got := a.Target(); got != want {
-			t.Errorf("Target(%s) = %q, want %q", labels, got, want)
+		got, byPod := a.Target()
+		if got != want || byPod != strings.HasPrefix(want, "Pod/") {
+			t.Errorf("Target(%s) = %q (by pod: %v), want %q", labels, got, byPod, want)
 		}
 	}
 }
@@ -118,7 +120,10 @@ func TestNotifierSendsOncePerAlert(t *testing.T) {
 			t.Fatal("nothing sent")
 		}
 	}
+	settle(n) // delivered, then move the clock
+	n.mu.Lock()
 	now = now.Add(Quiet + time.Minute)
+	n.mu.Unlock()
 	n.Queue(message()) // still firing half an hour later: sent again
 	<-slack.got
 	<-hook.got
@@ -139,15 +144,90 @@ func TestNotifierSendsOncePerAlert(t *testing.T) {
 func TestQueueDropsTheOldestWhenFull(t *testing.T) {
 	t.Parallel()
 	n := NewNotifier("http://127.0.0.1:1", "", slog.New(slog.DiscardHandler))
+	name := func(i int) string { return fmt.Sprintf("Alert%03d", i) }
 	for i := range QueueSize + 10 {
 		m := message()
-		m.Alert.Fingerprint = string(rune('a' + i))
+		m.Alert.Labels = map[string]string{"alertname": name(i)}
 		n.Queue(m) // nothing sends: the queue fills
 	}
 	if len(n.queue) != QueueSize {
 		t.Fatalf("queue holds %d, want %d", len(n.queue), QueueSize)
 	}
-	if first := <-n.queue; first.Alert.Fingerprint != string(rune('a'+10)) {
-		t.Errorf("oldest kept = %q, want the 11th: the first 10 were dropped", first.Alert.Fingerprint)
+	if first := <-n.queue; first.Alert.Name() != name(10) {
+		t.Errorf("oldest kept = %q, want the 11th: the first 10 were dropped", first.Alert.Name())
+	}
+	// A dropped alert wasn't delivered: when Alertmanager repeats it, it goes.
+	m := message()
+	m.Alert.Labels = map[string]string{"alertname": name(0)}
+	n.Queue(m)
+	if got := len(n.queue); got != QueueSize { // it took a slot (dropping the oldest again)
+		t.Errorf("a repeat of a dropped alert wasn't queued: queue holds %d", got)
+	}
+}
+
+func TestOneMessagePerAppAndRetriesAfterFailures(t *testing.T) {
+	t.Parallel()
+	var mu sync.Mutex
+	status, calls := http.StatusInternalServerError, 0
+	got := make(chan struct{}, 8)
+	dest := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		mu.Lock()
+		calls++
+		w.WriteHeader(status)
+		mu.Unlock()
+		got <- struct{}{}
+	}))
+	defer dest.Close()
+	n := NewNotifier("", dest.URL, slog.New(slog.DiscardHandler))
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go n.Run(ctx)
+	wait := func() {
+		t.Helper()
+		select {
+		case <-got:
+		case <-time.After(5 * time.Second):
+			t.Fatal("nothing sent")
+		}
+	}
+
+	// Two pods of one app fire the same alert: one message.
+	a, b := message(), message()
+	a.Alert.Fingerprint, b.Alert.Fingerprint = "pod-a", "pod-b"
+	n.Queue(a)
+	n.Queue(b)
+	wait()
+	settle(n)
+	// The destination failed: Alertmanager's repeat is sent again.
+	mu.Lock()
+	status = http.StatusOK
+	mu.Unlock()
+	n.Queue(a)
+	wait()
+	settle(n)
+	n.Queue(a) // delivered now: quiet
+	// Resolved, then firing again (a regression): sent at once.
+	n.Resolve(a.Alert.Name(), a.Incident.App)
+	n.Queue(a)
+	wait()
+	settle(n)
+	mu.Lock()
+	defer mu.Unlock()
+	if calls != 3 {
+		t.Errorf("destination called %d times, want 3 (failed, retried, regression)", calls)
+	}
+}
+
+// settle waits until the notifier has finished with everything queued: a
+// destination sees a message before the notifier records its delivery.
+func settle(n *Notifier) {
+	for {
+		n.mu.Lock()
+		idle := len(n.pending) == 0
+		n.mu.Unlock()
+		if idle {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
 }

@@ -27,6 +27,9 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- if not (has .Values.auth.mode (list "token" "proxy")) -}}
 {{- fail "auth.mode must be token or proxy: kubexray has no anonymous mode" -}}
 {{- end -}}
+{{- if and (eq .Values.auth.mode "proxy") (or .Values.alerts.slack.existingSecret .Values.alerts.webhook.existingSecret) -}}
+{{- fail "alerts need auth.mode token: behind an auth proxy, Alertmanager has no way to authenticate to kubexray" -}}
+{{- end -}}
 {{- if and (eq .Values.auth.mode "proxy") (not .Values.auth.proxy.sidecar) -}}
 {{- fail "auth.mode proxy needs auth.proxy.sidecar: the auth proxy container" -}}
 {{- end -}}

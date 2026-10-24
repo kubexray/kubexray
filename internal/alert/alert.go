@@ -43,20 +43,25 @@ func (a Alert) Name() string { return a.Labels["alertname"] }
 // Target is the app an alert is about, as a node ID, or "" when it names
 // none: namespace plus the first of deployment, statefulset, daemonset,
 // job_name or pod, as kube-state-metrics labels them. A pod is explained
-// through its app.
-func (a Alert) Target() string {
+// through its app. byPod says only a pod label named it: Prometheus can add
+// namespace and pod labels for the target it scraped, so a pod alone is
+// weaker evidence of what the alert is about.
+func (a Alert) Target() (id string, byPod bool) {
 	ns := a.Labels["namespace"]
 	if ns == "" {
-		return ""
+		return "", false
 	}
 	for _, k := range []struct{ label, kind string }{
-		{"deployment", "Deployment"}, {"statefulset", "StatefulSet"}, {"daemonset", "DaemonSet"}, {"job_name", "Job"}, {"pod", "Pod"},
+		{"deployment", "Deployment"}, {"statefulset", "StatefulSet"}, {"daemonset", "DaemonSet"}, {"job_name", "Job"},
 	} {
 		if name := a.Labels[k.label]; name != "" {
-			return graph.ID(k.kind, ns, name)
+			return graph.ID(k.kind, ns, name), false
 		}
 	}
-	return ""
+	if name := a.Labels["pod"]; name != "" {
+		return graph.ID("Pod", ns, name), true
+	}
+	return "", false
 }
 
 // Message is what's sent for one alert.
@@ -134,8 +139,8 @@ func who(c *graph.Change) string {
 	}
 }
 
-// Notifier sends messages to Slack and a webhook, at most once per alert per
-// Quiet, through a bounded queue.
+// Notifier sends messages to Slack and a webhook, at most once per alert and
+// app per Quiet, through a bounded queue.
 type Notifier struct {
 	slack, webhook string // destination URLs; either may be empty
 	quiet          time.Duration
@@ -143,49 +148,52 @@ type Notifier struct {
 	log            *slog.Logger
 	now            func() time.Time
 
-	mu    sync.Mutex
-	sent  map[string]time.Time // alert → when it was last sent
-	queue chan Message
+	mu      sync.Mutex
+	sent    map[string]time.Time // key → when it was last delivered
+	pending map[string]bool      // keys queued or being sent
+	queue   chan Message
 }
 
-// Quiet is how long an alert stays quiet after it was sent: Alertmanager
-// repeats notifications.
+// Quiet is how long an alert stays quiet after it was delivered:
+// Alertmanager repeats notifications.
 const Quiet = 30 * time.Minute
+
+// QueueSize bounds the messages waiting to be sent.
+const QueueSize = 64
 
 // NewNotifier returns a notifier for the destinations (either may be empty).
 func NewNotifier(slack, webhook string, log *slog.Logger) *Notifier {
 	return &Notifier{
 		slack: slack, webhook: webhook, quiet: Quiet, log: log, now: time.Now,
 		client: &http.Client{Timeout: 10 * time.Second},
-		sent:   map[string]time.Time{}, queue: make(chan Message, QueueSize),
+		sent:   map[string]time.Time{}, pending: map[string]bool{}, queue: make(chan Message, QueueSize),
 	}
 }
-
-// QueueSize bounds the messages waiting to be sent.
-const QueueSize = 64
 
 // Enabled reports whether any destination is configured.
 func (n *Notifier) Enabled() bool { return n != nil && (n.slack != "" || n.webhook != "") }
 
-// Queue schedules a message unless that alert was sent within Quiet. A full
-// queue drops the oldest message: alerts flood, and the newest matter most.
+// Key identifies what a message is about: an alert on an app. Every pod of a
+// broken app fires its own alert; they're one message.
+func Key(alertName, app string) string { return alertName + "/" + app }
+
+// Queue schedules a message unless the same alert on the same app was
+// delivered within Quiet or is already on its way. A full queue drops the
+// oldest message: alerts flood, and the newest matter most.
 func (n *Notifier) Queue(m Message) {
-	key := m.Alert.Fingerprint
-	if key == "" {
-		key = m.Alert.Name() + "/" + m.Incident.App
-	}
+	key := Key(m.Alert.Name(), m.Incident.App)
 	n.mu.Lock()
 	now := n.now()
-	if last, ok := n.sent[key]; ok && now.Sub(last) < n.quiet {
-		n.mu.Unlock()
-		return
-	}
-	n.sent[key] = now
-	for k, t := range n.sent { // forget old alerts
-		if now.Sub(t) > n.quiet {
+	for k, t := range n.sent { // forget old deliveries
+		if now.Sub(t) >= n.quiet {
 			delete(n.sent, k)
 		}
 	}
+	if _, quiet := n.sent[key]; quiet || n.pending[key] {
+		n.mu.Unlock()
+		return
+	}
+	n.pending[key] = true
 	n.mu.Unlock()
 	for {
 		select {
@@ -194,10 +202,29 @@ func (n *Notifier) Queue(m Message) {
 		default:
 			select {
 			case dropped := <-n.queue:
+				n.done(dropped, false) // not delivered: a repeat may try again
 				n.log.Warn("alert queue full; dropping the oldest", "alert", dropped.Alert.Name())
 			default:
 			}
 		}
+	}
+}
+
+// Resolve forgets that an alert on an app was delivered, so firing again
+// (a regression) is reported at once.
+func (n *Notifier) Resolve(alertName, app string) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	delete(n.sent, Key(alertName, app))
+}
+
+func (n *Notifier) done(m Message, delivered bool) {
+	key := Key(m.Alert.Name(), m.Incident.App)
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	delete(n.pending, key)
+	if delivered {
+		n.sent[key] = n.now()
 	}
 }
 
@@ -208,31 +235,33 @@ func (n *Notifier) Run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case m := <-n.queue:
-			n.send(ctx, m)
+			n.done(m, n.send(ctx, m))
 		}
 	}
 }
 
-func (n *Notifier) send(ctx context.Context, m Message) {
+// send delivers a message to every destination, and reports whether all
+// accepted it: if one failed, Alertmanager's next repeat tries again.
+func (n *Notifier) send(ctx context.Context, m Message) bool {
+	ok := true
 	if n.slack != "" {
-		if body, err := Slack(m); err == nil {
-			n.post(ctx, "slack", n.slack, body)
-		}
+		body, err := Slack(m)
+		ok = err == nil && n.post(ctx, "slack", n.slack, body) && ok
 	}
 	if n.webhook != "" {
-		if body, err := json.Marshal(m); err == nil {
-			n.post(ctx, "webhook", n.webhook, body)
-		}
+		body, err := json.Marshal(m)
+		ok = err == nil && n.post(ctx, "webhook", n.webhook, body) && ok
 	}
+	return ok
 }
 
-func (n *Notifier) post(ctx context.Context, dest, target string, body []byte) {
+func (n *Notifier) post(ctx context.Context, dest, target string, body []byte) bool {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, target, bytes.NewReader(body))
 	if err != nil {
 		n.log.Error("alert destination", "destination", dest, "err", err)
-		return
+		return false
 	}
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := n.client.Do(req)
@@ -243,10 +272,12 @@ func (n *Notifier) post(ctx context.Context, dest, target string, body []byte) {
 			err = uerr.Err
 		}
 		n.log.Warn("sending an alert", "destination", dest, "err", err)
-		return
+		return false
 	}
 	_ = resp.Body.Close()
 	if resp.StatusCode >= 300 {
 		n.log.Warn("sending an alert", "destination", dest, "status", resp.StatusCode)
+		return false
 	}
+	return true
 }

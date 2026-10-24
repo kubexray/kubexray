@@ -77,10 +77,8 @@ func serve(ctx context.Context, args []string, stderr io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("--webhook-url-file: %w", err)
 	}
-	if *publicURL != "" {
-		if u, err := url.Parse(*publicURL); err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
-			return fmt.Errorf("--public-url must be an http(s) URL, got %q", *publicURL)
-		}
+	if *publicURL != "" && !validURL(*publicURL, false) {
+		return fmt.Errorf("--public-url must be an http(s) URL, got %q", *publicURL)
 	}
 	if *retention <= 0 || *retentionMB <= 0 {
 		return errors.New("--retention and --retention-size-mb must be positive")
@@ -154,11 +152,17 @@ func readURL(path string, httpsOnly bool) (string, error) {
 		return "", err
 	}
 	raw := strings.TrimSpace(string(b))
-	u, err := url.Parse(raw)
-	if err != nil || u.Host == "" || (u.Scheme != "https" && (httpsOnly || u.Scheme != "http")) {
+	if !validURL(raw, httpsOnly) {
 		return "", errors.New("not a valid URL") // without echoing it: it's a credential
 	}
 	return raw, nil
+}
+
+// validURL reports whether raw is an absolute https URL, or http too unless
+// httpsOnly.
+func validURL(raw string, httpsOnly bool) bool {
+	u, err := url.Parse(raw)
+	return err == nil && u.Host != "" && (u.Scheme == "https" || (!httpsOnly && u.Scheme == "http"))
 }
 
 // readToken reads the access token from a file (a mounted Secret) or the

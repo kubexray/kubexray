@@ -192,3 +192,20 @@ func (h *Hub) explain(id string, now time.Time) (cause.Incident, error) {
 	}
 	return cause.Explain(h.state, id, cause.DefaultOptions(now))
 }
+
+// explainAll explains several apps of the same moment, indexing it once.
+func (h *Hub) explainAll(ids []string, now time.Time) (map[string]cause.Incident, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.state == nil {
+		return nil, errNotSynced
+	}
+	explain := cause.NewExplainer(h.state, cause.DefaultOptions(now))
+	out := map[string]cause.Incident{}
+	for _, id := range ids {
+		if inc, err := explain(id); err == nil {
+			out[id] = inc
+		}
+	}
+	return out, nil
+}

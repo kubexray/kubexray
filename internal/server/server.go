@@ -25,6 +25,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -358,10 +359,16 @@ func csp(host string) string {
 		"frame-ancestors 'none'; base-uri 'none'; form-action 'none'; object-src 'none'"
 }
 
+// validHost is a host name or address with an optional port.
+var validHost = regexp.MustCompile(`^(\[[0-9a-fA-F:.]+\]|[a-zA-Z0-9.-]+)(:[0-9]{1,5})?$`)
+
 func remoteCSP(host string) string {
+	connect := "'self'"
+	if host != "" {
+		connect += " ws://" + host + " wss://" + host
+	}
 	return "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; " +
-		"connect-src 'self' ws://" + host + " wss://" + host + "; " +
-		"frame-ancestors 'none'; base-uri 'none'; form-action 'none'; object-src 'none'"
+		"connect-src " + connect + "; frame-ancestors 'none'; base-uri 'none'; form-action 'none'; object-src 'none'"
 }
 
 func (s *Server) headers(next http.Handler) http.Handler {
@@ -369,7 +376,13 @@ func (s *Server) headers(next http.Handler) http.Handler {
 		h := w.Header()
 		policy := s.csp
 		if s.remote != nil {
-			policy = remoteCSP(r.Host) // the Host was checked against the allow-list
+			// Bearer clients skip the Host allow-list, so check its form
+			// before it goes into a header.
+			host := r.Host
+			if !validHost.MatchString(host) {
+				host = ""
+			}
+			policy = remoteCSP(host)
 		}
 		h.Set("Content-Security-Policy", policy)
 		h.Set("X-Content-Type-Options", "nosniff")
@@ -581,15 +594,30 @@ func (s *Server) alertmanager(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "not an Alertmanager notification", http.StatusBadRequest)
 		return
 	}
-	now := s.now()
+	ids := make([]string, 0, len(n.Alerts))
 	for _, a := range n.Alerts {
-		id := a.Target()
-		if a.Status != "firing" || id == "" {
-			continue // resolved, or not about an app
+		if id, _ := a.Target(); id != "" {
+			ids = append(ids, id)
 		}
-		inc, err := s.hub.explain(id, now)
-		if err != nil {
-			continue // not an app kubexray knows
+	}
+	incidents, err := s.hub.explainAll(ids, s.now()) // one index for the whole notification
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusServiceUnavailable) // Alertmanager retries
+		return
+	}
+	for _, a := range n.Alerts {
+		id, byPod := a.Target()
+		inc, known := incidents[id]
+		switch {
+		case !known:
+			continue // not about an app, or not one kubexray knows
+		case a.Status == "resolved":
+			s.alerts.Resolve(a.Name(), inc.App) // firing again soon is a regression worth a message
+			continue
+		case a.Status != "firing", byPod && inc.Healthy:
+			// A pod label alone may be the scraped target's, not the alert's
+			// subject: say nothing about an app that's fine.
+			continue
 		}
 		at := inc.Since
 		if at.IsZero() {
