@@ -20,7 +20,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math"
 	"os"
 	"path/filepath"
 	"slices"
@@ -152,11 +151,12 @@ func parseName(path string) (*segment, bool) {
 		}
 		n[i] = v
 	}
-	if n[2] > math.MaxInt32 {
-		return nil, false // not an epoch kubexray wrote
+	epoch, err := strconv.Atoi(parts[2])
+	if err != nil {
+		return nil, false
 	}
 	return &segment{
-		epoch:    int(n[2]),
+		epoch:    epoch,
 		keyframe: entry{seq: uint64(n[3]), ts: time.Unix(0, n[0]).UTC()}, //nolint:gosec // checked non-negative above
 		last:     entry{seq: uint64(n[4]), ts: time.Unix(0, n[1]).UTC()}, //nolint:gosec // checked non-negative above
 		file:     path,
