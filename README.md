@@ -70,6 +70,10 @@ Other ways to break it, each with the answer kubexray should give:
 | `bad-probe` | api gets a readiness probe on a path nginx doesn't serve | running but failing its readiness probe; very likely the probe added |
 | `unschedulable` | checkout's memory request is raised to 64Gi | the scheduler can't place it: nodes have too little memory; very likely the resources change |
 | `bad-config` | a key api reads is renamed in its Secret | can't create the container: the key is missing; very likely the Secret edit |
+| `scale-zero` | api is scaled to 0 while the web Ingress routes to it | scaled to zero with traffic still routed to it; very likely the scale |
+| `quota` | a 64Mi memory quota is added to the namespace, then api restarts | Kubernetes refuses its new pods; very likely the new ResourceQuota |
+
+`make e2e` runs every scenario and checks kubexray's answers; CI does the same on each change to the engine.
 
 ## Use it on your cluster
 

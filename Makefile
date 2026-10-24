@@ -92,7 +92,7 @@ demo: build ## Run the demo: a kind cluster with the shop app, and kubexray on i
 	./bin/kubexray --kubeconfig $(DEMO_KUBECONFIG)
 
 .PHONY: break
-break: ## Break the demo (SCENARIO=config, bad-image, node, oom, bad-probe, unschedulable or bad-config)
+break: ## Break the demo (SCENARIO=config, bad-image, node, oom, bad-probe, unschedulable, bad-config, scale-zero or quota)
 	scripts/demo.sh break
 
 .PHONY: fix

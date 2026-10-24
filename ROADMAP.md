@@ -111,10 +111,10 @@ kubexray answers all three, free and open source, from a single binary on your l
 **Goal:** explain more kinds of breakage, more precisely.
 
 - [x] Explanations for OOMKilled (with the limit; usage needs metrics, so kubexray suggests `kubectl top`), failed probes, unschedulable pods (resources, taints, affinity), pending PVCs, evictions, and pods refused by quotas or admission ([ADR-0009](docs/adr/0009-diagnosis.md)).
-- [ ] More causes: node failures, ConfigMap or Secret edits followed by crashes, scale-downs, quota changes.
-- [ ] Evidence links: every diagnosis shows the events, container states and log lines it is based on.
+- [x] More causes: node failures, ConfigMap or Secret edits followed by crashes, apps scaled to zero while an Ingress routes to them, quota changes, probes added, requests raised.
+- [x] Evidence: every diagnosis lists what it's based on: the scheduler's, kubelet's or controller's own message, exit codes, limits and requests. Logs and termination messages stay out by design (ADR-0009); kubexray suggests the `kubectl logs` command instead.
 - [x] Diff mode: pick two moments and see what changed between them.
-- [ ] Break-it scenarios: `make break SCENARIO=oom|bad-config|bad-probe|unschedulable`, each with an expected diagnosis in CI.
+- [x] Break-it scenarios: `make break SCENARIO=oom|bad-config|bad-probe|unschedulable|scale-zero|quota` and the v0.1 ones, each with an expected diagnosis checked on kind in CI (`make e2e`).
 
 **Done when:** every break-it scenario produces the right incident card and cause.
 

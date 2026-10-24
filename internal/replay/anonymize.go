@@ -137,13 +137,8 @@ func (a *anonymizer) node(n *graph.Node) {
 	if n.Parent != "" {
 		n.Parent = a.id(n.Parent)
 	}
-	if len(n.Labels) > 0 {
-		labels := make(map[string]string, len(n.Labels))
-		for k, v := range n.Labels {
-			labels[a.replace("label-key", k, "label")] = a.replace("label-value", v, "value")
-		}
-		n.Labels = labels
-	}
+	n.Labels = a.labels(n.Labels)
+	n.Selector = a.labels(n.Selector) // the same replacements, so it still matches
 	// Kubernetes messages name nodes, volumes and keys: dropped (ADR-0009).
 	n.Status.Message = ""
 	n.Status.Container = a.replace("container", n.Status.Container, "container")
@@ -155,6 +150,7 @@ func (a *anonymizer) node(n *graph.Node) {
 			c.Image = a.image(c.Image)
 			spec.Containers[i] = c
 		}
+		spec.Labels = a.labels(spec.Labels)
 		n.Spec = &spec
 	}
 	if n.Change != nil {
@@ -166,6 +162,17 @@ func (a *anonymizer) node(n *graph.Node) {
 		o.Name = a.replace("release", o.Name, "release")
 		n.Origin = &o
 	}
+}
+
+func (a *anonymizer) labels(in map[string]string) map[string]string {
+	if len(in) == 0 {
+		return in
+	}
+	out := make(map[string]string, len(in))
+	for k, v := range in {
+		out[a.replace("label-key", k, "label")] = a.replace("label-value", v, "value")
+	}
+	return out
 }
 
 func (a *anonymizer) edge(e *graph.Edge) {

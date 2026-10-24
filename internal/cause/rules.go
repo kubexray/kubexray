@@ -37,7 +37,7 @@ func (a *analysis) inWindow(t time.Time) bool {
 }
 
 func (a *analysis) causes() []Cause {
-	cs := slices.Concat(a.rollout(), a.appChange(), a.dependencies(), a.nodes())
+	cs := slices.Concat(a.rollout(), a.appChange(), a.dependencies(), a.nodes(), a.quota())
 
 	start := a.inc.Since
 	slices.SortStableFunc(cs, func(p, q Cause) int {
@@ -524,7 +524,10 @@ func nextSteps(inc Incident, app graph.Node) []Step {
 	case KindNode:
 		_, name := kindName(top.Object)
 		steps = append(steps, Step{Command: "kubectl describe node " + name, Note: "the node's conditions and events"})
-	case KindRestart, KindChange:
+	case KindQuota:
+		_, name := kindName(top.Object)
+		steps = append(steps, Step{Command: fmt.Sprintf("kubectl -n %s describe resourcequota %s", ns, name), Note: "what's used, and the limit"})
+	case KindRestart, KindChange, KindScale:
 	}
 	return steps
 }
