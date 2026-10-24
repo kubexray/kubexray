@@ -1,15 +1,26 @@
 name: Release check
 
 # The release pipeline is tested before a tag needs it: a snapshot build of
-# every binary and SBOM, and the multi-arch image, without publishing.
+# every binary and SBOM, the multi-arch image, the chart package and the
+# Homebrew cask, without publishing. Signing and attestations need a real
+# release's identity, so they only run on tags.
 on:
   pull_request:
     paths: &paths
       - ".goreleaser.yaml"
       - ".github/workflows/release.yml"
       - ".github/workflows/release-check.yml"
+      - ".github/workflows/homebrew.yml"
+      - ".github/homebrew/**"
       - "Dockerfile"
+      - ".dockerignore"
+      - "Makefile"
       - "go.mod"
+      - "go.sum"
+      - "charts/**"
+      - "web/package.json"
+      - "web/package-lock.json"
+      - "web/.nvmrc"
   push:
     branches: [main]
     paths: *paths
@@ -46,6 +57,19 @@ jobs:
           tar -xzf dist/kubexray_*_linux_amd64.tar.gz -C dist kubexray
           dist/kubexray version
           ls dist/*.sbom.json
+      - name: The Homebrew cask renders from the checksums
+        run: |
+          version="$(sed -n 's/.*kubexray_\(.*\)_linux_amd64.tar.gz$/\1/p' dist/checksums.txt)"
+          .github/homebrew/render.sh "$version" dist/checksums.txt > dist/kubexray.rb
+          cat dist/kubexray.rb
+          ruby -c dist/kubexray.rb
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: v4.3.0
+      - name: The chart packages
+        run: |
+          helm lint --strict charts/kubexray
+          helm package charts/kubexray --version 0.0.0-check --app-version 0.0.0-check --destination dist
 
   image:
     runs-on: ubuntu-latest

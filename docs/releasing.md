@@ -4,8 +4,9 @@ A release is a version tag. Pushing it runs [the release workflow](../.github/wo
 
 1. builds binaries for Linux, macOS and Windows (amd64 and arm64) with the UI embedded, writes an SPDX SBOM per archive, signs `checksums.txt` with cosign (keyless, through GitHub's OIDC identity), records build provenance, and creates a **draft** GitHub release with a changelog
 2. builds the multi-arch image `ghcr.io/kubexray/kubexray:<version>` with an SBOM and provenance, signs it with cosign, and attests it
-3. packages the Helm chart at the same version, pushes it to `oci://ghcr.io/kubexray/charts/kubexray`, and signs it
-4. updates the Homebrew cask in `kubexray/homebrew-tap`, once that's set up (below)
+3. packages the Helm chart at the same version, pushes it to `oci://ghcr.io/kubexray/charts/kubexray`, signs it, and attests it
+
+Images and the chart are published only if the binaries built. When the draft is published, [the Homebrew workflow](../.github/workflows/homebrew.yml) updates the cask in `kubexray/homebrew-tap` from the release's checksums, once that's set up (below). It waits for publishing so the cask never points at downloads that don't exist yet.
 
 Nothing in the GitHub release is visible until a maintainer publishes the draft.
 
@@ -35,12 +36,12 @@ From the next release on, `brew install --cask kubexray/tap/kubexray` works. Wit
 
 ```sh
 cosign verify-blob --bundle checksums.txt.sigstore.json \
-  --certificate-identity-regexp '^https://github.com/kubexray/kubexray/' \
+  --certificate-identity-regexp '^https://github.com/kubexray/kubexray/.github/workflows/release.yml@refs/tags/v' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com checksums.txt
 sha256sum -c checksums.txt --ignore-missing
 
 cosign verify ghcr.io/kubexray/kubexray:0.4.0 \
-  --certificate-identity-regexp '^https://github.com/kubexray/kubexray/' \
+  --certificate-identity-regexp '^https://github.com/kubexray/kubexray/.github/workflows/release.yml@refs/tags/v' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 
 gh attestation verify kubexray_0.4.0_linux_amd64.tar.gz --repo kubexray/kubexray

@@ -1,7 +1,8 @@
 # Release builds (ADR-0002): binaries for Linux, macOS and Windows, with the
 # web UI embedded, SBOMs, a cosign signature over the checksums, and a draft
 # GitHub release that a maintainer reviews and publishes. Images and the Helm
-# chart are built by the release workflow (.github/workflows/release.yml).
+# chart are built by the release workflow (.github/workflows/release.yml), the
+# Homebrew cask once the release is published (.github/workflows/homebrew.yml).
 version: 2
 project_name: kubexray
 
@@ -42,32 +43,12 @@ signs:
   # Keyless (Sigstore): the signature proves the checksums came from this
   # repository's release workflow. Verify with:
   #   cosign verify-blob --bundle checksums.txt.sigstore.json \
-  #     --certificate-identity-regexp '^https://github.com/kubexray/kubexray/' \
+  #     --certificate-identity-regexp '^https://github.com/kubexray/kubexray/.github/workflows/release.yml@refs/tags/v' \
   #     --certificate-oidc-issuer https://token.actions.githubusercontent.com checksums.txt
   - cmd: cosign
     artifacts: checksum
     signature: "${artifact}.sigstore.json"
     args: [sign-blob, "--bundle=${signature}", "${artifact}", --yes]
-
-homebrew_casks:
-  - name: kubexray
-    repository:
-      owner: kubexray
-      name: homebrew-tap
-      token: '{{ envOrDefault "HOMEBREW_TAP_TOKEN" "" }}'
-    homepage: https://github.com/kubexray/kubexray
-    description: The flight recorder for your Kubernetes cluster
-    license: MIT
-    # The binary isn't notarized by Apple: clear the quarantine flag macOS
-    # sets on downloads, as GoReleaser documents for casks.
-    hooks:
-      post:
-        install: |
-          if system_command("/usr/bin/xattr", args: ["-h"]).exit_status == 0
-            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/kubexray"]
-          end
-    # Until the tap repository and its token exist, the cask isn't published.
-    skip_upload: '{{ if envOrDefault "HOMEBREW_TAP_TOKEN" "" }}false{{ else }}true{{ end }}'
 
 changelog:
   use: github
@@ -88,5 +69,5 @@ release:
   prerelease: auto
   name_template: "kubexray {{ .Version }}"
   footer: |
-    **Verify**: `cosign verify-blob --bundle checksums.txt.sigstore.json --certificate-identity-regexp '^https://github.com/kubexray/kubexray/' --certificate-oidc-issuer https://token.actions.githubusercontent.com checksums.txt`, then `sha256sum -c checksums.txt`.
+    **Verify**: `cosign verify-blob --bundle checksums.txt.sigstore.json --certificate-identity-regexp '^https://github.com/kubexray/kubexray/.github/workflows/release.yml@refs/tags/v' --certificate-oidc-issuer https://token.actions.githubusercontent.com checksums.txt`, then `sha256sum -c checksums.txt --ignore-missing`.
     Images: `ghcr.io/kubexray/kubexray:{{ .Version }}` (signed; verify with `cosign verify`). Helm chart: `oci://ghcr.io/kubexray/charts/kubexray`.
