@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -44,6 +46,11 @@ func TestRunWithoutACluster(t *testing.T) {
 		{[]string{"changes", "--since", "-1h"}, "--since must be positive", ""},
 		{[]string{"dump", "--history", "0s"}, "--history must be positive", ""},
 		{[]string{"dump", "--history-max-mb", "0"}, "--history-max-mb must be between", ""},
+		{[]string{"serve", "--token-file", "/no/such/token"}, "reading the token", ""},
+		{[]string{"serve", "--auth", "none"}, "refusing to serve without authentication on :8080", ""},
+		{[]string{"serve", "--auth", "none", "--listen", "0.0.0.0:8080"}, "refusing to serve without authentication", ""},
+		{[]string{"serve", "--auth", "basic"}, `--auth must be "token" or "none"`, ""},
+		{[]string{"serve", "extra"}, "serve takes no arguments", ""},
 	}
 	for _, tt := range tests {
 		var stdout, stderr strings.Builder
@@ -56,5 +63,23 @@ func TestRunWithoutACluster(t *testing.T) {
 		case !strings.Contains(stdout.String(), tt.stdout):
 			t.Errorf("run(%v) stdout = %q, want it to contain %q", tt.args, stdout.String(), tt.stdout)
 		}
+	}
+}
+
+func TestReadToken(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "token")
+	want := "test-token-" + strings.Repeat("a", 32)
+	if err := os.WriteFile(path, []byte("  "+want+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if tok, err := readToken(path); err != nil || tok != want {
+		t.Errorf("readToken = %q, %v; want the trimmed token", tok, err)
+	}
+	if err := os.WriteFile(path, []byte("short"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readToken(path); err == nil || !strings.Contains(err.Error(), "at least 32") {
+		t.Errorf("readToken(short) = %v", err)
 	}
 }

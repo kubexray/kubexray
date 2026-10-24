@@ -12,6 +12,8 @@ import (
 	"fmt"
 	"log/slog"
 	"maps"
+	"slices"
+	"strings"
 	"sync"
 
 	corev1 "k8s.io/api/core/v1"
@@ -37,6 +39,8 @@ type Watcher struct {
 	pods     corelisters.PodLister
 	services corelisters.ServiceLister
 
+	noSecrets bool // see WithoutSecrets
+
 	// Informer handlers run concurrently; mu serialises graph updates so the
 	// edge bookkeeping below stays consistent.
 	mu sync.Mutex
@@ -45,6 +49,15 @@ type Watcher struct {
 	// node IDs for edges derived from an object itself, and selectsKey(id)
 	// for a Service's selector edges.
 	owned map[string]map[string]graph.Edge
+}
+
+// WithoutSecrets stops the watcher from listing Secrets, for clusters where
+// kubexray isn't granted that (RBAC can't limit it to metadata, ADR-0010).
+// Pods' references to Secrets are dropped too: with Secrets unknown, every
+// one would look missing.
+func (w *Watcher) WithoutSecrets() *Watcher {
+	w.noSecrets = true
+	return w
 }
 
 // New returns a Watcher that writes into g. Call Start to begin watching.
@@ -88,7 +101,9 @@ func (w *Watcher) Start(ctx context.Context) error {
 	track(register(w, KindJob, w.typed.Batch().V1().Jobs().Informer(), mapJob))
 	track(register(w, KindIngress, w.typed.Networking().V1().Ingresses().Informer(), mapIngress))
 	track(register(w, KindConfigMap, w.meta.ForResource(corev1.SchemeGroupVersion.WithResource("configmaps")).Informer(), mapMetadata(KindConfigMap)))
-	track(register(w, KindSecret, w.meta.ForResource(corev1.SchemeGroupVersion.WithResource("secrets")).Informer(), mapMetadata(KindSecret)))
+	if !w.noSecrets {
+		track(register(w, KindSecret, w.meta.ForResource(corev1.SchemeGroupVersion.WithResource("secrets")).Informer(), mapMetadata(KindSecret)))
+	}
 	track(handle(podInformer.Informer(), w.upsertPod, w.removePod))
 	track(handle(serviceInformer.Informer(), w.upsertService, w.removeService))
 	if err := errors.Join(errs...); err != nil {
@@ -254,6 +269,9 @@ func selector(svc *corev1.Service) labels.Selector {
 
 func (w *Watcher) upsertPod(old, pod *corev1.Pod) {
 	n, edges := mapPod(pod)
+	if w.noSecrets {
+		edges = slices.DeleteFunc(edges, func(e graph.Edge) bool { return strings.HasPrefix(e.To, KindSecret+"/") })
+	}
 
 	w.mu.Lock()
 	defer w.mu.Unlock()

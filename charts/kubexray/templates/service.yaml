@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "kubexray.fullname" . }}
+  labels: {{- include "kubexray.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.service.type }}
+  selector: {{- include "kubexray.selector" . | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.service.port }}
+      targetPort: {{ if eq .Values.auth.mode "proxy" }}{{ .Values.auth.proxy.port }}{{ else }}8080{{ end }}

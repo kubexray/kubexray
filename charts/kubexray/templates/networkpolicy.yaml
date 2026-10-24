@@ -1,0 +1,20 @@
+{{- if .Values.networkPolicy.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "kubexray.fullname" . }}
+  labels: {{- include "kubexray.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels: {{- include "kubexray.selector" . | nindent 6 }}
+  policyTypes: [Ingress]
+  ingress:
+    - ports:
+        - port: {{ if eq .Values.auth.mode "proxy" }}{{ .Values.auth.proxy.port }}{{ else }}8080{{ end }}
+      from:
+        {{- if .Values.networkPolicy.from }}
+        {{- toYaml .Values.networkPolicy.from | nindent 8 }}
+        {{- else }}
+        - podSelector: {}
+        {{- end }}
+{{- end }}

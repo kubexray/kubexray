@@ -1,0 +1,86 @@
+# kubexray in the cluster (ADR-0010): records around the clock, keeps history
+# on disk, and serves the UI behind authentication. There's no anonymous mode.
+
+image:
+  repository: ghcr.io/kubexray/kubexray
+  tag: ""  # default: the chart's appVersion
+  pullPolicy: IfNotPresent
+
+auth:
+  # token: every request needs the token from the kubexray Secret. Open
+  #   /?token=<token> once in a browser; API clients send it as a Bearer token.
+  # proxy: kubexray listens on 127.0.0.1 inside the pod, and the sidecar below
+  #   (oauth2-proxy or similar) is the only way in.
+  mode: token
+  # A Secret with the token under the key "token" (at least 32 characters).
+  # Empty: the chart generates one and keeps it across helm upgrades. With
+  # GitOps (Argo CD, Flux) or helm template, which can't look up the existing
+  # Secret, set your own here. kubexray follows changes to the token.
+  existingSecret: ""
+  proxy:
+    # The auth proxy container, used when mode is proxy. It must forward to
+    # http://127.0.0.1:8080 and listen on proxy.port.
+    sidecar: {}
+    port: 4180
+
+rbac:
+  # Watching Secrets (as metadata only) lets kubexray report Secret edits and
+  # missing Secrets as causes, but RBAC can't limit "list secrets" to
+  # metadata: it grants read access to every Secret's contents. Off by default.
+  secrets: false
+
+persistence:
+  # History on a volume, so it survives restarts. Without it, history lives in
+  # the pod's memory and starts over when the pod does.
+  enabled: true
+  size: 2Gi
+  storageClass: ""
+  accessModes: [ReadWriteOnce]
+
+# How long history is kept, and the disk it may use (keep it below the volume
+# size). The oldest history goes first.
+retention: 168h
+retentionSizeMB: 1024
+
+# The cluster's name in shared replays. Default: "in-cluster".
+clusterName: ""
+
+service:
+  type: ClusterIP
+  port: 80
+
+ingress:
+  # Exposing kubexray: put it behind TLS. The token still protects it.
+  enabled: false
+  className: ""
+  host: ""
+  annotations: {}
+  tls: []  # e.g. [{secretName: kubexray-tls, hosts: [kubexray.example.com]}]
+
+networkPolicy:
+  # Allow traffic to kubexray's port only from these sources (NetworkPolicy
+  # "from" entries). Empty with enabled: true allows only pods in the same
+  # namespace.
+  enabled: false
+  from: []
+
+resources:
+  requests: {cpu: 50m, memory: 128Mi}
+  limits: {memory: 512Mi}
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  fsGroup: 65532
+  seccompProfile: {type: RuntimeDefault}
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities: {drop: [ALL]}
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+podAnnotations: {}

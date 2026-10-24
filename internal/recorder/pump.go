@@ -3,6 +3,7 @@ package recorder
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -99,6 +100,10 @@ func (p *pump) history(err error) {
 	if err == nil {
 		return
 	}
-	p.log.Warn("history reset; rewind restarts from now", "err", err)
-	p.rec.Reset()
+	if errors.Is(err, ErrNotSaved) {
+		p.log.Error("history isn't being saved to disk; it's kept in memory", "err", err)
+		return
+	}
+	p.log.Warn("history broke; recording continues from the next keyframe", "err", err)
+	p.rec.Break()
 }

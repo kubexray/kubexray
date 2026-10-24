@@ -1,0 +1,18 @@
+kubexray is recording {{ if .Values.persistence.enabled }}to a volume ({{ .Values.retention }} or {{ .Values.retentionSizeMB }} MiB of history){{ else }}in memory (history starts over when the pod restarts){{ end }}.
+{{- if eq .Values.auth.mode "token" }}
+
+Open it:
+
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "kubexray.fullname" . }} 8080:{{ .Values.service.port }}
+  TOKEN=$(kubectl -n {{ .Release.Namespace }} get secret {{ include "kubexray.tokenSecret" . }} -o jsonpath='{.data.token}' | base64 -d)
+  open "http://localhost:8080/?token=$TOKEN"
+
+Scripts can send the token as a header: curl -H "Authorization: Bearer $TOKEN" http://localhost:8080/api/history
+{{- else }}
+
+kubexray listens on 127.0.0.1 inside its pod; your auth proxy sidecar is the way in.
+{{- end }}
+{{- if not .Values.rbac.secrets }}
+
+Secrets aren't watched (rbac.secrets: false), so Secret edits won't show up as causes.
+{{- end }}
