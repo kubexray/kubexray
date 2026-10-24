@@ -9,15 +9,26 @@ const STATUS: Record<StreamStatus | "replay", string> = {
   replay: "Replay",
 };
 
+/** The three views: the map, the change feed, and incidents. */
+export type View = "map" | "changes" | "incidents";
+
 interface Props {
   view: NamespaceView[];
   status: StreamStatus | "replay";
   rewound?: boolean;
   /** What's being shown, e.g. which cluster a replay is from. */
   label?: string;
+  nav?: { active: View; onChange: (v: View) => void; incidents: number };
+  search?: { value: string; onChange: (q: string) => void };
 }
 
-export function Header({ view, status, rewound = false, label }: Props) {
+const VIEWS: { id: View; label: string }[] = [
+  { id: "map", label: "Map" },
+  { id: "changes", label: "Changes" },
+  { id: "incidents", label: "Incidents" },
+];
+
+export function Header({ view, status, rewound = false, label, nav, search }: Props) {
   const ws = allWorkloads(view);
   const count = (h: string) => ws.filter(({ w }) => workloadHealth(w) === h).length;
   const pods = ws.reduce((n, { w }) => n + w.pods.length, 0);
@@ -32,6 +43,26 @@ export function Header({ view, status, rewound = false, label }: Props) {
         <span className={`status ${rewound ? "rewound" : status}`}>{rewound ? "Rewound" : STATUS[status]}</span>
         {label && <span className="label">{label}</span>}
       </div>
+      {nav && (
+        <nav className="views" aria-label="Views">
+          {VIEWS.map((v) => (
+            <button key={v.id} type="button" aria-current={nav.active === v.id ? "page" : undefined} className={nav.active === v.id ? "on" : ""} onClick={() => nav.onChange(v.id)}>
+              {v.label}
+              {v.id === "incidents" && nav.incidents > 0 && <span className="views-count">{nav.incidents}</span>}
+            </button>
+          ))}
+        </nav>
+      )}
+      {search && (
+        <label className="search">
+          <svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+            <circle cx="11" cy="11" r="7" />
+            <path d="m20 20-3.5-3.5" />
+          </svg>
+          <span className="sr-only">Search apps and changes</span>
+          <input type="search" value={search.value} placeholder="Search apps, people, images…" onChange={(e) => search.onChange(e.target.value)} />
+        </label>
+      )}
       <div className="counts" aria-live="polite">
         <span>
           <i className="dot ok" />

@@ -119,6 +119,18 @@ Likely cause: ConfigMap checkout-config was edited by kubectl patch at 13:59:00 
 Open in kubexray at the moment it started
 ```
 
+## Every change, and what it did
+
+The **Changes** view lists every change to the cluster, newest first, and what each one did once things settled ([ADR-0012](docs/adr/0012-change-feed.md)):
+
+```text
+5:17 PM  ConfigMap checkout-config edited     by kubectl patch       Fixed it     checkout healthy 12s later
+5:15 PM  ConfigMap checkout-config edited     by kubectl patch       Broke checkout   degraded 45s later · over at 5:18 PM
+5:15 PM  api scaled 3 → 4 replicas            by kubectl scale       Healthy      settled in 1m 0s
+```
+
+A Helm upgrade or Argo CD sync is one line with its version ("Helm upgrade shop 1.4.0 → 2.0.0"). Hand edits to objects Helm or a GitOps tool manages are flagged as **drift**. When you come back, it tells you what happened **since you last looked**. Filter by what broke, drift or what's still settling, search by app, person or image, and open a change to rewind the map to just before it.
+
 ## Compare two moments
 
 Press **Compare** on the timeline, then move to another moment: the side panel lists what changed in between. You see what was added or removed, new images, resources and probes, revisions, replicas and readiness, pods replaced or failing, and who edited a ConfigMap or Secret (never its contents). It works live, rewound and in replays.

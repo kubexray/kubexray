@@ -28,12 +28,12 @@ test("the demo incident explains itself", async ({ page }) => {
   await shot(page, "incident");
 });
 
-test("the timeline goes back to before the incident", async ({ page }) => {
-  await openDemo(page);
+test("the timeline goes back to before the incident, and on past its end", async ({ page }) => {
+  await openDemo(page); // lands on the incident
   await seek(page, "min");
   await expect(page.getByText("No incidents at this moment")).toBeVisible();
-  await seek(page, "max");
-  await expect(page.locator("section.incident h2")).toHaveText("checkout is degraded");
+  await seek(page, "max"); // after the edit back: recovered
+  await expect(page.getByText("No incidents at this moment")).toBeVisible();
 });
 
 test("compare shows what changed between two moments", async ({ page }) => {
@@ -77,4 +77,38 @@ test("dark mode", async ({ page }) => {
   await page.emulateMedia({ colorScheme: "dark" });
   await openDemo(page);
   await shot(page, "incident-dark");
+});
+
+test("the change feed says what each change did", async ({ page }) => {
+  await openDemo(page);
+  await page.getByRole("button", { name: "Changes", exact: true }).click();
+  const cards = page.locator(".feed-card");
+  await expect(cards).toHaveCount(3);
+  await expect(cards.filter({ hasText: "api scaled 3 → 4 replicas" }).locator(".verdict")).toHaveText("Healthy");
+  await expect(cards.filter({ hasText: "Broke checkout" })).toContainText("ConfigMap checkout-config edited");
+  await expect(cards.filter({ hasText: "Fixed it" })).toContainText("checkout healthy");
+  await shot(page, "changes");
+
+  await page.getByRole("button", { name: /^Broke something/ }).click();
+  await expect(cards).toHaveCount(1);
+  await page.getByRole("button", { name: /^All changes/ }).click();
+  await page.getByPlaceholder("Search apps, people, images…").fill("api");
+  await expect(cards).toHaveCount(1);
+  await page.getByPlaceholder("Search apps, people, images…").fill("");
+
+  // The change that broke checkout, opened, then rewound to on the map.
+  await cards.filter({ hasText: "Broke checkout" }).getByRole("button", { name: "Details" }).click();
+  await expect(page.locator("dialog.feed-drawer")).toContainText("What changed");
+  await shot(page, "change-detail");
+  await page.getByRole("button", { name: "Rewind to just before" }).click();
+  await expect(page.locator("dialog.feed-drawer")).toHaveCount(0);
+  await expect(page.getByText("No incidents at this moment")).toBeVisible();
+  await expect(page.locator(".details .name")).toHaveText("checkout");
+});
+
+test("the incidents view lists what broke", async ({ page }) => {
+  await openDemo(page);
+  await page.getByRole("button", { name: /^Incidents/ }).click();
+  await expect(page.getByRole("heading", { name: "Changes that broke something" })).toBeVisible();
+  await expect(page.locator(".feed-list").last()).toContainText("ConfigMap checkout-config edited");
 });

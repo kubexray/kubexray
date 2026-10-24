@@ -134,6 +134,21 @@ kubexray answers all three, free and open source, from a single binary on your l
 
 ---
 
+## v0.5: The change feed
+
+**Goal:** see every change, and what it did, without waiting for something to break ([ADR-0012](docs/adr/0012-change-feed.md)).
+
+- [x] Change feed engine: entries with before and after (images, resources, probes, replicas, edits, nodes), grouped into change sets (one Helm upgrade or sync is one line), from recorded history.
+- [x] Verdicts on every change: healthy (and how long it took), broke an app, fixed one, stuck, settling.
+- [x] Drift: hand edits to objects Helm, Argo CD or Flux manage.
+- [x] Changes view: "since you last looked", today at a glance, an hourly strip, filters, search, and a detail drawer that rewinds the map to just before a change. Incidents view: what's broken now and the changes that broke something.
+- [ ] Daily digest to Slack or a webhook: what changed yesterday, what broke, what drifted.
+- [ ] Sign-in for kubexray on the internet: built-in OIDC (Google, GitHub, Okta), per-person sessions, an audit trail.
+
+**Done when:** a day of changes on the demo cluster reads correctly in the feed, and the digest posts it.
+
+---
+
 ## Later
 
 - **Blast radius:** select a ConfigMap, Secret, Service or node and see everything that depends on it.

@@ -3,6 +3,7 @@ import type { Group, Incident } from "../gen/cause";
 import type { ClusterEvent } from "../lib/events";
 import { clock } from "../lib/format";
 import type { ClusterState } from "../lib/state";
+import { searchView } from "../lib/feed";
 import { allWorkloads, buildView, chainOf } from "../lib/view";
 import { DetailsPanel } from "./DetailsPanel";
 import { DiffPanel } from "./DiffPanel";
@@ -23,6 +24,10 @@ interface Props {
   loading?: boolean;
   /** Renders the timeline, given diff mode's controls. */
   timeline: (compare: Compare) => ReactNode;
+  /** Another view (Changes, Incidents) shown instead of the map. */
+  page?: ReactNode;
+  /** Narrows the map to matching apps. */
+  search?: string;
   canRewindTo: (ts: string) => boolean;
   onRewind: (ts: string) => void;
   actions?: (entry: Entry) => ReactNode;
@@ -65,7 +70,17 @@ export function Workspace(props: Props) {
     toggle: () => setBase(base ? null : { at: at ?? new Date().toISOString(), state }),
   };
   const [hovered, setHovered] = useState<string | null>(null);
-  const [open, setOpen] = useState(new Map<string, boolean>());
+  // A selection passed in (a jump from the feed, a link) opens its namespace,
+  // which may be collapsed, and is scrolled to once drawn.
+  const [open, setOpen] = useState(() => {
+    const ns = props.initialSelection ? state.nodes.get(props.initialSelection)?.ns : undefined;
+    return new Map<string, boolean>(ns ? [[ns, true]] : []);
+  });
+  const initial = useRef(props.initialSelection);
+  useEffect(() => {
+    const id = initial.current;
+    if (id) requestAnimationFrame(() => document.querySelector(`[data-key="${CSS.escape(id)}"]`)?.scrollIntoView({ block: "center" }));
+  }, []);
   const appOf = useCallback((id: string | null) => (id ? (allWorkloads(view).find(({ w }) => w.pods.some((p) => p.id === id))?.w.node.id ?? id) : null), [view]);
   const setSelected = useCallback(
     (id: string | null) => {
@@ -119,11 +134,27 @@ export function Workspace(props: Props) {
     [incidents],
   );
 
+  // Escape clears the selection on the map; on another view it belongs to
+  // that view (closing a dialog).
+  const onMap = !props.page;
   useEffect(() => {
+    if (!onMap) return;
     const esc = (e: KeyboardEvent) => e.key === "Escape" && setSelected(null);
     addEventListener("keydown", esc);
     return () => removeEventListener("keydown", esc);
-  }, [setSelected]);
+  }, [setSelected, onMap]);
+
+  const mapView = useMemo(() => searchView(view, props.search ?? ""), [view, props.search]);
+
+  if (props.page) {
+    return (
+      <div className="app page">
+        {props.header(view)}
+        {props.notice}
+        {props.page}
+      </div>
+    );
+  }
 
   return (
     <div className="app">
@@ -135,7 +166,7 @@ export function Workspace(props: Props) {
         Read each row left to right: requests come in, a load balancer spreads them across the app's pods, and the app reads its config and storage.
       </p>
       <main className={`main${props.loading ? " loading" : ""}`}>
-        <MapView view={view} open={open} highlight={highlight} causeOf={causeOf} onToggle={toggle} onSelect={setSelected} onHover={setHovered} />
+        <MapView view={mapView} open={open} highlight={highlight} causeOf={causeOf} onToggle={toggle} onSelect={setSelected} onHover={setHovered} />
         <aside>
           <DetailsPanel id={selected} state={state} view={view} incident={listed ?? props.why ?? null} onSelect={show} />
           {base ? (

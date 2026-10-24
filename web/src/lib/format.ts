@@ -4,6 +4,11 @@ export function clock(ts: string): string {
   return new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 }
 
+/** A time of day to the minute, in the viewer's format: "5:12 PM", "17:12". */
+export function hm(ts: string): string {
+  return new Date(ts).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+}
+
 export function ago(ts: string, now: number): string {
   const s = Math.round((now - Date.parse(ts)) / 1000);
   if (s < 1) return "just now";

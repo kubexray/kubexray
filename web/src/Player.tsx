@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Header } from "./components/Header";
+import { ChangesView } from "./components/ChangesView";
+import { Header, type View } from "./components/Header";
+import { IncidentsView } from "./components/IncidentsView";
 import type { Entry } from "./components/IncidentCard";
 import { PostmortemDialog } from "./components/PostmortemDialog";
 import { Timeline } from "./components/Timeline";
@@ -38,6 +40,9 @@ export function Player() {
   const [selected, setSelected] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [drafting, setDrafting] = useState<Entry | null>(null);
+  const [view, setView] = useState<View>("map");
+  const [query, setQuery] = useState("");
+  const [focus, setFocus] = useState(0); // remounts the map with the selection
 
   const open = useCallback(
     async (blob: Blob, from: string | null) => {
@@ -194,7 +199,47 @@ export function Player() {
   return (
     <>
       <Workspace
-        header={(view) => <Header view={view} status="replay" label={`${h.cluster}${h.anonymized ? " (anonymized)" : ""} · ${clock(h.from)} to ${clock(h.to)}`} />}
+        key={focus}
+        search={query}
+        page={
+          view === "changes" ? (
+            <ChangesView
+              sets={replay.feed}
+              now={end}
+              query={query}
+              live={false}
+              canRewindTo={(ts) => Date.parse(ts) >= Date.parse(h.from)}
+              onRewind={(ts, id) => {
+                setPlaying(false);
+                setT(Date.parse(ts));
+                setSelected(id);
+                setFocus((f) => f + 1);
+                setView("map");
+              }}
+            />
+          ) : view === "incidents" ? (
+            <IncidentsView
+              incidents={incidents?.incidents ?? []}
+              groups={incidents?.groups ?? []}
+              sets={replay.feed}
+              now={t}
+              onShow={(id) => {
+                setSelected(id);
+                setFocus((f) => f + 1);
+                setView("map");
+              }}
+            />
+          ) : undefined
+        }
+        header={(v) => (
+          <Header
+            view={v}
+            status="replay"
+            label={`${h.cluster}${h.anonymized ? " (anonymized)" : ""} · ${clock(h.from)} to ${clock(h.to)}`}
+            nav={{ active: view, onChange: setView, incidents: incidents?.incidents.length ?? 0 }}
+            search={{ value: query, onChange: setQuery }}
+          />
+        )}
         notice={
           <div className="replay-bar">
             <span>You're watching a recording. Use the timeline or press Play; links keep the moment and the selected app.</span>
