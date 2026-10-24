@@ -143,6 +143,20 @@ func together(s *Set, e Entry) bool {
 	return sameAuthor && (sameRelease || s.Namespace == e.Namespace)
 }
 
+// Seed puts the sets of a tracker filled from history (Rebuild) before the
+// ones this tracker has seen since.
+func (t *Tracker) Seed(history *Tracker) {
+	history.mu.Lock()
+	old := slices.Clone(history.sets)
+	history.mu.Unlock()
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.sets = append(old, t.sets...)
+	if over := len(t.sets) - t.limit; over > 0 {
+		t.sets = slices.Clone(t.sets[over:])
+	}
+}
+
 // Sets returns the sets made since a time, newest first. They're copies.
 func (t *Tracker) Sets(since time.Time) []Set {
 	t.mu.Lock()

@@ -508,15 +508,7 @@ func (r *Recorder) Range(from, to time.Time, maxBytes int) (msgs [][]byte, start
 		last--
 		end = r.segments[last].last.ts // the epoch ends before to
 	}
-	// Copies taken under the lock: the writer appends to the current
-	// segment and drops a segment's messages once it's on disk. Entries never
-	// change once recorded, so reading up to the copied length is safe.
-	segs := make([]*segment, 0, last-first+1)
-	for _, s := range r.segments[first : last+1] {
-		c := *s
-		c.deltas = s.deltas[:len(s.deltas):len(s.deltas)]
-		segs = append(segs, &c)
-	}
+	segs := copyForReading(r.segments[first : last+1])
 	r.mu.RUnlock()
 
 	size := 0
@@ -550,23 +542,37 @@ func (r *Recorder) Range(from, to time.Time, maxBytes int) (msgs [][]byte, start
 	return msgs, start, end, nil
 }
 
+// copyForReading copies segments for reading without the lock: the writer appends
+// to the current segment and drops a segment's messages once it's on disk.
+// Entries never change once recorded, so reading up to the copied length is
+// safe. Hold at least the read lock.
+func copyForReading(segs []*segment) []*segment {
+	out := make([]*segment, 0, len(segs))
+	for _, s := range segs {
+		c := *s
+		c.deltas = s.deltas[:len(s.deltas):len(s.deltas)]
+		out = append(out, &c)
+	}
+	return out
+}
+
 // Walk calls fn with every recorded message from the oldest on: each
 // epoch's first keyframe, then its deltas, as one stream with a snapshot
 // wherever a restart or a break began a new sequence. Segments are read
 // from disk without holding the lock.
 func (r *Recorder) Walk(fn func(raw []byte) error) error {
 	r.mu.RLock()
-	segs := make([]*segment, 0, len(r.segments))
-	for _, s := range r.segments {
-		c := *s
-		c.deltas = s.deltas[:len(s.deltas):len(s.deltas)]
-		segs = append(segs, &c)
-	}
+	segs := copyForReading(r.segments)
 	r.mu.RUnlock()
 	for i, s := range segs {
-		loaded, err := r.load(s)
-		if err != nil {
-			return err
+		loaded := s
+		if s.file != "" {
+			// Read past the cache: a full walk would only evict what
+			// rewinding and exports keep warm.
+			var err error
+			if loaded, err = readSegment(s); err != nil {
+				return err
+			}
 		}
 		if i == 0 || segs[i-1].epoch != s.epoch {
 			if err := fn(loaded.keyframe.raw); err != nil {

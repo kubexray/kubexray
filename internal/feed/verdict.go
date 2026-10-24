@@ -28,6 +28,9 @@ func (t *Tracker) Assess(st *graph.State, incidents []cause.Incident, now time.T
 		if now.Sub(s.Last) > ReassessFor {
 			break // older verdicts are final
 		}
+		if s.Last.After(st.TS) {
+			continue // made after the state analyzed: judged next time
+		}
 		assess(s, st, byApp, now)
 	}
 	t.ongoing = map[string]bool{}
@@ -55,8 +58,15 @@ func assess(s *Set, st *graph.State, incidents map[string]cause.Incident, now ti
 		return
 	}
 	switch s.Verdict { //nolint:exhaustive // the rest are worked out below
-	case Healthy, Fixed, Stuck:
+	case Fixed, Stuck:
 		return // provisional, but only an incident it caused changes it
+	case Healthy:
+		// A rollout that unsettles again soon after (the controller hadn't
+		// started it yet, or it hung) is still settling.
+		if !rollsOut(s) || now.Sub(s.Last) > SettleWindow || allSettled(s, st, incidents) {
+			return
+		}
+		s.healthAt, s.disturbed = time.Time{}, true
 	}
 
 	// Fixed: made during an incident on its apps, which has ended.
@@ -86,10 +96,19 @@ func assess(s *Set, st *graph.State, incidents map[string]cause.Incident, now ti
 			ready++
 		}
 	}
+	if total == 0 {
+		s.Verdict, s.Note = NoEffect, "its apps are gone" // e.g. it deleted them
+		return
+	}
 	if ready < total {
 		s.disturbed = true
 	}
+	// A rollout counts once it was seen rolling out, or has looked settled
+	// for a while: right after the change, status may not have caught up.
+	early := rollsOut(s) && !s.disturbed && now.Sub(s.Last) < 2*Window
 	switch {
+	case ready == total && early:
+		s.Verdict, s.Note = Settling, "starting"
 	case ready == total:
 		if s.healthAt.IsZero() {
 			s.healthAt = now
@@ -126,6 +145,17 @@ func broke(s *Set, incidents map[string]cause.Incident) bool {
 		}
 	}
 	return false
+}
+
+// allSettled reports whether every app a set touches is settled and well.
+func allSettled(s *Set, st *graph.State, incidents map[string]cause.Incident) bool {
+	for _, app := range s.Apps {
+		n, ok := st.Nodes[app]
+		if _, sick := incidents[app]; ok && (sick || !settled(n)) {
+			return false
+		}
+	}
+	return true
 }
 
 // rollsOut reports whether a set replaces or adds pods: a template change,

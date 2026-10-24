@@ -533,9 +533,8 @@ func (s *Server) history(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (s *Server) at(w http.ResponseWriter, r *http.Request) {
-	t, err := time.Parse(time.RFC3339Nano, r.URL.Query().Get("t"))
-	if err != nil {
-		http.Error(w, "t must be an RFC 3339 time", http.StatusBadRequest)
+	t, ok := timeParam(w, r, "t", time.Time{})
+	if !ok {
 		return
 	}
 	snap, err := s.rec.At(t)
@@ -630,17 +629,28 @@ func (s *Server) alertmanager(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusAccepted)
 }
 
+// timeParam reads an RFC 3339 query parameter, or def when it's absent
+// (a zero def makes it required). On a bad value it answers 400 and
+// reports false.
+func timeParam(w http.ResponseWriter, r *http.Request, name string, def time.Time) (time.Time, bool) {
+	v := r.URL.Query().Get(name)
+	if v == "" && !def.IsZero() {
+		return def, true
+	}
+	t, err := time.Parse(time.RFC3339Nano, v)
+	if err != nil {
+		http.Error(w, name+" must be an RFC 3339 time", http.StatusBadRequest)
+		return time.Time{}, false
+	}
+	return t, true
+}
+
 // feed serves the change feed since ?since= (default: a week), newest first.
 func (s *Server) feed(w http.ResponseWriter, r *http.Request) {
 	now := s.now()
-	since := now.Add(-7 * 24 * time.Hour)
-	if v := r.URL.Query().Get("since"); v != "" {
-		t, err := time.Parse(time.RFC3339Nano, v)
-		if err != nil {
-			http.Error(w, "since must be an RFC 3339 time", http.StatusBadRequest)
-			return
-		}
-		since = t
+	since, ok := timeParam(w, r, "since", now.Add(-7*24*time.Hour))
+	if !ok {
+		return
 	}
 	sets := s.hub.Feed().Sets(since)
 	if sets == nil {
@@ -672,18 +682,15 @@ func (s *Server) export(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	now := s.now()
-	from, to := first, now
-	q := r.URL.Query()
-	for name, dst := range map[string]*time.Time{"from": &from, "to": &to} {
-		if v := q.Get(name); v != "" {
-			t, err := time.Parse(time.RFC3339Nano, v)
-			if err != nil {
-				http.Error(w, name+" must be an RFC 3339 time", http.StatusBadRequest)
-				return
-			}
-			*dst = t
-		}
+	from, ok := timeParam(w, r, "from", first)
+	if !ok {
+		return
 	}
+	to, ok := timeParam(w, r, "to", now)
+	if !ok {
+		return
+	}
+	q := r.URL.Query()
 	if to.Before(from) {
 		http.Error(w, "to is before from", http.StatusBadRequest)
 		return

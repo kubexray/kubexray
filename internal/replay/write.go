@@ -62,15 +62,21 @@ func Write(ctx context.Context, w io.Writer, msgs [][]byte, opts Options) error 
 		checked  time.Time
 		lastSaid []byte
 		tracker  = feed.New(feed.MaxSets)
+		assessed time.Time
 	)
 	// analyze writes the incidents at ts if they changed since last written.
 	analyze := func(ts time.Time) error {
 		checked = ts
 		m := cause.NewIncidentsMessage(state, ts)
-		tracker.Assess(state, m.Incidents, ts)
 		key, err := json.Marshal([]any{m.Incidents, m.Groups})
 		if err != nil {
 			return err
+		}
+		// Verdicts follow incidents, and rollouts settle: judge on changes
+		// and every recheck, not on every message.
+		if changed := !bytes.Equal(key, lastSaid); changed || ts.Sub(assessed) >= recheck {
+			tracker.Assess(state, m.Incidents, ts)
+			assessed = ts
 		}
 		if bytes.Equal(key, lastSaid) {
 			return nil

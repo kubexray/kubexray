@@ -265,3 +265,68 @@ func TestRebuildFromHistory(t *testing.T) {
 		t.Errorf("rebuilt = %q, verdict %q", s.Title, s.Verdict)
 	}
 }
+
+func TestRolloutBeforeStatusCatchesUp(t *testing.T) {
+	t.Parallel()
+	st, tr := cluster(), New(MaxSets)
+	co := st.Nodes["Deployment/shop/checkout"]
+	co.Change = by("kubectl-set", "kubectl", "set", at(0))
+	co.Spec = &graph.Spec{Revision: "2", Containers: []graph.Container{{Name: "checkout", Image: "busybox:9.9"}}}
+	apply(t, tr, st, at(0), co) // status still says ready: the controller hasn't started
+
+	tr.Assess(st, nil, at(1))
+	if s := only(t, tr); s.Verdict != Settling {
+		t.Fatalf("right after = %q %q, want settling", s.Verdict, s.Note)
+	}
+	// Seen rolling out, then hung: back to settling, then stuck.
+	co.Status = graph.Status{Replicas: &graph.Replicas{Desired: 3, Ready: 3, Updated: 1}}
+	apply(t, tr, st, at(5), co)
+	tr.Assess(st, nil, at(5))
+	tr.Assess(st, nil, at(11*60))
+	if s := only(t, tr); s.Verdict != Stuck {
+		t.Errorf("hung rollout = %q %q", s.Verdict, s.Note)
+	}
+}
+
+func TestNewerSetsWaitForTheirState(t *testing.T) {
+	t.Parallel()
+	st, tr := cluster(), New(MaxSets)
+	stale := st.Clone()
+	co := st.Nodes["Deployment/shop/checkout"]
+	co.Change = by("kubectl-set", "kubectl", "set", at(10))
+	co.Spec = &graph.Spec{Revision: "2", Containers: []graph.Container{{Name: "checkout", Image: "busybox:1.37"}}}
+	apply(t, tr, st, at(10), co)
+	tr.Assess(stale, nil, at(11)) // analyzed before the change
+	if s := only(t, tr); s.Verdict != "" {
+		t.Errorf("judged on a state without it: %q", s.Verdict)
+	}
+}
+
+func TestDeletionIsNeutral(t *testing.T) {
+	t.Parallel()
+	st, tr := cluster(), New(MaxSets)
+	m := graph.Message{V: 1, Type: graph.MessageDelta, Seq: st.Seq + 1, TS: at(0), Ops: []graph.Op{{Op: graph.OpRemoveNode, ID: "Deployment/shop/checkout"}}}
+	tr.Observe(st, m)
+	if err := st.Apply(m); err != nil {
+		t.Fatal(err)
+	}
+	tr.Assess(st, nil, at(5))
+	if s := only(t, tr); s.Title != "Deployment checkout deleted" || s.Verdict != NoEffect {
+		t.Errorf("deletion = %q %q %q", s.Title, s.Verdict, s.Note)
+	}
+}
+
+func TestSeedPutsHistoryFirst(t *testing.T) {
+	t.Parallel()
+	st, live, history := cluster(), New(MaxSets), New(MaxSets)
+	cfg := st.Nodes["ConfigMap/shop/checkout-config"]
+	cfg.Change = by("kubectl-patch", "kubectl", "patch", at(0))
+	apply(t, history, st.Clone(), at(0), cfg)
+	cfg.Change = by("kubectl-patch", "kubectl", "patch", at(600))
+	apply(t, live, st, at(600), cfg)
+	live.Seed(history)
+	sets := live.Sets(time.Time{})
+	if len(sets) != 2 || !sets[0].At.Equal(at(600)) || !sets[1].At.Equal(at(0)) {
+		t.Errorf("seeded = %+v", sets)
+	}
+}

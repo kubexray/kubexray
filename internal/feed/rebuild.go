@@ -15,7 +15,8 @@ const assessEvery = 30 * time.Second
 
 // Rebuild fills a tracker from recorded history, so a restarted kubexray
 // keeps its feed (ADR-0012, section 1). walk calls its function with every
-// recorded message in order (recorder.Walk).
+// recorded message in order (recorder.Walk). Fill a fresh tracker and Seed
+// the live one with it: rebuilding takes a while, and the live feed goes on.
 func Rebuild(t *Tracker, walk func(fn func(raw []byte) error) error) error {
 	var (
 		state    *graph.State
@@ -56,6 +57,11 @@ func Rebuild(t *Tracker, walk func(fn func(raw []byte) error) error) error {
 	if err != nil {
 		return err
 	}
-	assess(time.Now())
+	// Judge what was recorded as of the last recorded moment: the live hub
+	// takes over from there, so a rollout in flight at shutdown isn't
+	// declared stuck by the gap.
+	if state != nil {
+		assess(state.TS)
+	}
 	return nil
 }
