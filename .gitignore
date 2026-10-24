@@ -17,3 +17,5 @@ kubeconfig
 !/internal/web/dist/.keep
 /loadgen
 dist-pages/
+web/test-results/
+web/playwright-report/

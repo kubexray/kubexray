@@ -36,6 +36,15 @@ web: ## Build the web UI into internal/web/dist (needs Node)
 web-check: ## Type-check, lint and test the web UI
 	cd web && npm ci --no-fund --no-audit && npm run typecheck && npm run lint && npm test
 
+.PHONY: test-envtest
+test-envtest: ## Run the watcher against a real API server (downloads etcd and kube-apiserver)
+	KUBEBUILDER_ASSETS="$$(go run sigs.k8s.io/controller-runtime/tools/setup-envtest@v0.25.2 use 1.37.x -p path)" \
+		go test -tags envtest -run AgainstAnAPIServer -count=1 ./internal/cluster/
+
+.PHONY: e2e-ui
+e2e-ui: ## Run the UI end to end in a browser (Playwright, on the public player)
+	cd web && npm ci --no-fund --no-audit && npx playwright install chromium && npm run e2e
+
 .PHONY: gen
 gen: ## Generate the UI's TypeScript types from Go
 	go run github.com/gzuidhof/tygo@$(TYGO_VERSION) generate

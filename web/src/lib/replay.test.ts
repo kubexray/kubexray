@@ -105,9 +105,11 @@ describe("replay links", () => {
   it("accepts https links and paths on the same site", () => {
     expect(safeReplayURL("https://example.com/incident.kxr", base)?.href).toBe("https://example.com/incident.kxr");
     expect(safeReplayURL("/api/replay", "http://127.0.0.1:5000/")?.href).toBe("http://127.0.0.1:5000/api/replay");
+    // The demo button links to its own site, over http in local previews.
+    expect(safeReplayURL("http://127.0.0.1:5000/demo.kxr", "http://127.0.0.1:5000/")?.href).toBe("http://127.0.0.1:5000/demo.kxr");
   });
   it("refuses everything else", () => {
-    for (const raw of ["http://example.com/x.kxr", "javascript:alert(1)", "data:text/plain,x", "//evil.example/x.kxr", "file:///etc/passwd"]) {
+    for (const raw of ["http://example.com/x.kxr", "javascript:alert(1)", "data:text/plain,x", "//evil.example/x.kxr", "file:///etc/passwd", "http://127.0.0.1:5001/x.kxr"]) {
       expect(safeReplayURL(raw, "http://127.0.0.1:5000/")).toBeNull();
     }
   });

@@ -16,6 +16,10 @@ make check      # the Go checks CI runs: lint, test, vuln, secrets, actionlint
 make web-check  # the UI checks: types, lint, tests
 make gen        # regenerate the UI's TypeScript types after changing Go types
 make fmt        # format Go code
+make e2e        # break the demo cluster every way and check kubexray's answers (kind)
+make e2e-helm   # install the Helm chart on kind: auth, RBAC, persistence
+make e2e-ui     # the UI in a browser (Playwright, on the public player)
+make test-envtest # the watcher against a real API server
 ```
 
 ### Working on the UI
