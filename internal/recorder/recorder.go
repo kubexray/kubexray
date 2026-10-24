@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"slices"
@@ -150,6 +151,9 @@ func parseName(path string) (*segment, bool) {
 			return nil, false
 		}
 		n[i] = v
+	}
+	if n[2] > math.MaxInt32 {
+		return nil, false // not an epoch kubexray wrote
 	}
 	return &segment{
 		epoch:    int(n[2]),
