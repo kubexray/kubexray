@@ -12,12 +12,13 @@ import { firstIncident, incidentsAt, loadReplay, recoveredAt, type Replay, state
 const SPEED = 10;
 const TICK = 100;
 
-/** A replay link must be https, or a path on this site (kubexray play). */
+/** A replay link must be https, or on this same site (kubexray play, the
+ * demo): never another site over plain http, javascript: or data:. */
 export function safeReplayURL(raw: string, base = location.href): URL | null {
   try {
     const url = new URL(raw, base);
-    const sameOrigin = url.origin === new URL(base).origin;
-    return url.protocol === "https:" || (sameOrigin && raw.startsWith("/") && !raw.startsWith("//")) ? url : null;
+    const sameOrigin = url.origin !== "null" && url.origin === new URL(base).origin;
+    return url.protocol === "https:" || sameOrigin ? url : null;
   } catch {
     return null;
   }
@@ -30,7 +31,7 @@ export function Player() {
   const linkedURL = useMemo(() => (linked ? safeReplayURL(linked) : null), [linked]);
   const [replay, setReplay] = useState<Replay | null>(null);
   const [source, setSource] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(linked && !linkedURL ? "Replay links must start with https://." : null);
+  const [error, setError] = useState<string | null>(linked && !linkedURL ? "Replay links must use https, or be on this site." : null);
   const [busy, setBusy] = useState(!!linkedURL);
   const [t, setT] = useState(0);
   const [playing, setPlaying] = useState(false);
@@ -67,7 +68,7 @@ export function Player() {
     async (raw: string) => {
       const url = safeReplayURL(raw);
       if (!url) {
-        setError("Replay links must start with https://.");
+        setError("Replay links must use https, or be on this site.");
         return;
       }
       setBusy(true);

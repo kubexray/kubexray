@@ -128,7 +128,7 @@ kubexray answers all three, free and open source, from a single binary on your l
 - [x] Authentication for in-cluster access: bearer token or an auth proxy; no anonymous mode.
 - [x] **Alert → replay:** when Prometheus Alertmanager fires, kubexray posts the likely cause, who made the change and a replay link to Slack or a webhook.
 - [ ] Release engineering: GoReleaser (multi-arch binaries and images, Homebrew tap), cosign signatures, SBOM and provenance.
-- [ ] CI: envtest, an end-to-end run on kind, and Playwright UI screenshots.
+- [x] CI: envtest, an end-to-end run on kind, and Playwright UI screenshots.
 
 **Done when:** `helm install` records continuously, survives restarts, and `brew install kubexray` works with signed releases.
 
