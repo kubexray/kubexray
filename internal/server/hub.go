@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/kubexray/kubexray/internal/cause"
+	"github.com/kubexray/kubexray/internal/feed"
 	"github.com/kubexray/kubexray/internal/graph"
 )
 
@@ -38,6 +39,8 @@ type Hub struct {
 	payload   []byte // incidents without the timestamp, to detect changes
 	analyzed  uint64 // state seq at the last analysis
 	lastRun   time.Time
+
+	feed *feed.Tracker // the change feed, from every delta (ADR-0012)
 }
 
 // client is one subscriber. send is closed when the hub drops it.
@@ -48,8 +51,12 @@ type client struct {
 // NewHub returns a hub allowing maxClients subscribers, each with a send
 // queue of queue messages.
 func NewHub(maxClients, queue int) *Hub {
-	return &Hub{maxClients: maxClients, queue: queue, clients: map[*client]struct{}{}, ready: make(chan struct{})}
+	return &Hub{maxClients: maxClients, queue: queue, clients: map[*client]struct{}{}, ready: make(chan struct{}), feed: feed.New(feed.MaxSets)}
 }
+
+// Feed is the change feed the hub keeps. Rebuild it from recorded history
+// (feed.Rebuild) before the pump starts.
+func (h *Hub) Feed() *feed.Tracker { return h.feed }
 
 // Ready is closed once the hub has its first snapshot and can serve clients.
 func (h *Hub) Ready() <-chan struct{} { return h.ready }
@@ -73,6 +80,7 @@ func (h *Hub) Emit(msg graph.Message, raw []byte) error {
 		if h.state == nil {
 			return errors.New("hub: delta before the first snapshot")
 		}
+		h.feed.Observe(h.state, msg) // before and after
 		if err := h.state.Apply(msg); err != nil {
 			return err
 		}
@@ -149,6 +157,7 @@ func (h *Hub) UpdateIncidents(now time.Time) error {
 	h.mu.Unlock()
 
 	msg := cause.NewIncidentsMessage(st, now)
+	h.feed.Assess(st, msg.Incidents, now)
 	payload, err := json.Marshal([]any{msg.Incidents, msg.Groups})
 	if err != nil {
 		return err

@@ -549,3 +549,35 @@ func (r *Recorder) Range(from, to time.Time, maxBytes int) (msgs [][]byte, start
 	}
 	return msgs, start, end, nil
 }
+
+// Walk calls fn with every recorded message from the oldest on: each
+// epoch's first keyframe, then its deltas, as one stream with a snapshot
+// wherever a restart or a break began a new sequence. Segments are read
+// from disk without holding the lock.
+func (r *Recorder) Walk(fn func(raw []byte) error) error {
+	r.mu.RLock()
+	segs := make([]*segment, 0, len(r.segments))
+	for _, s := range r.segments {
+		c := *s
+		c.deltas = s.deltas[:len(s.deltas):len(s.deltas)]
+		segs = append(segs, &c)
+	}
+	r.mu.RUnlock()
+	for i, s := range segs {
+		loaded, err := r.load(s)
+		if err != nil {
+			return err
+		}
+		if i == 0 || segs[i-1].epoch != s.epoch {
+			if err := fn(loaded.keyframe.raw); err != nil {
+				return err
+			}
+		}
+		for _, d := range loaded.deltas {
+			if err := fn(d.raw); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}

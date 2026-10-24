@@ -111,6 +111,10 @@ func TestRoundTrip(t *testing.T) {
 	if len(f.Changes) == 0 || f.Changes[0].Object != "ConfigMap/payments-prod/checkout-config" {
 		t.Errorf("changes = %+v", f.Changes)
 	}
+	// The change feed: the edit, judged by what it did.
+	if len(f.Feed) != 1 || f.Feed[0].Title != "ConfigMap checkout-config edited" || f.Feed[0].Verdict != "broke" || f.Feed[0].Incident != "Deployment/payments-prod/checkout" {
+		t.Errorf("feed = %+v", f.Feed)
+	}
 }
 
 func TestAnonymizeLeavesNothingIdentifying(t *testing.T) {

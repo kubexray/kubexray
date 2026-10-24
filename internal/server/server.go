@@ -35,6 +35,7 @@ import (
 
 	"github.com/kubexray/kubexray/internal/alert"
 	"github.com/kubexray/kubexray/internal/cause"
+	"github.com/kubexray/kubexray/internal/feed"
 	"github.com/kubexray/kubexray/internal/graph"
 	"github.com/kubexray/kubexray/internal/recorder"
 	"github.com/kubexray/kubexray/internal/replay"
@@ -296,6 +297,7 @@ func (s *Server) Handler() http.Handler {
 		api.HandleFunc("GET /api/at", s.at)
 		api.HandleFunc("GET /api/why", s.why)
 		api.HandleFunc("GET /api/changes", s.changes)
+		api.HandleFunc("GET /api/feed", s.feed)
 		api.HandleFunc("GET /api/export", s.export)
 		if s.alerts.Enabled() {
 			api.HandleFunc("POST /api/alertmanager", s.alertmanager)
@@ -626,6 +628,25 @@ func (s *Server) alertmanager(w http.ResponseWriter, r *http.Request) {
 		s.alerts.Queue(alert.Message{Alert: a, Incident: inc, Link: alert.Link(s.publicURL, at, inc.App)})
 	}
 	w.WriteHeader(http.StatusAccepted)
+}
+
+// feed serves the change feed since ?since= (default: a week), newest first.
+func (s *Server) feed(w http.ResponseWriter, r *http.Request) {
+	now := s.now()
+	since := now.Add(-7 * 24 * time.Hour)
+	if v := r.URL.Query().Get("since"); v != "" {
+		t, err := time.Parse(time.RFC3339Nano, v)
+		if err != nil {
+			http.Error(w, "since must be an RFC 3339 time", http.StatusBadRequest)
+			return
+		}
+		since = t
+	}
+	sets := s.hub.Feed().Sets(since)
+	if sets == nil {
+		sets = []feed.Set{}
+	}
+	writeJSON(w, FeedResponse{Sets: sets, Now: now})
 }
 
 // changes lists who changed what since the recording began (cause.Changes).
