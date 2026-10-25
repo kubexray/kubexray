@@ -73,10 +73,15 @@ test("replay links must be https or on this site", async ({ page }) => {
   await expect(page.getByText("Replay links must use https, or be on this site.")).toBeVisible();
 });
 
-test("dark mode", async ({ page }) => {
-  await page.emulateMedia({ colorScheme: "dark" });
+test("light by default, dark when chosen", async ({ page }) => {
+  await page.emulateMedia({ colorScheme: "dark" }); // the system setting doesn't decide
   await openDemo(page);
+  await expect(page.locator("html")).not.toHaveAttribute("data-theme", "dark");
+  await page.getByRole("button", { name: "Switch to dark mode" }).click();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
   await shot(page, "incident-dark");
+  await page.reload(); // remembered
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
 });
 
 test("the change feed says what each change did", async ({ page }) => {
@@ -111,4 +116,35 @@ test("the incidents view lists what broke", async ({ page }) => {
   await page.getByRole("button", { name: /^Incidents/ }).click();
   await expect(page.getByRole("heading", { name: "Changes that broke something" })).toBeVisible();
   await expect(page.locator(".feed-list").last()).toContainText("ConfigMap checkout-config edited");
+});
+
+test("the histogram shows and picks changes", async ({ page }) => {
+  await openDemo(page);
+  await page.getByRole("button", { name: "Changes", exact: true }).click();
+  await page.getByRole("button", { name: "Hour", exact: true }).click();
+  const full = page.locator(".hist-bar").filter({ has: page.locator(".seg") });
+  await expect(full.first()).toBeVisible();
+
+  await full.first().hover();
+  await expect(page.locator(".hist-tip")).toContainText("api scaled 3 → 4 replicas");
+  await shot(page, "histogram-tooltip");
+
+  await full.first().click();
+  await expect(page.locator(".hist-window")).toContainText("Showing");
+  const cards = page.locator(".feed-card");
+  const picked = await cards.count();
+  expect(picked).toBeLessThan(3);
+  await page.locator(".hist-window").getByRole("button", { name: "Clear" }).click();
+  await expect(cards).toHaveCount(3);
+
+  // Drag across every bar with changes: all three again, in a window.
+  const first = await full.first().boundingBox();
+  const last = await full.last().boundingBox();
+  if (!first || !last) throw new Error("no bars");
+  await page.mouse.move(first.x + 2, first.y + first.height - 4);
+  await page.mouse.down();
+  await page.mouse.move(last.x + last.width - 2, last.y + last.height - 4, { steps: 8 });
+  await page.mouse.up();
+  await expect(page.locator(".hist-window")).toBeVisible();
+  await expect(cards).toHaveCount(3);
 });

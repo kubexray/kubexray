@@ -25,6 +25,11 @@ export default tseslint.config(
     },
   },
   {
+    // Plain scripts served as they are (public/theme.js) run in the browser.
+    files: ["public/**/*.js"],
+    languageOptions: { globals: globals.browser, sourceType: "script" },
+  },
+  {
     // In tests a wrong assumption should fail loudly, so `!` is fine there.
     files: ["**/*.test.ts"],
     rules: { "@typescript-eslint/no-non-null-assertion": "off" },

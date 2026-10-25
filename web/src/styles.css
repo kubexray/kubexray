@@ -21,13 +21,12 @@
   --font-data: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
   color-scheme: light;
 }
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #0f1215; --surface: #161a1e; --sunken: #12161a; --border: #252b31; --border-strong: #353d45;
-    --text: #e5e8eb; --muted: #8b959f; --faint: #5d6770; --accent: #7cc6da; --accent-soft: #16303a;
-    --ok: #5cbf8c; --warn: #e2a84e; --crit: #f07068; --crit-soft: #331b1b;
-    color-scheme: dark;
-  }
+/* Dark, when chosen in the header (lib/theme.ts); light is the default. */
+:root[data-theme="dark"] {
+  --bg: #0f1215; --surface: #161a1e; --sunken: #12161a; --border: #252b31; --border-strong: #353d45;
+  --text: #e5e8eb; --muted: #8b959f; --faint: #5d6770; --accent: #7cc6da; --accent-soft: #16303a;
+  --ok: #5cbf8c; --warn: #e2a84e; --crit: #f07068; --crit-soft: #331b1b;
+  color-scheme: dark;
 }
 
 * { box-sizing: border-box; }
@@ -55,6 +54,8 @@ code { font-family: var(--font-data); font-size: 12px; }
 .search { flex: 1 1 220px; max-width: 380px; display: flex; align-items: center; gap: 8px; padding: 6px 10px; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--surface); color: var(--muted); }
 .search input { flex: 1; min-width: 0; border: 0; outline: none; background: transparent; font: inherit; color: var(--text); }
 .search:focus-within { outline: 2px solid var(--accent); outline-offset: 1px; }
+.theme-toggle { width: 34px; height: 34px; flex: none; border-radius: 8px; border: 1px solid var(--border-strong); background: var(--surface); color: var(--muted); display: inline-flex; align-items: center; justify-content: center; cursor: pointer; }
+.theme-toggle:hover { color: var(--text); }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 .brand h1, .message h1 { font: 700 22px var(--font-display); letter-spacing: -0.01em; margin: 0; }
 .brand h1 span, .message h1 span { color: var(--accent); }
@@ -325,17 +326,14 @@ dialog.postmortem textarea { display: block; width: 100%; box-sizing: border-box
 .feed-stat-value.ok { color: var(--ok); }
 .feed-stat-value.warn { color: var(--warn); }
 .feed-stat-note { font-size: 12px; color: var(--muted); }
-.feed-strip { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px 18px; }
-.feed-strip-head { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
-.feed-strip-title { font-weight: 600; }
 .feed-legend { display: flex; gap: 14px; font-size: 12px; color: var(--muted); }
 .feed-legend span { display: inline-flex; align-items: center; gap: 6px; }
 .sw { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
-.sw.changes, .feed-bar.changes { background: color-mix(in srgb, var(--accent) 45%, var(--surface)); }
-.sw.broke, .feed-bar.broke { background: var(--crit); }
-.sw.drift, .feed-bar.drift { background: var(--warn); }
-.feed-bars { display: grid; grid-template-columns: repeat(24, minmax(0, 1fr)); gap: 4px; align-items: end; height: 64px; }
-.feed-bar { border-radius: 3px; background: var(--sunken); }
+.sw.broke, .seg.broke { background: var(--crit); }
+.sw.drift, .seg.drift { background: var(--warn); }
+.sw.settling, .seg.settling { background: var(--accent); }
+.sw.healthy, .seg.healthy { background: var(--ok); }
+.sw.other, .seg.other { background: var(--border-strong); }
 .feed-filters { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .feed-filters button { padding: 6px 14px; border-radius: 999px; border: 1px solid var(--border-strong); background: var(--surface); font-size: 13px; font-weight: 600; cursor: pointer; }
 .feed-filters button span { opacity: 0.7; font-weight: 500; margin-left: 2px; }
@@ -384,3 +382,34 @@ dialog.feed-drawer::backdrop { background: color-mix(in srgb, var(--bg) 60%, tra
   .feed-card { grid-template-columns: minmax(0, 1fr); gap: 8px; }
   .feed-side { align-items: flex-start; text-align: left; min-width: 0; }
 }
+
+/* Changes over time (Kibana-style histogram) */
+.hist { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px 18px 10px; }
+.hist-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 10px 16px; margin-bottom: 12px; }
+.hist-title { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; font-weight: 600; }
+.hist-window { display: inline-flex; align-items: center; gap: 8px; padding: 3px 4px 3px 10px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); font-size: 13px; font-weight: 600; }
+.hist-window button { border: 0; background: var(--surface); color: var(--text); border-radius: 999px; padding: 2px 10px; font-size: 12px; cursor: pointer; }
+.hist-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; }
+.hist-ranges { display: flex; gap: 2px; background: var(--sunken); padding: 2px; border-radius: 7px; }
+.hist-ranges button { border: 0; background: transparent; padding: 3px 10px; border-radius: 5px; font-size: 12px; font-weight: 500; color: var(--muted); cursor: pointer; }
+.hist-ranges button.on { background: var(--surface); color: var(--text); font-weight: 600; box-shadow: 0 1px 2px rgb(0 0 0 / 0.08); }
+.hist-plot { position: relative; padding-bottom: 20px; user-select: none; touch-action: none; }
+.hist-bars { display: flex; align-items: stretch; gap: 2px; height: 96px; border-bottom: 1px solid var(--border); }
+.hist-bar { all: unset; flex: 1 1 0; min-width: 0; display: flex; align-items: flex-end; cursor: pointer; border-radius: 3px 3px 0 0; }
+.hist-bar:hover { background: var(--sunken); }
+.hist-bar:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.hist-stack { width: 100%; display: flex; flex-direction: column-reverse; border-radius: 3px 3px 0 0; overflow: hidden; background: var(--border); min-height: 2px; }
+.seg { flex-basis: 0; min-height: 3px; }
+.hist-bars.picking .hist-bar:not(.picked) .hist-stack { opacity: 0.3; }
+.hist-bar.picked { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.hist-axis { position: absolute; left: 0; right: 0; bottom: 0; height: 18px; font: 11px var(--font-data); color: var(--muted); }
+.hist-axis span { position: absolute; top: 4px; white-space: nowrap; }
+.hist-axis .end { right: 0; }
+.hist-tip { position: absolute; bottom: calc(100% - 4px); transform: translateX(-50%); z-index: 5; width: max-content; max-width: 360px; background: var(--text); color: var(--bg); border-radius: 8px; padding: 8px 10px; font-size: 12px; box-shadow: 0 8px 24px rgb(0 0 0 / 0.18); pointer-events: none; }
+.hist-tip.start { transform: translateX(-12px); } /* near the edges, keep it inside */
+.hist-tip.end { transform: translateX(calc(-100% + 12px)); }
+.hist-tip-time { font: 600 11px var(--font-data); opacity: 0.8; margin-bottom: 4px; }
+.hist-tip ul { margin: 0; padding: 0; list-style: none; display: grid; gap: 3px; }
+.hist-tip li { display: flex; gap: 6px; align-items: baseline; }
+.hist-tip .sw { flex: none; margin-top: 2px; }
+.hist-tip-more, .hist-tip-none { opacity: 0.75; }

@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Set as ChangeSet } from "../gen/feed";
-import { applyFilter, author, FILTERS, type Filter, filterCounts, hasDrift, hourly, justBefore, shortName, summarize, verdictLabel, verdictNote } from "../lib/feed";
+import { applyFilter, author, FILTERS, type Filter, filterCounts, hasDrift, justBefore, type Range, shortName, rangeWindow, summarize, verdictLabel, verdictNote, type Window } from "../lib/feed";
 import { clock, hm } from "../lib/format";
+import { ActivityHistogram } from "./ActivityHistogram";
 
 interface Props {
   sets: ChangeSet[];
@@ -50,6 +51,8 @@ function touches(s: ChangeSet): string {
 /** The change feed (ADR-0012): every change, and what it did. */
 export function ChangesView({ sets, now, query, live, canRewindTo, onRewind }: Props) {
   const [filter, setFilter] = useState<Filter>("all");
+  const [range, setRange] = useState<Range>("24h");
+  const [picked, setPicked] = useState<Window | null>(null);
   const [openId, setOpenId] = useState<string | null>(null);
   const open = sets.find((s) => s.id === openId) ?? null; // the live set: its verdict updates
   const [seen, setSeen] = useState<number | null>(() => (live ? readSeen() : null));
@@ -59,13 +62,15 @@ export function ChangesView({ sets, now, query, live, canRewindTo, onRewind }: P
     if (live && readSeen() === null) writeSeen(now);
   }, [live, now]);
 
-  const shown = useMemo(() => applyFilter(sets, filter, query), [sets, filter, query]);
-  const counts = useMemo(() => filterCounts(sets, query), [sets, query]);
+  // Like Kibana's time picker, the histogram's range (or the bars picked in
+  // it) scopes the list too; the histogram counts follow the filter and search.
+  const span = useMemo(() => picked ?? rangeWindow(range, now), [picked, range, now]);
+  const shown = useMemo(() => applyFilter(sets, filter, query, span), [sets, filter, query, span]);
+  const counts = useMemo(() => filterCounts(sets, query, span), [sets, query, span]);
+  const charted = useMemo(() => applyFilter(sets, filter, query), [sets, filter, query]);
   const midnight = new Date(now).setHours(0, 0, 0, 0);
   const today = useMemo(() => summarize(sets, midnight), [sets, midnight]);
-  const hours = useMemo(() => hourly(sets, now), [sets, now]);
   const unseen = useMemo(() => (seen === null ? null : summarize(sets, seen)), [sets, seen]);
-  const peak = Math.max(1, ...hours.map((h) => h.count));
 
   const markSeen = () => {
     writeSeen(now);
@@ -124,35 +129,7 @@ export function ChangesView({ sets, now, query, live, canRewindTo, onRewind }: P
         </div>
       </section>
 
-      <section className="feed-strip" aria-label="Activity over the last day">
-        <div className="feed-strip-head">
-          <span className="feed-strip-title">Last 24 hours</span>
-          <span className="feed-legend">
-            <span>
-              <i className="sw changes" />
-              Changes
-            </span>
-            <span>
-              <i className="sw broke" />
-              Broke something
-            </span>
-            <span>
-              <i className="sw drift" />
-              Drift
-            </span>
-          </span>
-        </div>
-        <div className="feed-bars">
-          {hours.map((h) => (
-            <div
-              key={h.start}
-              className={`feed-bar${h.broke ? " broke" : h.drift ? " drift" : h.count ? " changes" : ""}`}
-              style={{ height: h.count ? `${Math.max(14, (h.count / peak) * 64)}px` : "3px" }}
-              title={`${hm(new Date(h.start).toISOString())} · ${h.count} change${h.count === 1 ? "" : "s"}`}
-            />
-          ))}
-        </div>
-      </section>
+      <ActivityHistogram sets={charted} now={now} range={range} onRange={setRange} picked={picked} onPick={setPicked} />
 
       <div className="feed-filters" role="group" aria-label="Show">
         {FILTERS.map((f) => (
@@ -165,7 +142,9 @@ export function ChangesView({ sets, now, query, live, canRewindTo, onRewind }: P
 
       <section className="feed-list" aria-label="Changes">
         {shown.length === 0 && (
-          <div className="feed-empty">{sets.length === 0 ? "No changes recorded yet. They appear here as they happen." : "No changes match."}</div>
+          <div className="feed-empty">
+            {sets.length === 0 ? "No changes recorded yet. They appear here as they happen." : "No changes match in this time. Pick a longer range, or clear the search and filters."}
+          </div>
         )}
         {shown.map((s) => (
           <article key={s.id} className={`feed-card ${s.verdict || "judging"}`}>

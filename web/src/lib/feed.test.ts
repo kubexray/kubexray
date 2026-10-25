@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Entry, Set as ChangeSet } from "../gen/feed";
-import { applyFilter, author, filterCounts, hourly, matches, searchView, summarize } from "./feed";
+import { applyFilter, author, buckets, filterCounts, matches, searchView, summarize } from "./feed";
 import type { NamespaceView } from "./view";
 
 const T = (m: number) => new Date(Date.UTC(2026, 9, 24, 10, m)).toISOString();
@@ -44,11 +44,22 @@ describe("change feed", () => {
     expect(summarize(sets, Date.parse(T(8)))).toEqual({ changes: 3, authors: 3, broke: 1, healthy: 2, settling: 0, drift: 1 });
   });
 
-  it("counts changes per hour, flagging what broke", () => {
-    const hours = hourly(sets, Date.parse(T(45)));
-    expect(hours).toHaveLength(24);
-    expect(hours[23]).toMatchObject({ count: 4, broke: true, drift: true });
-    expect(hours.slice(0, 23).every((h) => h.count === 0)).toBe(true);
+  it("buckets changes for the histogram, by what they did", () => {
+    const bars = buckets(sets, "1h", Date.parse(T(45)));
+    expect(bars).toHaveLength(60);
+    expect(bars.at(-1)!.start).toBe(Date.parse(T(45))); // the bar now is in comes last
+    expect(buckets([set({ at: T(45) })], "1h", Date.parse(T(45))).at(-1)!.sets).toHaveLength(1);
+    const at = (m: number) => bars.find((b) => b.start <= Date.parse(T(m)) && Date.parse(T(m)) < b.end)!;
+    expect(at(30).counts).toMatchObject({ broke: 1 });
+    expect(at(10).counts).toMatchObject({ drift: 1 });
+    expect(at(5).counts).toMatchObject({ settling: 1 });
+    expect(at(20).sets.map((s) => s.id)).toEqual(["b"]);
+    expect(buckets(sets, "7d", Date.parse(T(45)))).toHaveLength(42);
+  });
+
+  it("filters to a window picked on the histogram", () => {
+    expect(applyFilter(sets, "all", "", [Date.parse(T(9)), Date.parse(T(25))]).map((s) => s.id)).toEqual(["b", "c"]);
+    expect(filterCounts(sets, "", [Date.parse(T(29)), Date.parse(T(31))]).all).toBe(1);
   });
 
   it("narrows the map to matching apps", () => {
