@@ -47,7 +47,8 @@ describe("change feed", () => {
   it("buckets changes for the histogram, by what they did", () => {
     const bars = buckets(sets, "1h", Date.parse(T(45)));
     expect(bars).toHaveLength(60);
-    expect(bars.at(-1)!.end).toBe(Date.parse(T(45)));
+    expect(bars.at(-1)!.start).toBe(Date.parse(T(45))); // the bar now is in comes last
+    expect(buckets([set({ at: T(45) })], "1h", Date.parse(T(45))).at(-1)!.sets).toHaveLength(1);
     const at = (m: number) => bars.find((b) => b.start <= Date.parse(T(m)) && Date.parse(T(m)) < b.end)!;
     expect(at(30).counts).toMatchObject({ broke: 1 });
     expect(at(10).counts).toMatchObject({ drift: 1 });

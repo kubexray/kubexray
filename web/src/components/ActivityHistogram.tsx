@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { Set as ChangeSet } from "../gen/feed";
 import { author, buckets, type Bucket, type Outcome, outcome, type Range, RANGES, type Window } from "../lib/feed";
 import { hm } from "../lib/format";
@@ -8,9 +8,9 @@ interface Props {
   now: number;
   range: Range;
   onRange: (r: Range) => void;
-  /** The window picked by clicking or dragging across bars. */
-  window: Window | null;
-  onWindow: (w: Window | null) => void;
+  /** The time picked by clicking or dragging across bars. */
+  picked: Window | null;
+  onPick: (w: Window | null) => void;
 }
 
 const ORDER: Outcome[] = ["broke", "drift", "settling", "healthy", "other"];
@@ -24,22 +24,27 @@ function when(t: number, range: Range): string {
 
 /** Changes over time, Kibana style: hover a bar to see its changes, click it
  * to show only those, drag across bars to pick a range. */
-export function ActivityHistogram({ sets, now, range, onRange, window, onWindow }: Props) {
+export function ActivityHistogram({ sets, now, range, onRange, picked, onPick }: Props) {
   const bars = useMemo(() => buckets(sets, range, now), [sets, range, now]);
   const [hover, setHover] = useState<number | null>(null);
   const [drag, setDrag] = useState<{ from: number; to: number } | null>(null);
   const peak = Math.max(1, ...bars.map((b) => b.sets.length));
   const total = bars.reduce((n, b) => n + b.sets.length, 0);
 
-  const picked = (i: number, b: Bucket) =>
-    drag ? i >= Math.min(drag.from, drag.to) && i <= Math.max(drag.from, drag.to) : !!window && b.start < window[1] && b.end > window[0];
-  const finish = () => {
+  const inPick = (i: number, b: Bucket) =>
+    drag ? i >= Math.min(drag.from, drag.to) && i <= Math.max(drag.from, drag.to) : !!picked && b.start < picked[1] && b.end > picked[0];
+  // A drag ends wherever the button is released, inside the plot or not.
+  useEffect(() => {
     if (!drag) return;
-    const lo = bars[Math.min(drag.from, drag.to)];
-    const hi = bars[Math.max(drag.from, drag.to)];
-    setDrag(null);
-    if (lo && hi) onWindow([lo.start, hi.end]);
-  };
+    const finish = () => {
+      const lo = bars[Math.min(drag.from, drag.to)];
+      const hi = bars[Math.max(drag.from, drag.to)];
+      setDrag(null);
+      if (lo && hi) onPick([lo.start, hi.end]);
+    };
+    addEventListener("pointerup", finish);
+    return () => removeEventListener("pointerup", finish);
+  }, [drag, bars, onPick]);
   const ticks = [0, Math.floor(bars.length / 4), Math.floor(bars.length / 2), Math.floor((bars.length * 3) / 4)];
   const tip = hover !== null && !drag ? bars[hover] : undefined;
 
@@ -50,10 +55,10 @@ export function ActivityHistogram({ sets, now, range, onRange, window, onWindow 
           <span>
             {total} change{total === 1 ? "" : "s"} in the last {RANGES.find((r) => r.id === range)?.label.toLowerCase()}
           </span>
-          {window && (
+          {picked && (
             <span className="hist-window">
-              Showing {when(window[0], range)} – {when(window[1], range)}
-              <button type="button" onClick={() => onWindow(null)}>
+              Showing {when(picked[0], range)} – {when(picked[1], range)}
+              <button type="button" onClick={() => onPick(null)}>
                 Clear
               </button>
             </span>
@@ -77,7 +82,7 @@ export function ActivityHistogram({ sets, now, range, onRange, window, onWindow 
                 className={range === r.id ? "on" : ""}
                 onClick={() => {
                   onRange(r.id);
-                  onWindow(null);
+                  onPick(null);
                 }}
               >
                 {r.label}
@@ -87,15 +92,16 @@ export function ActivityHistogram({ sets, now, range, onRange, window, onWindow 
         </div>
       </div>
 
-      <div className="hist-plot" onPointerUp={finish} onPointerLeave={() => setHover(null)}>
-        <div className={`hist-bars${window || drag ? " picking" : ""}`}>
+      <div className="hist-plot" onPointerLeave={() => setHover(null)}>
+        <div className={`hist-bars${picked || drag ? " picking" : ""}`}>
           {bars.map((b, i) => (
             <button
               key={b.start}
               type="button"
-              className={`hist-bar${picked(i, b) ? " picked" : ""}`}
+              className={`hist-bar${inPick(i, b) ? " picked" : ""}`}
               aria-label={`${when(b.start, range)} to ${when(b.end, range)}: ${b.sets.length} change${b.sets.length === 1 ? "" : "s"}`}
               onPointerDown={(e) => {
+                if (e.button !== 0) return; // only the main button picks
                 e.currentTarget.releasePointerCapture(e.pointerId); // let the drag reach the other bars
                 setDrag({ from: i, to: i });
               }}
@@ -108,7 +114,7 @@ export function ActivityHistogram({ sets, now, range, onRange, window, onWindow 
               onKeyDown={(e) => {
                 if (e.key === "Enter" || e.key === " ") {
                   e.preventDefault();
-                  onWindow([b.start, b.end]);
+                  onPick([b.start, b.end]);
                 }
               }}
             >
@@ -121,7 +127,7 @@ export function ActivityHistogram({ sets, now, range, onRange, window, onWindow 
         {tip && (
           <div
             className={`hist-tip ${(hover ?? 0) < bars.length * 0.25 ? "start" : (hover ?? 0) > bars.length * 0.75 ? "end" : ""}`}
-            role="status"
+            aria-hidden="true" // the bar's label says it; a live region would announce every hover
             style={{ left: `${((hover ?? 0) + 0.5) * (100 / bars.length)}%` }}
           >
             <div className="hist-tip-time">

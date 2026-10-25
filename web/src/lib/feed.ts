@@ -1,5 +1,5 @@
 // The change feed's view logic (ADR-0012): filters, search, the summary
-// cards and the hourly strip. The engine (Go) builds and judges the sets;
+// cards and the histogram. The engine (Go) builds and judges the sets;
 // this only arranges them.
 import type { Set as ChangeSet } from "../gen/feed";
 import { hm, who } from "./format";
@@ -106,6 +106,17 @@ export const RANGES: { id: Range; label: string; span: number; bar: number }[] =
   { id: "7d", label: "Week", span: 604_800_000, bar: 14_400_000 },
 ];
 
+export function rangeOf(range: Range): { span: number; bar: number } {
+  return RANGES.find((x) => x.id === range) ?? { span: 86_400_000, bar: 1_800_000 };
+}
+
+/** The time a range covers, ending with the bar now is in. */
+export function rangeWindow(range: Range, now: number): Window {
+  const r = rangeOf(range);
+  const end = Math.floor(now / r.bar) * r.bar + r.bar;
+  return [end - r.span, end];
+}
+
 /** What a set did, for the histogram's colors: the most notable first. */
 export type Outcome = "broke" | "drift" | "settling" | "healthy" | "other";
 
@@ -126,8 +137,8 @@ export interface Bucket {
 
 /** The histogram's bars for a range ending now, oldest first. */
 export function buckets(sets: ChangeSet[], range: Range, now: number): Bucket[] {
-  const r = RANGES.find((x) => x.id === range) ?? { span: 86_400_000, bar: 1_800_000 };
-  const end = Math.ceil(now / r.bar) * r.bar;
+  const r = rangeOf(range);
+  const end = Math.floor(now / r.bar) * r.bar + r.bar; // the bar now is in is the last
   const n = Math.round(r.span / r.bar);
   const first = end - n * r.bar;
   const out: Bucket[] = Array.from({ length: n }, (_, i) => ({

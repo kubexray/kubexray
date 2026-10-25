@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Set as ChangeSet } from "../gen/feed";
-import { applyFilter, author, FILTERS, type Filter, filterCounts, hasDrift, justBefore, type Range, shortName, summarize, verdictLabel, verdictNote, type Window } from "../lib/feed";
+import { applyFilter, author, FILTERS, type Filter, filterCounts, hasDrift, justBefore, type Range, shortName, rangeWindow, summarize, verdictLabel, verdictNote, type Window } from "../lib/feed";
 import { clock, hm } from "../lib/format";
 import { ActivityHistogram } from "./ActivityHistogram";
 
@@ -52,7 +52,7 @@ function touches(s: ChangeSet): string {
 export function ChangesView({ sets, now, query, live, canRewindTo, onRewind }: Props) {
   const [filter, setFilter] = useState<Filter>("all");
   const [range, setRange] = useState<Range>("24h");
-  const [window, setWindow] = useState<Window | null>(null);
+  const [picked, setPicked] = useState<Window | null>(null);
   const [openId, setOpenId] = useState<string | null>(null);
   const open = sets.find((s) => s.id === openId) ?? null; // the live set: its verdict updates
   const [seen, setSeen] = useState<number | null>(() => (live ? readSeen() : null));
@@ -62,8 +62,12 @@ export function ChangesView({ sets, now, query, live, canRewindTo, onRewind }: P
     if (live && readSeen() === null) writeSeen(now);
   }, [live, now]);
 
-  const shown = useMemo(() => applyFilter(sets, filter, query, window), [sets, filter, query, window]);
-  const counts = useMemo(() => filterCounts(sets, query, window), [sets, query, window]);
+  // Like Kibana's time picker, the histogram's range (or the bars picked in
+  // it) scopes the list too; the histogram counts follow the filter and search.
+  const span = useMemo(() => picked ?? rangeWindow(range, now), [picked, range, now]);
+  const shown = useMemo(() => applyFilter(sets, filter, query, span), [sets, filter, query, span]);
+  const counts = useMemo(() => filterCounts(sets, query, span), [sets, query, span]);
+  const charted = useMemo(() => applyFilter(sets, filter, query), [sets, filter, query]);
   const midnight = new Date(now).setHours(0, 0, 0, 0);
   const today = useMemo(() => summarize(sets, midnight), [sets, midnight]);
   const unseen = useMemo(() => (seen === null ? null : summarize(sets, seen)), [sets, seen]);
@@ -125,7 +129,7 @@ export function ChangesView({ sets, now, query, live, canRewindTo, onRewind }: P
         </div>
       </section>
 
-      <ActivityHistogram sets={sets} now={now} range={range} onRange={setRange} window={window} onWindow={setWindow} />
+      <ActivityHistogram sets={charted} now={now} range={range} onRange={setRange} picked={picked} onPick={setPicked} />
 
       <div className="feed-filters" role="group" aria-label="Show">
         {FILTERS.map((f) => (
@@ -139,7 +143,7 @@ export function ChangesView({ sets, now, query, live, canRewindTo, onRewind }: P
       <section className="feed-list" aria-label="Changes">
         {shown.length === 0 && (
           <div className="feed-empty">
-            {sets.length === 0 ? "No changes recorded yet. They appear here as they happen." : window ? "No changes match in the time picked." : "No changes match."}
+            {sets.length === 0 ? "No changes recorded yet. They appear here as they happen." : "No changes match in this time. Pick a longer range, or clear the search and filters."}
           </div>
         )}
         {shown.map((s) => (
