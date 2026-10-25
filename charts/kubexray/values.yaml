@@ -9,14 +9,37 @@ image:
 auth:
   # token: every request needs the token from the kubexray Secret. Open
   #   /?token=<token> once in a browser; API clients send it as a Bearer token.
+  # oidc: people sign in as themselves with your OpenID Connect provider
+  #   (Google, Okta, Entra ID, Keycloak, Dex, Auth0), and auth.allow decides
+  #   who gets in (ADR-0013). Needs an https publicURL or an Ingress with TLS.
+  #   API clients and Alertmanager keep using the token.
   # proxy: kubexray listens on 127.0.0.1 inside the pod, and the sidecar below
   #   (oauth2-proxy or similar) is the only way in.
   mode: token
-  # A Secret with the token under the key "token" (at least 32 characters).
-  # Empty: the chart generates one and keeps it across helm upgrades. With
-  # GitOps (Argo CD, Flux) or helm template, which can't look up the existing
-  # Secret, set your own here. kubexray follows changes to the token.
+  # A Secret with the token under the key "token" (at least 32 characters),
+  # and with mode oidc the key that signs sessions under "session-key" (at
+  # least 32 characters). Empty: the chart generates them and keeps them
+  # across helm upgrades. With GitOps (Argo CD, Flux) or helm template, which
+  # can't look up the existing Secret, set your own here. kubexray follows
+  # changes to the token; a new session key signs everyone out.
   existingSecret: ""
+  oidc:
+    # Register kubexray with the provider as a web application with the
+    # redirect URL https://<your host>/auth/callback, then fill these in.
+    issuer: ""      # e.g. https://accounts.google.com, https://<org>.okta.com
+    clientId: ""
+    clientSecret:
+      existingSecret: ""  # a Secret holding the client secret
+      key: client-secret
+    scopes: []            # besides openid, email and profile; e.g. [groups]
+    groupsClaim: groups   # the ID token claim listing someone's groups
+    sessionTTL: 12h       # how long a sign-in lasts
+  # Who gets in with mode oidc: at least one rule. Signing in alone isn't
+  # enough; with Google it would let in anyone with a Google account.
+  allow:
+    emails: []   # e.g. [ada@example.com]
+    domains: []  # everyone with a verified email here, e.g. [example.com]
+    groups: []   # members of these groups (from groupsClaim)
   proxy:
     # The auth proxy container, used when mode is proxy. It must forward to
     # http://127.0.0.1:8080 and listen on proxy.port.

@@ -105,9 +105,25 @@ Run kubexray in the cluster so the incident from 3 a.m. is still there in the mo
 helm install kubexray charts/kubexray -n kubexray --create-namespace
 ```
 
-It records to a volume (7 days or 1 GiB by default, whichever comes first), keeps its history across restarts, and has read-only access to the kinds it maps. There's no anonymous mode: every request needs the token from the `kubexray` Secret (the install notes print how to open it), or you put an auth proxy such as oauth2-proxy in front with `auth.mode: proxy`. Secrets aren't watched unless you set `rbac.secrets: true`, because Kubernetes can't grant "list Secrets" without their contents.
+It records to a volume (7 days or 1 GiB by default, whichever comes first), keeps its history across restarts, and has read-only access to the kinds it maps. There's no anonymous mode: every request needs the token from the `kubexray` Secret (the install notes print how to open it), or people sign in with your company accounts (below), or you put an auth proxy such as oauth2-proxy in front with `auth.mode: proxy`. Secrets aren't watched unless you set `rbac.secrets: true`, because Kubernetes can't grant "list Secrets" without their contents.
 
 The images aren't published yet; until the first release, build one with `make docker`.
+
+**Sign in with your company accounts.** To put kubexray on the internet, let people sign in as themselves with any OpenID Connect provider: Google, Okta, Microsoft Entra ID, Keycloak, Dex or Auth0 ([ADR-0013](docs/adr/0013-sign-in.md)). Register kubexray with the provider as a web app with the redirect URL `https://<host>/auth/callback`, store the client secret in a Secret, and say who gets in:
+
+```yaml
+auth:
+  mode: oidc
+  oidc:
+    issuer: https://accounts.google.com
+    clientId: 1234-abc.apps.googleusercontent.com
+    clientSecret: {existingSecret: kubexray-oidc, key: client-secret}
+  allow:
+    domains: [example.com]      # and/or emails: [...], groups: [...]
+ingress: {enabled: true, host: kubexray.example.com, tls: [{secretName: kubexray-tls, hosts: [kubexray.example.com]}]}
+```
+
+At least one allow rule is required, because signing in alone would let in anyone with an account at the provider. Sessions last 12 hours (`auth.oidc.sessionTTL`). Sign-ins, denials and replay exports are logged as JSON with `"audit": true`. Alertmanager and scripts keep using the token.
 
 **Alerts with the cause attached.** Add kubexray as an Alertmanager receiver and give it a Slack incoming webhook (`alerts.slack.existingSecret`) or any webhook (`alerts.webhook.existingSecret`). When an alert about an app fires, kubexray sends the app's state, what Kubernetes says is wrong, the likely cause and who made the change, with a link that opens kubexray at the moment it started ([ADR-0011](docs/adr/0011-alerts.md)):
 

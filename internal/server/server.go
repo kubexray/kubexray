@@ -24,6 +24,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"regexp"
 	"strconv"
@@ -34,6 +35,7 @@ import (
 	"github.com/coder/websocket"
 
 	"github.com/kubexray/kubexray/internal/alert"
+	"github.com/kubexray/kubexray/internal/auth"
 	"github.com/kubexray/kubexray/internal/cause"
 	"github.com/kubexray/kubexray/internal/feed"
 	"github.com/kubexray/kubexray/internal/graph"
@@ -98,6 +100,10 @@ type Remote struct {
 	NoAuth       bool     // only with a loopback Addr: an auth proxy is the way in
 	AllowedHosts []string // host names besides localhost, e.g. an Ingress's
 	SecureCookie bool     // behind TLS (an Ingress)
+	// OIDC, when set, signs people in as themselves (ADR-0013). Token is
+	// still required: machines (Alertmanager, scripts) send it as a Bearer
+	// token. Browsers can no longer use it.
+	OIDC *auth.OIDC
 }
 
 // MinTokenLength is the shortest token serve mode accepts.
@@ -299,6 +305,7 @@ func (s *Server) Handler() http.Handler {
 		api.HandleFunc("GET /api/changes", s.changes)
 		api.HandleFunc("GET /api/feed", s.feed)
 		api.HandleFunc("GET /api/export", s.export)
+		api.HandleFunc("GET /api/me", s.me)
 		if s.alerts.Enabled() {
 			api.HandleFunc("POST /api/alertmanager", s.alertmanager)
 		}
@@ -407,11 +414,22 @@ func (s *Server) session(next http.Handler) http.Handler {
 			}
 			// API clients (scripts, curl) send the token as a bearer token.
 			if tok, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer "); ok {
+				if o := s.remote.OIDC; o != nil && !o.TokenAllowed(r) {
+					http.Error(w, "too many invalid tokens; wait a minute", http.StatusTooManyRequests)
+					return
+				}
 				if !s.valid(tok) {
+					if o := s.remote.OIDC; o != nil {
+						o.FailedToken(r)
+					}
 					http.Error(w, "invalid token", http.StatusUnauthorized)
 					return
 				}
 				next.ServeHTTP(w, r)
+				return
+			}
+			if o := s.remote.OIDC; o != nil {
+				s.signedIn(o, next, w, r)
 				return
 			}
 		}
@@ -448,6 +466,54 @@ func (s *Server) session(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// signedIn serves a browser request in OIDC mode: the sign-in pages, or the
+// request with who made it, or a way to sign in.
+func (s *Server) signedIn(o *auth.OIDC, next http.Handler, w http.ResponseWriter, r *http.Request) {
+	switch r.URL.Path {
+	case auth.LoginPath:
+		o.Login(w, r)
+		return
+	case auth.CallbackPath:
+		o.Callback(w, r)
+		return
+	case auth.LogoutPath:
+		o.Logout(w, r)
+		return
+	}
+	if u, ok := o.User(r); ok {
+		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), userKey{}, u)))
+		return
+	}
+	if strings.HasPrefix(r.URL.Path, "/api/") || r.Method != http.MethodGet {
+		http.Error(w, "sign in to kubexray first", http.StatusUnauthorized)
+		return
+	}
+	http.Redirect(w, r, auth.LoginPath+"?return="+url.QueryEscape(r.URL.RequestURI()), http.StatusFound)
+}
+
+// userKey keys the signed-in user in a request's context.
+type userKey struct{}
+
+// user is who made a request, when they signed in (ADR-0013).
+func user(r *http.Request) (auth.User, bool) {
+	u, ok := r.Context().Value(userKey{}).(auth.User)
+	return u, ok
+}
+
+// me tells the UI who is signed in: an empty object when nobody is (token
+// and proxy modes).
+func (s *Server) me(w http.ResponseWriter, r *http.Request) {
+	u, ok := user(r)
+	if !ok {
+		writeJSON(w, struct{}{})
+		return
+	}
+	writeJSON(w, struct {
+		auth.User
+		SignOut string `json:"signOut"`
+	}{u, auth.LogoutPath})
 }
 
 func (s *Server) valid(tok string) bool {
@@ -727,6 +793,9 @@ func (s *Server) export(w http.ResponseWriter, r *http.Request) {
 		s.log.Warn("exporting a replay", "err", err)
 		http.Error(w, "couldn't write the replay", http.StatusInternalServerError)
 		return
+	}
+	if u, ok := user(r); ok {
+		s.log.Info("replay exported", "audit", true, "event", "export", "email", u.Email, "from", from, "to", to, "anonymized", anonymize)
 	}
 	name := "kubexray-" + from.UTC().Format("20060102-150405") + replay.Ext
 	w.Header().Set("Content-Type", "application/gzip")

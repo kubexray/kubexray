@@ -16,6 +16,7 @@ Short documents capturing significant decisions, their context and consequences.
 | [0010](0010-in-cluster-mode.md) | In-cluster mode: always-on recording | Accepted |
 | [0011](0011-alerts.md) | Alerts: from Alertmanager to the likely cause | Accepted |
 | [0012](0012-change-feed.md) | Change feed: every change, what it did | Accepted |
+| [0013](0013-sign-in.md) | Sign-in for kubexray on the internet | Accepted |
 
 ## Template
 

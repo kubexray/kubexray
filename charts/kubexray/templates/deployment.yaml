@@ -1,8 +1,6 @@
 {{- $proxy := eq .Values.auth.mode "proxy" }}
-{{- $publicURL := .Values.publicURL }}
-{{- if and (not $publicURL) .Values.ingress.enabled .Values.ingress.host }}
-{{- $publicURL = printf "%s://%s" (ternary "https" "http" (not (empty .Values.ingress.tls))) .Values.ingress.host }}
-{{- end }}
+{{- $oidc := eq .Values.auth.mode "oidc" }}
+{{- $publicURL := include "kubexray.publicURL" . }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -34,6 +32,29 @@ spec:
             - --auth=none
             {{- else }}
             - --token-file=/etc/kubexray/token
+            {{- end }}
+            {{- if $oidc }}
+            {{- with .Values.auth.oidc }}
+            - --auth=oidc
+            - --oidc-issuer={{ .issuer }}
+            - --oidc-client-id={{ .clientId }}
+            - --oidc-client-secret-file=/etc/kubexray-oidc/client-secret
+            - --oidc-groups-claim={{ .groupsClaim }}
+            - --session-key-file=/etc/kubexray/session-key
+            - --session-ttl={{ .sessionTTL }}
+            {{- range .scopes }}
+            - --oidc-scope={{ . }}
+            {{- end }}
+            {{- end }}
+            {{- range .Values.auth.allow.emails }}
+            - --allow-email={{ . }}
+            {{- end }}
+            {{- range .Values.auth.allow.domains }}
+            - --allow-domain={{ . }}
+            {{- end }}
+            {{- range .Values.auth.allow.groups }}
+            - --allow-group={{ . }}
+            {{- end }}
             {{- end }}
             {{- if .Values.persistence.enabled }}
             - --data-dir=/data
@@ -79,6 +100,9 @@ spec:
             {{- if not $proxy }}
             - {name: token, mountPath: /etc/kubexray, readOnly: true}
             {{- end }}
+            {{- if $oidc }}
+            - {name: oidc, mountPath: /etc/kubexray-oidc, readOnly: true}
+            {{- end }}
             {{- if .Values.alerts.slack.existingSecret }}
             - {name: slack, mountPath: /etc/kubexray-alerts/slack, readOnly: true}
             {{- end }}
@@ -99,7 +123,17 @@ spec:
         - name: token
           secret:
             secretName: {{ include "kubexray.tokenSecret" . }}
-            items: [{key: token, path: token}]
+            items:
+              - {key: token, path: token}
+              {{- if $oidc }}
+              - {key: session-key, path: session-key}
+              {{- end }}
+        {{- end }}
+        {{- if $oidc }}
+        {{- with .Values.auth.oidc.clientSecret }}
+        - name: oidc
+          secret: {secretName: {{ .existingSecret }}, items: [{key: {{ .key }}, path: client-secret}]}
+        {{- end }}
         {{- end }}
         {{- with .Values.alerts.slack }}
         {{- if .existingSecret }}

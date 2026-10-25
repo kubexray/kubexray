@@ -23,9 +23,33 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- .Values.auth.existingSecret | default (include "kubexray.fullname" .) -}}
 {{- end -}}
 
+{{- /* Where people open kubexray: publicURL, or the Ingress host. */ -}}
+{{- define "kubexray.publicURL" -}}
+{{- if .Values.publicURL -}}
+{{- .Values.publicURL -}}
+{{- else if and .Values.ingress.enabled .Values.ingress.host -}}
+{{- printf "%s://%s" (ternary "https" "http" (not (empty .Values.ingress.tls))) .Values.ingress.host -}}
+{{- end -}}
+{{- end -}}
+
 {{- define "kubexray.validate" -}}
-{{- if not (has .Values.auth.mode (list "token" "proxy")) -}}
-{{- fail "auth.mode must be token or proxy: kubexray has no anonymous mode" -}}
+{{- if not (has .Values.auth.mode (list "token" "oidc" "proxy")) -}}
+{{- fail "auth.mode must be token, oidc or proxy: kubexray has no anonymous mode" -}}
+{{- end -}}
+{{- if eq .Values.auth.mode "oidc" -}}
+{{- with .Values.auth.oidc -}}
+{{- if not (and .issuer .clientId .clientSecret.existingSecret) -}}
+{{- fail "auth.mode oidc needs auth.oidc.issuer, auth.oidc.clientId and auth.oidc.clientSecret.existingSecret" -}}
+{{- end -}}
+{{- end -}}
+{{- with .Values.auth.allow -}}
+{{- if not (or .emails .domains .groups) -}}
+{{- fail "auth.mode oidc needs at least one of auth.allow.emails, auth.allow.domains or auth.allow.groups: signing in alone would let in anyone with an account at the provider" -}}
+{{- end -}}
+{{- end -}}
+{{- if not (hasPrefix "https://" (include "kubexray.publicURL" .)) -}}
+{{- fail "auth.mode oidc needs an https address: set publicURL, or enable the Ingress with a host and TLS" -}}
+{{- end -}}
 {{- end -}}
 {{- if and (eq .Values.auth.mode "proxy") (or .Values.alerts.slack.existingSecret .Values.alerts.webhook.existingSecret) -}}
 {{- fail "alerts need auth.mode token: behind an auth proxy, Alertmanager has no way to authenticate to kubexray" -}}

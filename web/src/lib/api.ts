@@ -27,3 +27,15 @@ export const fetchWhy = (id: string, signal?: AbortSignal) => get<Incident>(`/ap
 export const fetchChanges = (signal?: AbortSignal) => get<Change[]>("/api/changes", signal);
 
 export const fetchFeed = (signal?: AbortSignal) => get<FeedResponse>("/api/feed", signal);
+
+/** Who is signed in (ADR-0013). Empty without sign-in: token or proxy mode. */
+export interface Me {
+  email?: string;
+  name?: string;
+  signOut?: string;
+}
+
+export const fetchMe = (signal?: AbortSignal) => get<Me>("/api/me", signal);
+
+/** Where to sign in again, coming back to this page. */
+export const signInURL = () => `/auth/login?return=${encodeURIComponent(location.pathname + location.search)}`;
