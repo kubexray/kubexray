@@ -66,12 +66,12 @@ export function matches(s: ChangeSet, query: string): boolean {
   return words.every((w) => text.includes(w));
 }
 
-export function applyFilter(sets: ChangeSet[], filter: Filter, query: string): ChangeSet[] {
-  return sets.filter((s) => tests[filter](s) && matches(s, query));
+export function applyFilter(sets: ChangeSet[], filter: Filter, query: string, window: Window | null = null): ChangeSet[] {
+  return sets.filter((s) => tests[filter](s) && matches(s, query) && inWindow(s, window));
 }
 
-export function filterCounts(sets: ChangeSet[], query: string): Record<Filter, number> {
-  const found = sets.filter((s) => matches(s, query));
+export function filterCounts(sets: ChangeSet[], query: string, window: Window | null = null): Record<Filter, number> {
+  const found = sets.filter((s) => matches(s, query) && inWindow(s, window));
   return Object.fromEntries(FILTERS.map(({ id }) => [id, found.filter(tests[id]).length])) as Record<Filter, number>;
 }
 
@@ -97,28 +97,58 @@ export function summarize(sets: ChangeSet[], since: number): Summary {
   };
 }
 
-export interface Hour {
-  start: number;
-  count: number;
-  broke: boolean;
-  drift: boolean;
+export type Range = "1h" | "24h" | "7d";
+
+/** The histogram's ranges, each split into about fifty bars. */
+export const RANGES: { id: Range; label: string; span: number; bar: number }[] = [
+  { id: "1h", label: "Hour", span: 3_600_000, bar: 60_000 },
+  { id: "24h", label: "Day", span: 86_400_000, bar: 1_800_000 },
+  { id: "7d", label: "Week", span: 604_800_000, bar: 14_400_000 },
+];
+
+/** What a set did, for the histogram's colors: the most notable first. */
+export type Outcome = "broke" | "drift" | "settling" | "healthy" | "other";
+
+export function outcome(s: ChangeSet): Outcome {
+  if (s.verdict === "broke") return "broke";
+  if (hasDrift(s)) return "drift";
+  if (s.verdict === "settling" || s.verdict === "") return "settling";
+  if (s.verdict === "healthy" || s.verdict === "fixed") return "healthy";
+  return "other";
 }
 
-/** Changes per hour over the last day, oldest first, ending with the current hour. */
-export function hourly(sets: ChangeSet[], now: number): Hour[] {
-  const hour = 3_600_000;
-  const end = Math.floor(now / hour) * hour;
-  const hours: Hour[] = Array.from({ length: 24 }, (_, i) => ({ start: end - (23 - i) * hour, count: 0, broke: false, drift: false }));
-  for (const s of sets) {
-    const i = 23 - Math.floor((end - Math.floor(Date.parse(s.at) / hour) * hour) / hour);
-    const h = hours[i];
-    if (!h) continue;
-    h.count++;
-    h.broke ||= s.verdict === "broke";
-    h.drift ||= hasDrift(s);
-  }
-  return hours;
+export interface Bucket {
+  start: number;
+  end: number;
+  sets: ChangeSet[]; // newest first, like the feed
+  counts: Record<Outcome, number>;
 }
+
+/** The histogram's bars for a range ending now, oldest first. */
+export function buckets(sets: ChangeSet[], range: Range, now: number): Bucket[] {
+  const r = RANGES.find((x) => x.id === range) ?? { span: 86_400_000, bar: 1_800_000 };
+  const end = Math.ceil(now / r.bar) * r.bar;
+  const n = Math.round(r.span / r.bar);
+  const first = end - n * r.bar;
+  const out: Bucket[] = Array.from({ length: n }, (_, i) => ({
+    start: end - (n - i) * r.bar,
+    end: end - (n - i - 1) * r.bar,
+    sets: [],
+    counts: { broke: 0, drift: 0, settling: 0, healthy: 0, other: 0 },
+  }));
+  for (const s of sets) {
+    const b = out[Math.floor((Date.parse(s.at) - first) / r.bar)];
+    if (!b) continue;
+    b.sets.push(s);
+    b.counts[outcome(s)]++;
+  }
+  return out;
+}
+
+/** A time window picked on the histogram: [from, to). */
+export type Window = [from: number, to: number];
+
+export const inWindow = (s: ChangeSet, w: Window | null) => !w || (Date.parse(s.at) >= w[0] && Date.parse(s.at) < w[1]);
 
 /** The map narrowed to apps and Services whose names match a search. */
 export function searchView(view: NamespaceView[], query: string): NamespaceView[] {
