@@ -12,7 +12,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/coder/websocket"
+
 	"github.com/kubexray/kubexray/internal/alert"
+	"github.com/kubexray/kubexray/internal/auth"
+	"github.com/kubexray/kubexray/internal/auth/authtest"
 	"github.com/kubexray/kubexray/internal/graph"
 	"github.com/kubexray/kubexray/internal/recorder"
 	"github.com/kubexray/kubexray/internal/web"
@@ -271,5 +275,116 @@ func TestServeModeCSPIgnoresMalformedHosts(t *testing.T) {
 	resp := f.do(req{path: "/api/history", host: "x;script-src*", bearer: testToken})
 	if csp := resp.header.Get("Content-Security-Policy"); strings.Contains(csp, "script-src*") || !strings.Contains(csp, "connect-src 'self';") {
 		t.Errorf("CSP for a malformed Host = %q", csp)
+	}
+}
+
+func TestServeModeSignIn(t *testing.T) {
+	t.Parallel()
+	p := authtest.New(t)
+	o, err := auth.NewOIDC(t.Context(), auth.Config{
+		Issuer: p.URL, ClientID: "kubexray", ClientSecret: "s", PublicURL: "https://kubexray.example.com",
+		Rules: auth.Rules{Domains: []string{"example.com"}}, SessionKey: []byte(strings.Repeat("k", 32)), SessionTTL: time.Hour,
+	}, slog.New(slog.DiscardHandler))
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := startRemote(t, Remote{Token: testToken, OIDC: o, AllowedHosts: []string{"kubexray.example.com"}})
+	host := "kubexray.example.com"
+
+	// A page without a session goes to sign in, and comes back to it.
+	resp := f.do(req{path: "/?view=changes", host: host})
+	if resp.code != http.StatusFound || resp.header.Get("Location") != "/auth/login?return=%2F%3Fview%3Dchanges" {
+		t.Errorf("page without a session = %d %q", resp.code, resp.header.Get("Location"))
+	}
+	if got := f.status(req{path: "/auth/login", host: host}); got != http.StatusFound {
+		t.Errorf("/auth/login = %d, want a redirect to the provider", got)
+	}
+	// The API answers 401; the token link no longer signs browsers in.
+	if got := f.status(req{path: "/api/history", host: host}); got != http.StatusUnauthorized {
+		t.Errorf("API without a session = %d, want 401", got)
+	}
+	if resp := f.do(req{path: "/?token=" + testToken, host: host}); resp.code != http.StatusFound || len(resp.cookies) != 0 {
+		t.Errorf("token link = %d, cookies %+v; want the sign-in redirect", resp.code, resp.cookies)
+	}
+	// Machines keep the token.
+	if got := f.status(req{path: "/api/history", host: "kx.kubexray.svc", bearer: testToken}); got != http.StatusOK {
+		t.Errorf("bearer token = %d, want 200", got)
+	}
+
+	// Signed in: the API answers, and says who.
+	c, err := o.Session(auth.User{Email: "ada@example.com", Name: "Ada"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	hr, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://"+f.host+"/api/me", nil)
+	hr.Host = host
+	hr.AddCookie(c)
+	got, err := noRedirects.Do(hr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = got.Body.Close() }()
+	body, _ := io.ReadAll(got.Body)
+	if got.StatusCode != http.StatusOK || !strings.Contains(string(body), `"email":"ada@example.com"`) || !strings.Contains(string(body), `"signOut":"/auth/logout"`) {
+		t.Errorf("/api/me = %d %s", got.StatusCode, body)
+	}
+}
+
+func TestServeModeTokenSessionHasNoUser(t *testing.T) {
+	t.Parallel()
+	f := startRemote(t, Remote{Token: testToken})
+	if resp := f.do(req{path: "/api/me", cookie: true}); resp.code != http.StatusOK || strings.TrimSpace(string(resp.body)) != "{}" {
+		t.Errorf("/api/me with a token session = %d %s", resp.code, resp.body)
+	}
+}
+
+func TestServeModeLimitsBadTokens(t *testing.T) {
+	t.Parallel()
+	f := startRemote(t, Remote{Token: testToken})
+	for range badTokens {
+		if got := f.status(req{path: "/api/history", bearer: "wrong-" + testToken}); got != http.StatusUnauthorized {
+			t.Fatalf("bad token = %d, want 401", got)
+		}
+	}
+	if got := f.status(req{path: "/api/history", bearer: "wrong-" + testToken}); got != http.StatusTooManyRequests {
+		t.Errorf("bad token past the limit = %d, want 429", got)
+	}
+}
+
+func TestServeModeStreamEndsWithTheSignIn(t *testing.T) {
+	t.Parallel()
+	p := authtest.New(t)
+	o, err := auth.NewOIDC(t.Context(), auth.Config{
+		Issuer: p.URL, ClientID: "kubexray", ClientSecret: "s", PublicURL: "http://localhost",
+		Rules: auth.Rules{Domains: []string{"example.com"}}, SessionKey: []byte(strings.Repeat("k", 32)), SessionTTL: 2 * time.Second,
+	}, slog.New(slog.DiscardHandler))
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := startRemote(t, Remote{Token: testToken, OIDC: o})
+	c, err := o.Session(auth.User{Email: "ada@example.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := http.Header{}
+	h.Set("Cookie", c.Name+"="+c.Value)
+	h.Set("Origin", "http://"+f.host)
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	conn, resp, err := websocket.Dial(ctx, "ws://"+f.host+"/api/stream", &websocket.DialOptions{HTTPHeader: h})
+	if resp != nil && resp.Body != nil {
+		_ = resp.Body.Close()
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = conn.CloseNow() }()
+	for {
+		if _, _, err := conn.Read(ctx); err != nil {
+			if websocket.CloseStatus(err) != websocket.StatusPolicyViolation {
+				t.Fatalf("stream ended with %v, want the sign-in ending", err)
+			}
+			return
+		}
 	}
 }

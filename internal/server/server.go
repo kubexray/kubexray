@@ -24,6 +24,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"regexp"
 	"strconv"
@@ -34,6 +35,7 @@ import (
 	"github.com/coder/websocket"
 
 	"github.com/kubexray/kubexray/internal/alert"
+	"github.com/kubexray/kubexray/internal/auth"
 	"github.com/kubexray/kubexray/internal/cause"
 	"github.com/kubexray/kubexray/internal/feed"
 	"github.com/kubexray/kubexray/internal/graph"
@@ -74,9 +76,10 @@ type Server struct {
 	csp    string
 	cookie string // session cookie name, set by Listen
 
-	replay []byte     // player mode: the one replay file served (kubexray play)
-	remote *Remote    // serve mode (kubexray serve): reachable over the network
-	tokens *tokenFile // serve mode with a token file
+	replay []byte        // player mode: the one replay file served (kubexray play)
+	remote *Remote       // serve mode (kubexray serve): reachable over the network
+	tokens *tokenFile    // serve mode with a token file
+	limit  *auth.Limiter // serve mode: bad bearer tokens per address
 
 	alerts    *alert.Notifier // serve mode: Alertmanager notifications (ADR-0011)
 	publicURL string          // where people open kubexray, for links in alerts
@@ -98,7 +101,17 @@ type Remote struct {
 	NoAuth       bool     // only with a loopback Addr: an auth proxy is the way in
 	AllowedHosts []string // host names besides localhost, e.g. an Ingress's
 	SecureCookie bool     // behind TLS (an Ingress)
+	// OIDC, when set, signs people in as themselves (ADR-0013). Token is
+	// still required: machines (Alertmanager, scripts) send it as a Bearer
+	// token. Browsers can no longer use it.
+	OIDC *auth.OIDC
 }
+
+// badTokens is how many bad bearer tokens an address may send a minute.
+// Tokens are too long to guess anyway; this keeps a client stuck on an old
+// one from flooding the log. Behind an Ingress every client shares one
+// address, but in-cluster clients like Alertmanager use the Service.
+const badTokens = 30
 
 // MinTokenLength is the shortest token serve mode accepts.
 const MinTokenLength = 32
@@ -168,6 +181,7 @@ func (s *Server) ListenRemote(ctx context.Context, r Remote) (net.Listener, erro
 	}
 	s.remote = &r
 	s.token = r.Token
+	s.limit = auth.NewLimiter(badTokens, time.Minute)
 	s.host = ln.Addr().String()
 	if r.TokenFile != "" {
 		s.tokens = &tokenFile{path: r.TokenFile, token: r.Token, now: s.now}
@@ -299,6 +313,7 @@ func (s *Server) Handler() http.Handler {
 		api.HandleFunc("GET /api/changes", s.changes)
 		api.HandleFunc("GET /api/feed", s.feed)
 		api.HandleFunc("GET /api/export", s.export)
+		api.HandleFunc("GET /api/me", s.me)
 		if s.alerts.Enabled() {
 			api.HandleFunc("POST /api/alertmanager", s.alertmanager)
 		}
@@ -407,11 +422,21 @@ func (s *Server) session(next http.Handler) http.Handler {
 			}
 			// API clients (scripts, curl) send the token as a bearer token.
 			if tok, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer "); ok {
+				ip := auth.ClientIP(r)
+				if !s.limit.Allow(ip) {
+					http.Error(w, "too many invalid tokens; wait a minute", http.StatusTooManyRequests)
+					return
+				}
 				if !s.valid(tok) {
+					s.limit.Fail(ip)
 					http.Error(w, "invalid token", http.StatusUnauthorized)
 					return
 				}
 				next.ServeHTTP(w, r)
+				return
+			}
+			if o := s.remote.OIDC; o != nil {
+				s.signedIn(o, next, w, r)
 				return
 			}
 		}
@@ -448,6 +473,60 @@ func (s *Server) session(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// signedIn serves a browser request in OIDC mode: the sign-in pages, or the
+// request with who made it, or a way to sign in.
+func (s *Server) signedIn(o *auth.OIDC, next http.Handler, w http.ResponseWriter, r *http.Request) {
+	switch r.URL.Path {
+	case auth.LoginPath:
+		o.Login(w, r)
+		return
+	case auth.CallbackPath:
+		o.Callback(w, r)
+		return
+	case auth.LogoutPath:
+		o.Logout(w, r)
+		return
+	}
+	if u, until, ok := o.User(r); ok {
+		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), userKey{}, signIn{u, until})))
+		return
+	}
+	if strings.HasPrefix(r.URL.Path, "/api/") || r.Method != http.MethodGet {
+		http.Error(w, "sign in to kubexray first", http.StatusUnauthorized)
+		return
+	}
+	http.Redirect(w, r, auth.LoginPath+"?return="+url.QueryEscape(r.URL.RequestURI()), http.StatusFound)
+}
+
+// userKey keys the sign-in in a request's context.
+type userKey struct{}
+
+// signIn is who made a request and when their sign-in ends (ADR-0013).
+type signIn struct {
+	user  auth.User
+	until time.Time
+}
+
+// user is who made a request, when they signed in.
+func user(r *http.Request) (auth.User, bool) {
+	si, ok := r.Context().Value(userKey{}).(signIn)
+	return si.user, ok
+}
+
+// me tells the UI who is signed in: an empty object when nobody is (token
+// and proxy modes).
+func (s *Server) me(w http.ResponseWriter, r *http.Request) {
+	u, ok := user(r)
+	if !ok {
+		writeJSON(w, struct{}{})
+		return
+	}
+	writeJSON(w, struct {
+		auth.User
+		SignOut string `json:"signOut"`
+	}{u, auth.LogoutPath})
 }
 
 func (s *Server) valid(tok string) bool {
@@ -487,6 +566,14 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 	defer func() { _ = conn.CloseNow() }()
 	conn.SetReadLimit(maxClientFrame)
 	ctx := conn.CloseRead(r.Context()) // clients don't send anything yet; this handles close and pings
+	// A stream ends with the sign-in it was opened with; the UI then finds
+	// it's signed out.
+	var ended <-chan time.Time
+	if si, ok := r.Context().Value(userKey{}).(signIn); ok {
+		t := time.NewTimer(si.until.Sub(s.now()))
+		defer t.Stop()
+		ended = t.C
+	}
 
 	send := func(raw []byte) error {
 		wctx, cancel := context.WithTimeout(ctx, writeTimeout)
@@ -503,6 +590,9 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 	for {
 		select {
 		case <-ctx.Done():
+			return
+		case <-ended:
+			_ = conn.Close(websocket.StatusPolicyViolation, "sign-in ended")
 			return
 		case raw, ok := <-cl.send:
 			if !ok {
@@ -727,6 +817,9 @@ func (s *Server) export(w http.ResponseWriter, r *http.Request) {
 		s.log.Warn("exporting a replay", "err", err)
 		http.Error(w, "couldn't write the replay", http.StatusInternalServerError)
 		return
+	}
+	if u, ok := user(r); ok {
+		s.log.Info("replay exported", "audit", true, "event", "export", "email", u.Email, "from", from, "to", to, "anonymized", anonymize)
 	}
 	name := "kubexray-" + from.UTC().Format("20060102-150405") + replay.Ext
 	w.Header().Set("Content-Type", "application/gzip")

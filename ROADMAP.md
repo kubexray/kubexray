@@ -143,7 +143,8 @@ kubexray answers all three, free and open source, from a single binary on your l
 - [x] Drift: hand edits to objects Helm, Argo CD or Flux manage.
 - [x] Changes view: "since you last looked", today at a glance, an hourly strip, filters, search, and a detail drawer that rewinds the map to just before a change. Incidents view: what's broken now and the changes that broke something.
 - [ ] Daily digest to Slack or a webhook: what changed yesterday, what broke, what drifted.
-- [ ] Sign-in for kubexray on the internet: built-in OIDC (Google, GitHub, Okta), per-person sessions, an audit trail.
+- [x] Sign-in for kubexray on the internet: built-in OIDC (Google, Okta, Entra ID, Keycloak, Dex), an allow-list of emails, domains and groups, per-person sessions, an audit trail, all from Helm values.
+- [ ] GitHub sign-in (organizations and teams), which isn't an OIDC provider.
 
 **Done when:** a day of changes on the demo cluster reads correctly in the feed, and the digest posts it.
 

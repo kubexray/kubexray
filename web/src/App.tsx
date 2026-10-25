@@ -9,7 +9,7 @@ import { Timeline } from "./components/Timeline";
 import { Workspace } from "./components/Workspace";
 import type { Change, Group, Incident } from "./gen/cause";
 import type { FeedResponse, HistoryResponse } from "./gen/server";
-import { fetchAt, fetchChanges, fetchFeed, fetchHistory, fetchWhy } from "./lib/api";
+import { fetchAt, fetchChanges, fetchFeed, fetchHistory, fetchMe, fetchWhy, type Me, signInURL } from "./lib/api";
 import { changeEvents, mergeEvents } from "./lib/events";
 import { type ClusterState, fromSnapshot } from "./lib/state";
 import { MAX_EVENTS, useStream } from "./lib/useStream";
@@ -32,6 +32,17 @@ function usePoll<T>(load: (signal: AbortSignal) => Promise<T | null>, every: num
     };
   }, [load, every]);
   return value;
+}
+
+/** Who is signed in, asked once. */
+function useMe(): Me | null {
+  const [me, setMe] = useState<Me | null>(null);
+  useEffect(() => {
+    const ctl = new AbortController();
+    fetchMe(ctl.signal).then(setMe, () => {});
+    return () => ctl.abort();
+  }, []);
+  return me;
 }
 
 interface Moment {
@@ -114,6 +125,7 @@ const APP_KINDS = new Set(["Deployment", "StatefulSet", "DaemonSet", "Job", "Rep
 /** Live mode: the cluster as it is, with rewind over the recording. */
 export function App() {
   const stream = useStream();
+  const me = useMe();
   const history = usePoll<HistoryResponse>(fetchHistory, 5000);
   const changes = usePoll<Change[]>(fetchChanges, 10_000);
   const feed = usePoll<FeedResponse>(fetchFeed, 5000);
@@ -149,7 +161,13 @@ export function App() {
         <h1>
           kube<span>xray</span>
         </h1>
-        <p>This tab isn't signed in. Open kubexray with the link it printed in your terminal.</p>
+        {me?.email ? (
+          <p>
+            Your sign-in has ended. <a href={signInURL()}>Sign in again</a>
+          </p>
+        ) : (
+          <p>This tab isn't signed in. Open kubexray with the link it printed in your terminal.</p>
+        )}
       </main>
     );
   }
@@ -193,6 +211,7 @@ export function App() {
             rewound={!!at}
             nav={{ active: view, onChange: setView, incidents: incidents.length }}
             search={{ value: query, onChange: setQuery }}
+            me={me}
           />
         )}
         notice={missing && <div className="notice">kubexray has no history for that moment. Pick a later time, or go back to live.</div>}

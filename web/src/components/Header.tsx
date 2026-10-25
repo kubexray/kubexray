@@ -1,4 +1,5 @@
 import { useState } from "react";
+import type { Me } from "../lib/api";
 import { applyTheme, savedTheme, type Theme } from "../lib/theme";
 import type { StreamStatus } from "../lib/useStream";
 import { allWorkloads, type NamespaceView, workloadHealth } from "../lib/view";
@@ -22,6 +23,8 @@ interface Props {
   label?: string;
   nav?: { active: View; onChange: (v: View) => void; incidents: number };
   search?: { value: string; onChange: (q: string) => void };
+  /** Who is signed in, with sign-in (ADR-0013). */
+  me?: Me | null;
 }
 
 const VIEWS: { id: View; label: string }[] = [
@@ -30,7 +33,7 @@ const VIEWS: { id: View; label: string }[] = [
   { id: "incidents", label: "Incidents" },
 ];
 
-export function Header({ view, status, rewound = false, label, nav, search }: Props) {
+export function Header({ view, status, rewound = false, label, nav, search, me }: Props) {
   const ws = allWorkloads(view);
   const count = (h: string) => ws.filter(({ w }) => workloadHealth(w) === h).length;
   const pods = ws.reduce((n, { w }) => n + w.pods.length, 0);
@@ -84,7 +87,26 @@ export function Header({ view, status, rewound = false, label, nav, search }: Pr
         </span>
       </div>
       <ThemeToggle />
+      {me?.email && <Account me={me} />}
     </header>
+  );
+}
+
+/** Who is signed in, and Sign out. */
+function Account({ me }: { me: Me }) {
+  const who = me.name || me.email || "";
+  return (
+    <div className="account">
+      <span className="account-avatar" aria-hidden="true">
+        {who.slice(0, 1).toUpperCase()}
+      </span>
+      <span className="account-who" title={me.email}>
+        {who}
+      </span>
+      <a className="account-out" href={me.signOut ?? "/auth/logout"}>
+        Sign out
+      </a>
+    </div>
   );
 }
 

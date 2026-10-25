@@ -8,6 +8,26 @@ Open it:
   open "http://localhost:8080/?token=$TOKEN"
 
 Scripts can send the token as a header: curl -H "Authorization: Bearer $TOKEN" http://localhost:8080/api/history
+{{- else if eq .Values.auth.mode "oidc" }}
+
+Open {{ include "kubexray.publicURL" . }} and sign in with {{ .Values.auth.oidc.issuer }}.
+The provider must allow the redirect URL {{ include "kubexray.publicURL" . | trimSuffix "/" }}/auth/callback.
+
+Who gets in:
+{{- with .Values.auth.allow }}
+{{- range .emails }}
+  - {{ . }}
+{{- end }}
+{{- range .domains }}
+  - anyone with a verified @{{ trimPrefix "@" . }} email
+{{- end }}
+{{- range .groups }}
+  - members of {{ . }}
+{{- end }}
+{{- end }}
+
+Sign-ins, denials and exports are logged as JSON with "audit": true.
+Scripts and Alertmanager use the token: kubectl -n {{ .Release.Namespace }} get secret {{ include "kubexray.tokenSecret" . }} -o jsonpath='{.data.token}' | base64 -d
 {{- else }}
 
 kubexray listens on 127.0.0.1 inside its pod; your auth proxy sidecar is the way in.

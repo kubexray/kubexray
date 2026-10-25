@@ -26,6 +26,11 @@ func TestNDJSONWritesOneLinePerMessage(t *testing.T) {
 // These paths fail before connecting to a cluster.
 func TestRunWithoutACluster(t *testing.T) {
 	t.Parallel()
+	tok := filepath.Join(t.TempDir(), "token")
+	if err := os.WriteFile(tok, []byte("test-token-"+strings.Repeat("a", 32)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	oidc := []string{"serve", "--auth", "oidc", "--token-file", tok}
 	tests := []struct {
 		args    []string
 		wantErr string
@@ -49,7 +54,11 @@ func TestRunWithoutACluster(t *testing.T) {
 		{[]string{"serve", "--token-file", "/no/such/token"}, "reading the token", ""},
 		{[]string{"serve", "--auth", "none"}, "refusing to serve without authentication on :8080", ""},
 		{[]string{"serve", "--auth", "none", "--listen", "0.0.0.0:8080"}, "refusing to serve without authentication", ""},
-		{[]string{"serve", "--auth", "basic"}, `--auth must be "token" or "none"`, ""},
+		{[]string{"serve", "--auth", "basic"}, `--auth must be "token", "oidc" or "none"`, ""},
+		{[]string{"serve", "--auth", "none", "--listen", "127.0.0.1:8080", "--allow-domain", "example.com"}, "need --auth=oidc", ""},
+		{oidc, "needs --oidc-client-secret-file and --session-key-file", ""},
+		{append(oidc, "--oidc-client-secret-file", tok, "--session-key-file", tok, "--oidc-issuer", "https://idp.example", "--oidc-client-id", "c", "--public-url", "https://kx.example.com"), "set at least one allowed email, domain or group", ""},
+		{append(oidc, "--oidc-client-secret-file", tok, "--session-key-file", tok, "--oidc-issuer", "https://idp.example", "--oidc-client-id", "c", "--allow-domain", "example.com"), "--public-url", ""},
 		{[]string{"serve", "extra"}, "serve takes no arguments", ""},
 		{[]string{"serve", "--auth", "none", "--listen", "127.0.0.1:8080", "--public-url", "kubexray.example.com"}, "--public-url must be an http(s) URL", ""},
 		{[]string{"serve", "--auth", "none", "--listen", "127.0.0.1:8080", "--slack-webhook-file", "/no/such"}, "--slack-webhook-file", ""},
