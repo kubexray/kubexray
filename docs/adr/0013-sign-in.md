@@ -23,11 +23,11 @@ Signing in proves who someone is; an allow-list decides whether they get in. At 
 - `allow.domains`: everyone whose verified email is in a domain
 - `allow.groups`: members of a group, from the ID token's groups claim (Okta, Entra ID and Keycloak can include it)
 
-The email must be verified (`email_verified`). Everyone who gets in has the same read-only access: kubexray never changes the cluster, so there are no roles.
+Email and domain rules use the email only when the provider says it's verified (`email_verified`), because some providers let people put any address on their account. Group rules don't need an email, which is how Microsoft Entra ID (no `email_verified`) is used. Everyone who gets in has the same read-only access: kubexray never changes the cluster, so there are no roles.
 
 ### 3. Sessions
 
-After sign-in kubexray sets a session cookie: the person's email and name and an expiry (default 12 hours), signed with HMAC-SHA256 under a key from a Secret, so sessions survive restarts and any replica can check them. It is HttpOnly and Secure. It is `SameSite=Lax`, because the provider redirects back from another site and a Strict cookie wouldn't be sent there. Lax still keeps the cookie off cross-site subresource requests, every API call is read-only, and WebSockets keep their Origin check. Signing out clears it. A changed key signs everyone out.
+After sign-in kubexray sets a session cookie: the person's email and name and an expiry (default 12 hours), signed with HMAC-SHA256 under a key from a Secret, so sessions survive restarts and any replica can check them. It is HttpOnly and Secure. It is `SameSite=Lax`, because the provider redirects back from another site and a Strict cookie wouldn't be sent there. Lax still keeps the cookie off cross-site subresource requests, every API call is read-only, and WebSockets keep their Origin check. Signing out clears it in that browser. Sessions are stateless, so a copied cookie stays valid until it expires; live streams close when the session they were opened with ends. A changed key signs everyone out.
 
 ### 4. Machines keep the token
 
@@ -35,7 +35,7 @@ Alertmanager (ADR-0011) and scripts can't click "sign in". With `--auth=oidc`, B
 
 ### 5. Abuse and audit
 
-Failed sign-ins and bad tokens are rate limited per client address. Audit events are logged as structured JSON with `"audit": true`: sign-in (who, from where), access denied (who, why), sign-out, and replay exports (who, which window, anonymized or not), so a log pipeline can keep and search them.
+Bad bearer tokens are rate limited per client address. Sign-in callbacks aren't: codes are single-use, bound to the PKCE verifier and checked by the provider, and behind an Ingress every client shares one address, so a per-address limit would let anyone lock everyone out. Audit events are logged as structured JSON with `"audit": true`: sign-in (who, from where), access denied (who, why), sign-out, and replay exports (who, which window, anonymized or not), so a log pipeline can keep and search them.
 
 ### 6. The browser side
 

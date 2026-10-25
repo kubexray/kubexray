@@ -78,8 +78,8 @@ func TestSignIn(t *testing.T) {
 	}
 	r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/", nil)
 	r.AddCookie(c)
-	if u, ok := o.User(r); !ok || u.Email != "Ada@Example.com" || u.Name != "Ada" {
-		t.Fatalf("user = %+v %v", u, ok)
+	if u, until, ok := o.User(r); !ok || u.Email != "Ada@Example.com" || u.Name != "Ada" || until.Before(time.Now().Add(59*time.Minute)) {
+		t.Fatalf("user = %+v until %v, %v", u, until, ok)
 	}
 
 	out := httptest.NewRecorder()
@@ -115,10 +115,43 @@ func TestSignInRefused(t *testing.T) {
 		})
 	}
 
-	// A group grants access.
-	w := signIn(t, o, p, "/", authtest.Code, map[string]any{"email": "bob@else.org", "email_verified": true, "groups": []string{"sre"}})
-	if w.Code != http.StatusSeeOther || session(w) == nil {
-		t.Fatalf("group member: %d %s", w.Code, w.Body)
+	// A group grants access, with or without an email (Entra ID sends no
+	// email_verified).
+	for _, claims := range []map[string]any{
+		{"email": "bob@else.org", "email_verified": true, "groups": []string{"sre"}},
+		{"preferred_username": "bob@else.org", "groups": []string{"sre"}},
+	} {
+		w := signIn(t, o, p, "/", authtest.Code, claims)
+		if w.Code != http.StatusSeeOther || session(w) == nil {
+			t.Fatalf("group member %v: %d %s", claims, w.Code, w.Body)
+		}
+	}
+	// Some providers send email_verified as a string.
+	if w := signIn(t, o, p, "/", authtest.Code, map[string]any{"email": "ada@example.com", "email_verified": "true"}); w.Code != http.StatusSeeOther {
+		t.Fatalf(`email_verified "true": %d %s`, w.Code, w.Body)
+	}
+}
+
+func TestSignInsInTwoTabs(t *testing.T) {
+	p := authtest.New(t)
+	o := newOIDC(t, p, Rules{Domains: []string{"example.com"}})
+	first := httptest.NewRecorder()
+	o.Login(first, httptest.NewRequestWithContext(t.Context(), http.MethodGet, LoginPath+"?return=/a", nil))
+	second := httptest.NewRecorder()
+	o.Login(second, httptest.NewRequestWithContext(t.Context(), http.MethodGet, LoginPath+"?return=/b", nil))
+
+	// The first tab comes back with both cookies in the jar.
+	auth, _ := url.Parse(first.Header().Get("Location"))
+	q := auth.Query()
+	p.Expect(q.Get("code_challenge"), map[string]any{"iss": p.URL, "aud": "kubexray", "sub": "1", "exp": time.Now().Add(time.Hour).Unix(), "nonce": q.Get("nonce"), "email": "ada@example.com", "email_verified": true})
+	r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, CallbackPath+"?code="+authtest.Code+"&state="+q.Get("state"), nil)
+	for _, c := range append(first.Result().Cookies(), second.Result().Cookies()...) {
+		r.AddCookie(c)
+	}
+	w := httptest.NewRecorder()
+	o.Callback(w, r)
+	if w.Code != http.StatusSeeOther || w.Header().Get("Location") != "/a" {
+		t.Fatalf("first tab = %d %q: %s", w.Code, w.Header().Get("Location"), w.Body)
 	}
 }
 
@@ -146,19 +179,22 @@ func TestCallbackChecksState(t *testing.T) {
 	}
 }
 
-func TestFailuresAreLimited(t *testing.T) {
-	p := authtest.New(t)
-	o := newOIDC(t, p, Rules{Domains: []string{"example.com"}})
-	for range 10 {
-		o.Callback(httptest.NewRecorder(), httptest.NewRequestWithContext(t.Context(), http.MethodGet, CallbackPath, nil))
+func TestLimiter(t *testing.T) {
+	l := NewLimiter(3, time.Minute)
+	for range 3 {
+		if !l.Allow("192.0.2.1") {
+			t.Fatal("refused before the limit")
+		}
+		l.Fail("192.0.2.1")
 	}
-	w := httptest.NewRecorder()
-	o.Callback(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, CallbackPath, nil))
-	if w.Code != http.StatusTooManyRequests {
-		t.Fatalf("11th failure = %d", w.Code)
+	if l.Allow("192.0.2.1") {
+		t.Fatal("allowed past the limit")
 	}
-	o.limit.now = func() time.Time { return time.Now().Add(2 * time.Minute) }
-	if !o.limit.Allow("192.0.2.1") {
+	if !l.Allow("192.0.2.2") {
+		t.Fatal("another address was limited")
+	}
+	l.now = func() time.Time { return time.Now().Add(2 * time.Minute) }
+	if !l.Allow("192.0.2.1") {
 		t.Fatal("the limit should lift after the window")
 	}
 }
@@ -197,6 +233,8 @@ func TestSafeReturn(t *testing.T) {
 		"/\\evil.com":      "/",
 		"https://evil.com": "/",
 		"/x\r\nSet-Cookie": "/",
+		"/\t/evil.com":     "/", // browsers drop the tab: //evil.com
+		"/a\\b":            "/",
 	} {
 		if got := safeReturn(in); got != want {
 			t.Errorf("safeReturn(%q) = %q, want %q", in, got, want)
@@ -209,21 +247,46 @@ func TestSealer(t *testing.T) {
 	now := time.Now()
 	sealed, _ := s.Seal("session", User{Email: "a@b.c"}, now.Add(time.Hour))
 	var u User
-	if !s.Open("session", sealed, now, &u) || u.Email != "a@b.c" {
+	opens := func(s *Sealer, purpose, sealed string, at time.Time) bool {
+		_, ok := s.Open(purpose, sealed, at, &u)
+		return ok
+	}
+	if until, ok := s.Open("session", sealed, now, &u); !ok || u.Email != "a@b.c" || until.Unix() != now.Add(time.Hour).Unix() {
 		t.Fatal("round trip")
 	}
-	if s.Open("flow", sealed, now, &u) {
+	if opens(s, "flow", sealed, now) {
 		t.Error("opened for another purpose")
 	}
-	if s.Open("session", sealed, now.Add(2*time.Hour), &u) {
+	if opens(s, "session", sealed, now.Add(2*time.Hour)) {
 		t.Error("opened after expiry")
 	}
 	body, sig, _ := strings.Cut(sealed, ".")
-	if s.Open("session", body+"x."+sig, now, &u) {
+	if opens(s, "session", body+"x."+sig, now) {
 		t.Error("opened a changed value")
 	}
 	other, _ := NewSealer([]byte(strings.Repeat("o", 32)))
-	if other.Open("session", sealed, now, &u) {
+	if opens(other, "session", sealed, now) {
 		t.Error("opened with another key")
+	}
+}
+
+func TestRules(t *testing.T) {
+	r := Rules{Emails: []string{"ada@example.com"}, Domains: []string{"@corp.example"}, Groups: []string{"sre"}}
+	for _, tc := range []struct {
+		email  string
+		groups []string
+		want   bool
+	}{
+		{"ADA@example.com", nil, true},
+		{"bob@corp.example", nil, true},
+		{"bob@sub.corp.example", nil, false},
+		{"eve@example.com", nil, false},
+		{"", []string{"sre"}, true},
+		{"", []string{"dev"}, false},
+		{"", nil, false},
+	} {
+		if got, _ := r.Allow(tc.email, tc.groups); got != tc.want {
+			t.Errorf("Allow(%q, %v) = %v, want %v", tc.email, tc.groups, got, tc.want)
+		}
 	}
 }

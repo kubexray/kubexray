@@ -36,24 +36,26 @@ spec:
             {{- if $oidc }}
             {{- with .Values.auth.oidc }}
             - --auth=oidc
-            - --oidc-issuer={{ .issuer }}
-            - --oidc-client-id={{ .clientId }}
+            - {{ printf "--oidc-issuer=%s" .issuer | quote }}
+            - {{ printf "--oidc-client-id=%s" .clientId | quote }}
             - --oidc-client-secret-file=/etc/kubexray-oidc/client-secret
-            - --oidc-groups-claim={{ .groupsClaim }}
+            - {{ printf "--oidc-groups-claim=%s" (.groupsClaim | default "groups") | quote }}
             - --session-key-file=/etc/kubexray/session-key
-            - --session-ttl={{ .sessionTTL }}
+            - {{ printf "--session-ttl=%s" (.sessionTTL | default "12h") | quote }}
             {{- range .scopes }}
-            - --oidc-scope={{ . }}
+            - {{ printf "--oidc-scope=%s" . | quote }}
             {{- end }}
             {{- end }}
-            {{- range .Values.auth.allow.emails }}
-            - --allow-email={{ . }}
+            {{- with .Values.auth.allow }}
+            {{- range .emails }}
+            - {{ printf "--allow-email=%s" . | quote }}
             {{- end }}
-            {{- range .Values.auth.allow.domains }}
-            - --allow-domain={{ . }}
+            {{- range .domains }}
+            - {{ printf "--allow-domain=%s" . | quote }}
             {{- end }}
-            {{- range .Values.auth.allow.groups }}
-            - --allow-group={{ . }}
+            {{- range .groups }}
+            - {{ printf "--allow-group=%s" . | quote }}
+            {{- end }}
             {{- end }}
             {{- end }}
             {{- if .Values.persistence.enabled }}

@@ -76,9 +76,10 @@ type Server struct {
 	csp    string
 	cookie string // session cookie name, set by Listen
 
-	replay []byte     // player mode: the one replay file served (kubexray play)
-	remote *Remote    // serve mode (kubexray serve): reachable over the network
-	tokens *tokenFile // serve mode with a token file
+	replay []byte        // player mode: the one replay file served (kubexray play)
+	remote *Remote       // serve mode (kubexray serve): reachable over the network
+	tokens *tokenFile    // serve mode with a token file
+	limit  *auth.Limiter // serve mode: bad bearer tokens per address
 
 	alerts    *alert.Notifier // serve mode: Alertmanager notifications (ADR-0011)
 	publicURL string          // where people open kubexray, for links in alerts
@@ -105,6 +106,12 @@ type Remote struct {
 	// token. Browsers can no longer use it.
 	OIDC *auth.OIDC
 }
+
+// badTokens is how many bad bearer tokens an address may send a minute.
+// Tokens are too long to guess anyway; this keeps a client stuck on an old
+// one from flooding the log. Behind an Ingress every client shares one
+// address, but in-cluster clients like Alertmanager use the Service.
+const badTokens = 30
 
 // MinTokenLength is the shortest token serve mode accepts.
 const MinTokenLength = 32
@@ -174,6 +181,7 @@ func (s *Server) ListenRemote(ctx context.Context, r Remote) (net.Listener, erro
 	}
 	s.remote = &r
 	s.token = r.Token
+	s.limit = auth.NewLimiter(badTokens, time.Minute)
 	s.host = ln.Addr().String()
 	if r.TokenFile != "" {
 		s.tokens = &tokenFile{path: r.TokenFile, token: r.Token, now: s.now}
@@ -414,14 +422,13 @@ func (s *Server) session(next http.Handler) http.Handler {
 			}
 			// API clients (scripts, curl) send the token as a bearer token.
 			if tok, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer "); ok {
-				if o := s.remote.OIDC; o != nil && !o.TokenAllowed(r) {
+				ip := auth.ClientIP(r)
+				if !s.limit.Allow(ip) {
 					http.Error(w, "too many invalid tokens; wait a minute", http.StatusTooManyRequests)
 					return
 				}
 				if !s.valid(tok) {
-					if o := s.remote.OIDC; o != nil {
-						o.FailedToken(r)
-					}
+					s.limit.Fail(ip)
 					http.Error(w, "invalid token", http.StatusUnauthorized)
 					return
 				}
@@ -482,8 +489,8 @@ func (s *Server) signedIn(o *auth.OIDC, next http.Handler, w http.ResponseWriter
 		o.Logout(w, r)
 		return
 	}
-	if u, ok := o.User(r); ok {
-		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), userKey{}, u)))
+	if u, until, ok := o.User(r); ok {
+		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), userKey{}, signIn{u, until})))
 		return
 	}
 	if strings.HasPrefix(r.URL.Path, "/api/") || r.Method != http.MethodGet {
@@ -493,13 +500,19 @@ func (s *Server) signedIn(o *auth.OIDC, next http.Handler, w http.ResponseWriter
 	http.Redirect(w, r, auth.LoginPath+"?return="+url.QueryEscape(r.URL.RequestURI()), http.StatusFound)
 }
 
-// userKey keys the signed-in user in a request's context.
+// userKey keys the sign-in in a request's context.
 type userKey struct{}
 
-// user is who made a request, when they signed in (ADR-0013).
+// signIn is who made a request and when their sign-in ends (ADR-0013).
+type signIn struct {
+	user  auth.User
+	until time.Time
+}
+
+// user is who made a request, when they signed in.
 func user(r *http.Request) (auth.User, bool) {
-	u, ok := r.Context().Value(userKey{}).(auth.User)
-	return u, ok
+	si, ok := r.Context().Value(userKey{}).(signIn)
+	return si.user, ok
 }
 
 // me tells the UI who is signed in: an empty object when nobody is (token
@@ -553,6 +566,14 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 	defer func() { _ = conn.CloseNow() }()
 	conn.SetReadLimit(maxClientFrame)
 	ctx := conn.CloseRead(r.Context()) // clients don't send anything yet; this handles close and pings
+	// A stream ends with the sign-in it was opened with; the UI then finds
+	// it's signed out.
+	var ended <-chan time.Time
+	if si, ok := r.Context().Value(userKey{}).(signIn); ok {
+		t := time.NewTimer(si.until.Sub(s.now()))
+		defer t.Stop()
+		ended = t.C
+	}
 
 	send := func(raw []byte) error {
 		wctx, cancel := context.WithTimeout(ctx, writeTimeout)
@@ -569,6 +590,9 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 	for {
 		select {
 		case <-ctx.Done():
+			return
+		case <-ended:
+			_ = conn.Close(websocket.StatusPolicyViolation, "sign-in ended")
 			return
 		case raw, ok := <-cl.send:
 			if !ok {

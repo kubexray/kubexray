@@ -51,28 +51,28 @@ func (s *Sealer) Seal(purpose string, v any, until time.Time) (string, error) {
 }
 
 // Open checks a sealed value and decodes it into v, unless it was changed,
-// sealed for another purpose, or has expired.
-func (s *Sealer) Open(purpose, sealed string, now time.Time, v any) bool {
+// sealed for another purpose, or has expired. It returns when it expires.
+func (s *Sealer) Open(purpose, sealed string, now time.Time, v any) (time.Time, bool) {
 	body, sig, ok := strings.Cut(sealed, ".")
 	if !ok {
-		return false
+		return time.Time{}, false
 	}
 	got, err := base64.RawURLEncoding.DecodeString(sig)
 	if err != nil || subtle.ConstantTimeCompare(got, s.mac(purpose, body)) != 1 {
-		return false
+		return time.Time{}, false
 	}
 	payload, err := base64.RawURLEncoding.DecodeString(body)
 	if err != nil {
-		return false
+		return time.Time{}, false
 	}
 	var w struct {
 		V json.RawMessage `json:"v"`
 		X int64           `json:"x"`
 	}
 	if json.Unmarshal(payload, &w) != nil || now.Unix() >= w.X {
-		return false
+		return time.Time{}, false
 	}
-	return json.Unmarshal(w.V, v) == nil
+	return time.Unix(w.X, 0), json.Unmarshal(w.V, v) == nil
 }
 
 func (s *Sealer) mac(purpose, body string) []byte {
@@ -83,7 +83,8 @@ func (s *Sealer) mac(purpose, body string) []byte {
 	return h.Sum(nil)
 }
 
-// Cookie names: the session, and the sign-in flow in progress.
+// Cookie names: the session, and the sign-ins in progress (one per
+// sign-in, named after its state).
 const (
 	SessionCookie = "kubexray_signin"
 	flowCookie    = "kubexray_signin_flow"

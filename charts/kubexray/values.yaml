@@ -33,6 +33,8 @@ auth:
       key: client-secret
     scopes: []            # besides openid, email and profile; e.g. [groups]
     groupsClaim: groups   # the ID token claim listing someone's groups
+    # Email and domain rules need the provider to say the email is verified.
+    # Microsoft Entra ID doesn't, so with Entra allow groups (object IDs).
     sessionTTL: 12h       # how long a sign-in lasts
   # Who gets in with mode oidc: at least one rule. Signing in alone isn't
   # enough; with Google it would let in anyone with a Google account.

@@ -12,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/coder/websocket"
+
 	"github.com/kubexray/kubexray/internal/alert"
 	"github.com/kubexray/kubexray/internal/auth"
 	"github.com/kubexray/kubexray/internal/auth/authtest"
@@ -333,5 +335,56 @@ func TestServeModeTokenSessionHasNoUser(t *testing.T) {
 	f := startRemote(t, Remote{Token: testToken})
 	if resp := f.do(req{path: "/api/me", cookie: true}); resp.code != http.StatusOK || strings.TrimSpace(string(resp.body)) != "{}" {
 		t.Errorf("/api/me with a token session = %d %s", resp.code, resp.body)
+	}
+}
+
+func TestServeModeLimitsBadTokens(t *testing.T) {
+	t.Parallel()
+	f := startRemote(t, Remote{Token: testToken})
+	for range badTokens {
+		if got := f.status(req{path: "/api/history", bearer: "wrong-" + testToken}); got != http.StatusUnauthorized {
+			t.Fatalf("bad token = %d, want 401", got)
+		}
+	}
+	if got := f.status(req{path: "/api/history", bearer: "wrong-" + testToken}); got != http.StatusTooManyRequests {
+		t.Errorf("bad token past the limit = %d, want 429", got)
+	}
+}
+
+func TestServeModeStreamEndsWithTheSignIn(t *testing.T) {
+	t.Parallel()
+	p := authtest.New(t)
+	o, err := auth.NewOIDC(t.Context(), auth.Config{
+		Issuer: p.URL, ClientID: "kubexray", ClientSecret: "s", PublicURL: "http://localhost",
+		Rules: auth.Rules{Domains: []string{"example.com"}}, SessionKey: []byte(strings.Repeat("k", 32)), SessionTTL: 2 * time.Second,
+	}, slog.New(slog.DiscardHandler))
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := startRemote(t, Remote{Token: testToken, OIDC: o})
+	c, err := o.Session(auth.User{Email: "ada@example.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := http.Header{}
+	h.Set("Cookie", c.Name+"="+c.Value)
+	h.Set("Origin", "http://"+f.host)
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	conn, resp, err := websocket.Dial(ctx, "ws://"+f.host+"/api/stream", &websocket.DialOptions{HTTPHeader: h})
+	if resp != nil && resp.Body != nil {
+		_ = resp.Body.Close()
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = conn.CloseNow() }()
+	for {
+		if _, _, err := conn.Read(ctx); err != nil {
+			if websocket.CloseStatus(err) != websocket.StatusPolicyViolation {
+				t.Fatalf("stream ended with %v, want the sign-in ending", err)
+			}
+			return
+		}
 	}
 }

@@ -37,14 +37,19 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- fail "auth.mode must be token, oidc or proxy: kubexray has no anonymous mode" -}}
 {{- end -}}
 {{- if eq .Values.auth.mode "oidc" -}}
-{{- with .Values.auth.oidc -}}
-{{- if not (and .issuer .clientId .clientSecret.existingSecret) -}}
+{{- $oidc := .Values.auth.oidc | default dict -}}
+{{- $secret := $oidc.clientSecret | default dict -}}
+{{- if not (and $oidc.issuer $oidc.clientId $secret.existingSecret) -}}
 {{- fail "auth.mode oidc needs auth.oidc.issuer, auth.oidc.clientId and auth.oidc.clientSecret.existingSecret" -}}
 {{- end -}}
-{{- end -}}
-{{- with .Values.auth.allow -}}
-{{- if not (or .emails .domains .groups) -}}
+{{- $allow := .Values.auth.allow | default dict -}}
+{{- if not (or $allow.emails $allow.domains $allow.groups) -}}
 {{- fail "auth.mode oidc needs at least one of auth.allow.emails, auth.allow.domains or auth.allow.groups: signing in alone would let in anyone with an account at the provider" -}}
+{{- end -}}
+{{- with .Values.auth.existingSecret -}}
+{{- $existing := lookup "v1" "Secret" $.Release.Namespace . -}}
+{{- if and $existing (not (hasKey ($existing.data | default dict) "session-key")) -}}
+{{- fail (printf "auth.mode oidc needs a session-key (at least 32 characters) in the Secret %s, next to the token" .) -}}
 {{- end -}}
 {{- end -}}
 {{- if not (hasPrefix "https://" (include "kubexray.publicURL" .)) -}}

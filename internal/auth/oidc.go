@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"cmp"
 	"context"
 	"crypto/rand"
 	"encoding/base64"
@@ -29,12 +30,22 @@ type Rules struct {
 // Empty reports whether no rule is set: nobody would get in.
 func (r Rules) Empty() bool { return len(r.Emails) == 0 && len(r.Domains) == 0 && len(r.Groups) == 0 }
 
-// Allow reports whether someone gets in, and if not, why.
-func (r Rules) Allow(email string, verified bool, groups []string) (bool, string) {
-	if email == "" || !verified {
-		return false, "no verified email"
+// Allow reports whether someone gets in, and if not, why. email is their
+// verified email, or empty: email and domain rules never trust an
+// unverified one, since some providers let people set any address. Group
+// rules don't need an email.
+func (r Rules) Allow(email string, groups []string) (bool, string) {
+	for _, g := range groups {
+		if slices.Contains(r.Groups, g) {
+			return true, ""
+		}
 	}
-	email = strings.ToLower(email)
+	if email == "" {
+		if len(r.Emails)+len(r.Domains) > 0 {
+			return false, "no verified email, and not in an allowed group"
+		}
+		return false, "not in an allowed group"
+	}
 	for _, e := range r.Emails {
 		if strings.EqualFold(e, email) {
 			return true, ""
@@ -45,11 +56,6 @@ func (r Rules) Allow(email string, verified bool, groups []string) (bool, string
 			if strings.EqualFold(strings.TrimPrefix(d, "@"), domain) {
 				return true, ""
 			}
-		}
-	}
-	for _, g := range groups {
-		if slices.Contains(r.Groups, g) {
-			return true, ""
 		}
 	}
 	return false, "not on the allow-list"
@@ -76,7 +82,6 @@ type OIDC struct {
 	seal     *Sealer
 	secure   bool
 	log      *slog.Logger
-	limit    *limiter
 	now      func() time.Time
 }
 
@@ -126,7 +131,6 @@ func NewOIDC(ctx context.Context, cfg Config, log *slog.Logger) (*OIDC, error) {
 		seal:     seal,
 		secure:   public.Scheme == "https",
 		log:      log,
-		limit:    newLimiter(10, time.Minute),
 		now:      time.Now,
 	}, nil
 }
@@ -148,15 +152,15 @@ type flow struct {
 	Return   string `json:"r"`
 }
 
-// User returns who a request is signed in as.
-func (o *OIDC) User(r *http.Request) (User, bool) {
+// User returns who a request is signed in as, and when that sign-in ends.
+func (o *OIDC) User(r *http.Request) (User, time.Time, bool) {
 	c, err := r.Cookie(SessionCookie)
 	if err != nil {
-		return User{}, false
+		return User{}, time.Time{}, false
 	}
 	var u User
-	ok := o.seal.Open("session", c.Value, o.now(), &u)
-	return u, ok
+	until, ok := o.seal.Open("session", c.Value, o.now(), &u)
+	return u, until, ok
 }
 
 // Session is the cookie that signs u in, until the session lifetime ends.
@@ -177,38 +181,39 @@ func (o *OIDC) Login(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "couldn't start signing in", http.StatusInternalServerError)
 		return
 	}
-	http.SetCookie(w, cookie(flowCookie, sealed, flowTTL, o.secure))
+	// One cookie per sign-in, so sign-ins in two tabs don't clash.
+	http.SetCookie(w, cookie(flowName(f.State), sealed, flowTTL, o.secure))
 	http.Redirect(w, r, o.oauth.AuthCodeURL(f.State, oidc.Nonce(f.Nonce), oauth2.S256ChallengeOption(f.Verifier)), http.StatusFound)
 }
 
 // Callback finishes signing in: it checks the state, exchanges the code (with
 // the PKCE verifier), verifies the ID token and its nonce, applies the rules
 // and sets the session.
+//
+// It isn't rate limited per address: codes are single-use, bound to the PKCE
+// verifier and checked by the provider, and behind an Ingress every client
+// has the same address, so a limit would let anyone lock everyone out.
 func (o *OIDC) Callback(w http.ResponseWriter, r *http.Request) {
-	ip := clientIP(r)
-	if !o.limit.Allow(ip) {
-		http.Error(w, "too many failed sign-ins; wait a minute", http.StatusTooManyRequests)
-		return
-	}
+	ip := ClientIP(r)
+	q := r.URL.Query()
+	name := flowName(q.Get("state"))
 	fail := func(code int, msg, reason string) {
-		o.limit.Fail(ip)
 		o.log.Warn("sign-in failed", "audit", true, "event", "signin_failed", "reason", reason, "ip", ip)
-		http.SetCookie(w, cookie(flowCookie, "", -1, o.secure))
+		http.SetCookie(w, cookie(name, "", -1, o.secure))
 		http.Error(w, msg, code)
 	}
 	var f flow
-	c, err := r.Cookie(flowCookie)
-	if err != nil || !o.seal.Open("flow", c.Value, o.now(), &f) {
-		fail(http.StatusBadRequest, "This sign-in expired. Open kubexray again.", "no or expired flow")
+	c, err := r.Cookie(name)
+	if err != nil {
+		fail(http.StatusBadRequest, "This sign-in expired or wasn't started here. Open kubexray again.", "no flow")
 		return
 	}
-	q := r.URL.Query()
+	if _, ok := o.seal.Open("flow", c.Value, o.now(), &f); !ok || q.Get("state") != f.State {
+		fail(http.StatusBadRequest, "This sign-in expired or doesn't match the one started. Open kubexray again.", "expired flow or state mismatch")
+		return
+	}
 	if e := q.Get("error"); e != "" {
 		fail(http.StatusUnauthorized, "The sign-in was cancelled or refused.", "provider: "+e)
-		return
-	}
-	if q.Get("state") == "" || q.Get("state") != f.State {
-		fail(http.StatusBadRequest, "This sign-in doesn't match the one started. Open kubexray again.", "state mismatch")
 		return
 	}
 	token, err := o.oauth.Exchange(r.Context(), q.Get("code"), oauth2.VerifierOption(f.Verifier))
@@ -227,32 +232,28 @@ func (o *OIDC) Callback(w http.ResponseWriter, r *http.Request) {
 		fail(http.StatusUnauthorized, "The provider's answer couldn't be read.", "claims")
 		return
 	}
-	email, _ := claims["email"].(string)
-	verified, _ := claims["email_verified"].(bool)
-	name, _ := claims["name"].(string)
-	groups := stringsOf(claims[o.cfg.GroupsClaim])
-	if ok, why := o.cfg.Rules.Allow(email, verified, groups); !ok {
-		o.limit.Fail(ip)
-		o.log.Warn("access denied", "audit", true, "event", "access_denied", "email", email, "reason", why, "ip", ip)
-		http.SetCookie(w, cookie(flowCookie, "", -1, o.secure))
-		http.Error(w, fmt.Sprintf("%s doesn't have access to this kubexray. Ask whoever runs it to add you.", cmpOr(email, "This account")), http.StatusForbidden)
+	u := userOf(claims)
+	if ok, why := o.cfg.Rules.Allow(u.Email, stringsOf(claims[o.cfg.GroupsClaim])); !ok {
+		o.log.Warn("access denied", "audit", true, "event", "access_denied", "email", u.Email, "name", u.Name, "subject", id.Subject, "reason", why, "ip", ip)
+		http.SetCookie(w, cookie(name, "", -1, o.secure))
+		http.Error(w, fmt.Sprintf("%s doesn't have access to this kubexray. Ask whoever runs it to add you.", cmp.Or(u.Email, u.Name, "This account")), http.StatusForbidden)
 		return
 	}
-	session, err := o.Session(User{Email: email, Name: name})
+	session, err := o.Session(u)
 	if err != nil {
 		http.Error(w, "couldn't finish signing in", http.StatusInternalServerError)
 		return
 	}
-	o.log.Info("signed in", "audit", true, "event", "signin", "email", email, "ip", ip)
-	http.SetCookie(w, cookie(flowCookie, "", -1, o.secure))
+	o.log.Info("signed in", "audit", true, "event", "signin", "email", u.Email, "name", u.Name, "subject", id.Subject, "ip", ip)
+	http.SetCookie(w, cookie(name, "", -1, o.secure))
 	http.SetCookie(w, session)
 	http.Redirect(w, r, f.Return, http.StatusSeeOther)
 }
 
 // Logout clears the session.
 func (o *OIDC) Logout(w http.ResponseWriter, r *http.Request) {
-	if u, ok := o.User(r); ok {
-		o.log.Info("signed out", "audit", true, "event", "signout", "email", u.Email, "ip", clientIP(r))
+	if u, _, ok := o.User(r); ok {
+		o.log.Info("signed out", "audit", true, "event", "signout", "email", u.Email, "name", u.Name, "ip", ClientIP(r))
 	}
 	http.SetCookie(w, cookie(SessionCookie, "", -1, o.secure))
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -266,16 +267,34 @@ const signedOut = `<!doctype html>
 <body><p>You're signed out of kubexray. <a href="/">Sign in again</a></p></body></html>
 `
 
-// FailedToken records a bad bearer token from a request's address, and
-// reports whether that address may still try.
-func (o *OIDC) FailedToken(r *http.Request) bool {
-	ip := clientIP(r)
-	o.limit.Fail(ip)
-	return o.limit.Allow(ip)
+// flowName is the flow cookie's name for a sign-in, from its state: a
+// cookie per sign-in in progress.
+func flowName(state string) string {
+	if len(state) > 16 {
+		state = state[:16]
+	}
+	return flowCookie + "_" + strings.Map(func(r rune) rune {
+		if r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-' || r == '_' {
+			return r
+		}
+		return -1
+	}, state)
 }
 
-// TokenAllowed reports whether a request's address may present a token now.
-func (o *OIDC) TokenAllowed(r *http.Request) bool { return o.limit.Allow(clientIP(r)) }
+// userOf is who an ID token says signed in. Email is set only when the
+// provider says it's verified (a boolean, or the string "true" from some
+// providers); Name falls back to the username or subject.
+func userOf(claims map[string]any) User {
+	email, _ := claims["email"].(string)
+	verified := claims["email_verified"] == true || claims["email_verified"] == "true"
+	if !verified {
+		email = ""
+	}
+	name, _ := claims["name"].(string)
+	username, _ := claims["preferred_username"].(string)
+	sub, _ := claims["sub"].(string)
+	return User{Email: email, Name: cmp.Or(name, username, sub)}
+}
 
 func random() string {
 	b := make([]byte, 24)
@@ -283,10 +302,11 @@ func random() string {
 	return base64.RawURLEncoding.EncodeToString(b)
 }
 
-// safeReturn keeps a return path on this site: "/x" yes, "//evil" or
-// "https://evil" no.
+// safeReturn keeps a return path on this site: "/x" yes; "//evil",
+// "https://evil", or anything with a backslash or control character (which
+// browsers strip or turn into "/") no.
 func safeReturn(p string) string {
-	if !strings.HasPrefix(p, "/") || strings.HasPrefix(p, "//") || strings.HasPrefix(p, "/\\") || strings.ContainsAny(p, "\r\n") {
+	if !strings.HasPrefix(p, "/") || strings.HasPrefix(p, "//") || strings.ContainsFunc(p, func(r rune) bool { return r == '\\' || r < 0x20 || r == 0x7f }) {
 		return "/"
 	}
 	return p
@@ -307,17 +327,9 @@ func stringsOf(v any) []string {
 	return out
 }
 
-func cmpOr(a, b string) string {
-	if a != "" {
-		return a
-	}
-	return b
-}
-
-// clientIP is the address a request came from. Behind an Ingress that's the
-// Ingress's address: limits then apply to all clients together, which is
-// the safe direction.
-func clientIP(r *http.Request) string {
+// ClientIP is the address a request came from. Behind an Ingress that's the
+// Ingress's: X-Forwarded-For can be forged, so it isn't used.
+func ClientIP(r *http.Request) string {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
 		return r.RemoteAddr
@@ -325,8 +337,8 @@ func clientIP(r *http.Request) string {
 	return host
 }
 
-// limiter allows a number of failures per address in a window.
-type limiter struct {
+// Limiter allows a number of failures per address in a window.
+type Limiter struct {
 	mu     sync.Mutex
 	max    int
 	window time.Duration
@@ -339,18 +351,21 @@ type bucket struct {
 	reset time.Time
 }
 
-func newLimiter(maxFails int, window time.Duration) *limiter {
-	return &limiter{max: maxFails, window: window, seen: map[string]*bucket{}, now: time.Now}
+// NewLimiter allows maxFails failures per address in each window.
+func NewLimiter(maxFails int, window time.Duration) *Limiter {
+	return &Limiter{max: maxFails, window: window, seen: map[string]*bucket{}, now: time.Now}
 }
 
-func (l *limiter) Allow(ip string) bool {
+// Allow reports whether an address may try now.
+func (l *Limiter) Allow(ip string) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	b, ok := l.seen[ip]
 	return !ok || l.now().After(b.reset) || b.fails < l.max
 }
 
-func (l *limiter) Fail(ip string) {
+// Fail records a failure from an address.
+func (l *Limiter) Fail(ip string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	now := l.now()

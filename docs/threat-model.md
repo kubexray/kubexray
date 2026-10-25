@@ -40,7 +40,8 @@ It is a living document: update it whenever a change adds a listener, an API end
 | Other users or hosts on the network | Bind to `127.0.0.1` by default; binding elsewhere requires an explicit flag and a warning |
 | Unauthenticated access to an in-cluster install | No anonymous mode in Helm; require a bearer token, OIDC sign-in with a required allow-list (ADR-0013), or an auth proxy (e.g. oauth2-proxy); chart ships a NetworkPolicy |
 | Sign-in CSRF, code interception, token replay | Authorization code flow with PKCE, `state` and `nonce` in an HMAC-signed short-lived cookie; ID tokens verified against the provider's keys; verified email required; return paths kept on-site |
-| Guessing tokens or forcing sign-ins | Failed sign-ins and bad bearer tokens rate limited per client address; audit log of sign-ins, denials and exports |
+| Guessing tokens or forcing sign-ins | 48-character random tokens; bad bearer tokens rate limited per client address; sign-in codes single-use and bound to PKCE; audit log of sign-ins, denials and exports |
+| Unverified emails passing an allow-list | Email and domain rules only match emails the provider marks verified; group rules use the groups claim |
 | Resource exhaustion by a client | Connection limit, max message size, bounded per-client send buffers with back-pressure / disconnect |
 
 ### B. Talking to the cluster
