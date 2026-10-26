@@ -150,6 +150,21 @@ kubexray answers all three, free and open source, from a single binary on your l
 
 ---
 
+## v0.6: A second opinion from the logs
+
+An optional language model reads the crashed container's logs and says whether they support the likely cause, quoting the lines it relies on ([ADR-0014](docs/adr/0014-ai-second-opinion.md)).
+
+- [ ] Fetch the previous container's last log lines, redacted, when an incident has a likely cause and a crash.
+- [ ] Providers: Anthropic (official Go SDK) and OpenAI-compatible endpoints (Ollama, vLLM); keys from files.
+- [ ] The question, the answer schema, and the quote check; once per incident and cause, rate-limited, never blocking.
+- [ ] The note on the incident card and side panel, in `kubexray why --ai`, alerts and post-mortems; kept in replays, left out of anonymized ones.
+- [ ] `kubexray serve` flags and Helm values (`ai.*`, with `pods/log` only when on); audit lines.
+- [ ] Tests: fake provider, prompt-injection fixture; e2e against a stub server; the demo replay re-recorded with a real answer.
+
+**Done when:** breaking the demo's config shows *Supports: `invalid LOG_LEVEL: verbose`*, and a database failure behind a config edit shows *Doesn't fit*.
+
+---
+
 ## Later
 
 - **Blast radius:** select a ConfigMap, Secret, Service or node and see everything that depends on it.
