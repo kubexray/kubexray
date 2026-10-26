@@ -13,6 +13,7 @@ import { fetchAt, fetchChanges, fetchFeed, fetchHistory, fetchMe, fetchWhy, type
 import { changeEvents, mergeEvents } from "./lib/events";
 import { type ClusterState, fromSnapshot } from "./lib/state";
 import { MAX_EVENTS, useStream } from "./lib/useStream";
+import { Wordmark } from "./components/Wordmark";
 
 /** Polls an API endpoint, keeping the last good answer. */
 function usePoll<T>(load: (signal: AbortSignal) => Promise<T | null>, every: number): T | null {
@@ -158,9 +159,7 @@ export function App() {
   if (stream.status === "signed-out") {
     return (
       <main className="message">
-        <h1>
-          kube<span>xray</span>
-        </h1>
+        <Wordmark />
         {me?.email ? (
           <p>
             Your sign-in has ended. <a href={signInURL()}>Sign in again</a>
@@ -174,9 +173,7 @@ export function App() {
   if (!state) {
     return (
       <main className="message">
-        <h1>
-          kube<span>xray</span>
-        </h1>
+        <Wordmark />
         <p>Connecting to kubexray…</p>
       </main>
     );
