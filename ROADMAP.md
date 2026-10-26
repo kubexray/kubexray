@@ -150,18 +150,18 @@ kubexray answers all three, free and open source, from a single binary on your l
 
 ---
 
-## v0.6: A second opinion from the logs
+## v0.6: Safety recommendations
 
-An optional language model reads the crashed container's logs and says whether they support the likely cause, quoting the lines it relies on ([ADR-0014](docs/adr/0014-ai-second-opinion.md)).
+After an incident, kubexray drafts the admission policy that would have stopped it, and proves it against the recording before showing it ([ADR-0014](docs/adr/0014-safety-recommendations.md)).
 
-- [ ] Fetch the previous container's last log lines, redacted, when an incident has a likely cause and a crash.
-- [ ] Providers: Anthropic (official Go SDK) and OpenAI-compatible endpoints (Ollama, vLLM); keys from files.
-- [ ] The question, the answer schema, and the quote check; once per incident and cause, rate-limited, never blocking.
-- [ ] The note on the incident card and side panel, in `kubexray why --ai`, alerts and post-mortems; kept in replays, left out of anonymized ones.
-- [ ] `kubexray serve` flags and Helm values (`ai.*`, with `pods/log` only when on); audit lines.
-- [ ] Tests: fake provider, prompt-injection fixture; e2e against a stub server; the demo replay re-recorded with a real answer.
+- [ ] The proof, in plain code: compile with the API server's CEL libraries, refuse broad rules, reject the change that broke the app, accept the fix, everything running now and every healthy recorded version.
+- [ ] Rebuilding the bad object: recorded workload fields; ConfigMap values reconstructed from the crash log, labelled as such.
+- [ ] Providers: Anthropic (official Go SDK) and OpenAI-compatible endpoints (Ollama, vLLM); keys from files; the draft schema; up to two retries with the failures.
+- [ ] Draft a safety recommendation: a consent dialog listing what will be sent, the policy and binding (Warn and Audit by default), the rationale and each check; in post-mortems and replays.
+- [ ] Helm values (`recommendations.*`, with ConfigMap contents and `pods/log` only when on), `kubexray recommend`, audit lines.
+- [ ] Tests: fixtures for each cause; a crash log that gives orders; e2e where the proven policy, applied with Deny, makes the API server refuse `make break`.
 
-**Done when:** breaking the demo's config shows *Supports: `invalid LOG_LEVEL: verbose`*, and a database failure behind a config edit shows *Doesn't fit*.
+**Done when:** the demo incident ends with a proven recommendation, and applying it makes the API server refuse the same break.
 
 ---
 
