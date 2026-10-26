@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Set as ChangeSet } from "../gen/feed";
-import { applyFilter, author, FILTERS, type Filter, filterCounts, hasDrift, justBefore, type Range, shortName, rangeWindow, summarize, verdictLabel, verdictNote, type Window } from "../lib/feed";
+import { applyFilter, author, FILTERS, type Filter, filterCounts, fittingRange, hasDrift, justBefore, type Range, shortName, rangeWindow, summarize, verdictLabel, verdictNote, type Window } from "../lib/feed";
 import { clock, hm } from "../lib/format";
 import { ActivityHistogram } from "./ActivityHistogram";
 import { SafetyRecommendation } from "./SafetyRecommendation";
@@ -54,7 +54,7 @@ function touches(s: ChangeSet): string {
 /** The change feed (ADR-0012): every change, and what it did. */
 export function ChangesView({ sets, now, query, live, canRewindTo, onRewind, recommend }: Props) {
   const [filter, setFilter] = useState<Filter>("all");
-  const [range, setRange] = useState<Range>("24h");
+  const [range, setRange] = useState<Range>(() => fittingRange(sets, now));
   const [picked, setPicked] = useState<Window | null>(null);
   const [openId, setOpenId] = useState<string | null>(null);
   const open = sets.find((s) => s.id === openId) ?? null; // the live set: its verdict updates

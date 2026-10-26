@@ -72,55 +72,55 @@
           <header class="record-head">
             <span class="wordmark small"><img class="mark" src="/src/assets/kubexray-icon.svg" alt="" width="20" height="20" /><span>kube<span>xray</span></span></span>
             <span class="replay-badge">Replay</span>
-            <span id="record-title" class="record-meta">kind-kubexray-demo · 3m 45s recorded</span>
+            <span id="record-title" class="record-meta">kind-kubexray-demo · 32 minutes recorded</span>
           </header>
           <ol class="tape">
             <li>
-              <a class="tape-row" href="./play/?replay=demo.kxr&amp;app=Deployment%2Fshop%2Fcheckout&amp;t=2026-10-24T14%3A15%3A19Z">
-                <time>T+00:15</time>
+              <a class="tape-row" href="./play/?replay=demo.kxr&amp;app=Deployment%2Fshop%2Fstorefront&amp;t=2026-10-26T20%3A43%3A51Z">
+                <time>T+06:14</time>
                 <span class="rail" aria-hidden="true"><i class="down"></i><b></b></span>
-                <span class="what"><strong>api scaled 3 → 4 replicas</strong><small>by an autoscaler or kubectl scale</small></span>
+                <span class="what"><strong>Helm upgrade storefront 1.0.0 → 1.1.0</strong><small>by Helm</small></span>
                 <span class="verdict healthy">Healthy</span>
               </a>
             </li>
             <li>
-              <a class="tape-row" href="./play/?replay=demo.kxr&amp;app=Deployment%2Fshop%2Fcheckout&amp;t=2026-10-24T14%3A15%3A59Z">
-                <time>T+00:55</time>
+              <a class="tape-row" href="./play/?replay=demo.kxr&amp;app=Deployment%2Fshop%2Fcheckout&amp;t=2026-10-26T20%3A47%3A51Z">
+                <time>T+10:14</time>
                 <span class="rail" aria-hidden="true"><i class="up"></i><i class="down red"></i><b class="red"></b></span>
                 <span class="what"><strong>ConfigMap checkout-config edited</strong><small>by kubectl patch</small></span>
                 <span class="verdict broke">Caused an incident</span>
               </a>
             </li>
             <li class="incident">
-              <a class="tape-row" href="./play/?replay=demo.kxr&amp;app=Deployment%2Fshop%2Fcheckout&amp;t=2026-10-24T14%3A17%3A15Z">
-                <time>T+01:40</time>
+              <a class="tape-row" href="./play/?replay=demo.kxr&amp;app=Deployment%2Fshop%2Fcheckout&amp;t=2026-10-26T20%3A49%3A21Z">
+                <time>T+11:14</time>
                 <span class="rail" aria-hidden="true"><i class="up red"></i><i class="down"></i><b class="red ring"></b></span>
                 <span class="what">
                   <strong><span class="incident-label">Incident</span> checkout is degraded</strong>
-                  <small>1 pod CrashLoopBackOff, 45 s after the edit</small>
-                  <small class="cause">Likely cause: the ConfigMap edit at T+00:55</small>
+                  <small>1 pod CrashLoopBackOff, a minute after the edit</small>
+                  <small class="cause">Likely cause: the ConfigMap edit at T+10:14</small>
                 </span>
               </a>
             </li>
             <li>
-              <a class="tape-row" href="./play/?replay=demo.kxr&amp;app=Deployment%2Fshop%2Fcheckout&amp;t=2026-10-24T14%3A17%3A59Z">
-                <time>T+02:55</time>
+              <a class="tape-row" href="./play/?replay=demo.kxr&amp;app=Deployment%2Fshop%2Fcheckout&amp;t=2026-10-26T20%3A51%3A22Z">
+                <time>T+13:45</time>
                 <span class="rail" aria-hidden="true"><i class="up"></i><i class="down"></i><b></b></span>
                 <span class="what"><strong>ConfigMap checkout-config edited</strong><small>by kubectl patch</small></span>
                 <span class="verdict fixed">Fixed an incident</span>
               </a>
             </li>
             <li>
-              <a class="tape-row" href="./play/?replay=demo.kxr&amp;app=Deployment%2Fshop%2Fcheckout&amp;t=2026-10-24T14%3A18%3A11Z">
-                <time>T+03:07</time>
+              <a class="tape-row" href="./play/?replay=demo.kxr&amp;app=Deployment%2Fshop%2Fcheckout&amp;t=2026-10-26T20%3A51%3A47Z">
+                <time>T+14:10</time>
                 <span class="rail" aria-hidden="true"><i class="up"></i><b class="ok"></b></span>
-                <span class="what"><strong>checkout 3/3 ready</strong><small>recovered 12 s after the fix</small></span>
+                <span class="what"><strong>checkout 3/3 ready</strong><small>recovered 25 s after the fix</small></span>
               </a>
             </li>
           </ol>
           <figcaption class="record-foot">
-            <span>A real recording from the demo cluster. Each line opens the player at that moment.</span>
-            <a class="btn btn-primary" href="./play/?replay=demo.kxr&amp;app=Deployment%2Fshop%2Fcheckout&amp;t=2026-10-24T14%3A15%3A50Z">Play the incident</a>
+            <span>Five moments from a real half-hour recording of the demo cluster. Each line opens the player there.</span>
+            <a class="btn btn-primary" href="./play/?replay=demo.kxr&amp;app=Deployment%2Fshop%2Fcheckout&amp;t=2026-10-26T20%3A47%3A40Z">Play the incident</a>
           </figcaption>
         </figure>
       </section>
@@ -143,11 +143,24 @@
 
       <section class="still" id="player" aria-label="The player">
         <div class="wrap wide">
-          <a class="still-img" href="./play/?replay=demo.kxr&amp;app=Deployment%2Fshop%2Fcheckout&amp;t=2026-10-24T14%3A17%3A15Z" aria-label="Open this moment in the player">
-            <img class="on-light" src="/src/site/img/hero-light.webp" width="1440" height="900" alt="kubexray showing an incident: checkout is degraded, likely caused by an edit to the ConfigMap checkout-config, with the shop namespace mapped from Ingress to Service to app to config." />
-            <img class="on-dark" src="/src/site/img/hero-dark.webp" width="1440" height="900" alt="" />
-          </a>
-          <p class="caption"><span>T+02:11</span> The same moment in the player: the incident, the likely cause, and the failing path on the map.</p>
+          <div class="still-tabs" role="tablist" aria-label="Views in the player">
+            <button type="button" role="tab" id="tab-map" aria-controls="still-map" aria-selected="true">Map</button>
+            <button type="button" role="tab" id="tab-changes" aria-controls="still-changes" aria-selected="false" tabindex="-1">Changes</button>
+          </div>
+          <div id="still-map" role="tabpanel" aria-labelledby="tab-map">
+            <a class="still-img" href="./play/?replay=demo.kxr&amp;app=Deployment%2Fshop%2Fcheckout&amp;t=2026-10-26T20%3A49%3A30Z" aria-label="Open this moment in the player">
+              <img class="on-light" src="/src/site/img/hero-light.webp" width="1440" height="900" alt="kubexray showing an incident: checkout is degraded, likely caused by an edit to the ConfigMap checkout-config, with the shop namespace mapped from Ingress to Service to app to config." />
+              <img class="on-dark" src="/src/site/img/hero-dark.webp" width="1440" height="900" alt="" />
+            </a>
+            <p class="caption"><span>T+11:54</span> The incident in the player: the incident, the likely cause, and the failing path on the map.</p>
+          </div>
+          <div id="still-changes" role="tabpanel" aria-labelledby="tab-changes" hidden>
+            <a class="still-img" href="./play/?replay=demo.kxr&amp;view=changes" aria-label="The Changes page, in the player">
+              <img class="on-light" src="/src/site/img/feed-light.webp" width="1440" height="900" loading="lazy" alt="The Changes page: every change in the recording over time, filters, and each change with who made it and what it did." />
+              <img class="on-dark" src="/src/site/img/feed-dark.webp" width="1440" height="900" loading="lazy" alt="" />
+            </a>
+            <p class="caption">Every change in the recording, who made it, and what it did. <a href="./play/?replay=demo.kxr&amp;view=changes">Open the Changes page in the player</a></p>
+          </div>
         </div>
       </section>
 

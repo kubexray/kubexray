@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Entry, Set as ChangeSet } from "../gen/feed";
-import { applyFilter, author, buckets, filterCounts, matches, searchView, summarize } from "./feed";
+import { applyFilter, author, buckets, filterCounts, fittingRange, matches, searchView, summarize } from "./feed";
 import type { NamespaceView } from "./view";
 
 const T = (m: number) => new Date(Date.UTC(2026, 9, 24, 10, m)).toISOString();
@@ -71,5 +71,18 @@ describe("change feed", () => {
     expect(searchView(view, "check").map((ns) => [ns.name, ns.rows.map((r) => r.key)])).toEqual([["shop", ["checkout"]]]);
     expect(searchView(view, "payments")).toHaveLength(1);
     expect(searchView(view, "")).toBe(view);
+  });
+});
+
+describe("fittingRange", () => {
+  const now = Date.parse(T(40));
+  it("picks the smallest range that shows every change", () => {
+    expect(fittingRange(sets, now)).toBe("1h"); // 35 minutes of changes
+    expect(fittingRange([set({ at: new Date(now - 5 * 3_600_000).toISOString() })], now)).toBe("24h");
+    expect(fittingRange([set({ at: new Date(now - 3 * 86_400_000).toISOString() })], now)).toBe("7d");
+    expect(fittingRange([set({ at: new Date(now - 30 * 86_400_000).toISOString() })], now)).toBe("7d");
+  });
+  it("defaults to a day with nothing to show", () => {
+    expect(fittingRange([], now)).toBe("24h");
   });
 });

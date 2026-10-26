@@ -101,12 +101,16 @@ func (t *Tracker) Observe(prev *graph.State, m graph.Message) {
 	}
 }
 
+// recentSets is how many of the newest sets a change may join.
+const recentSets = 20
+
 // add files an entry into the newest matching set, or a new one.
 func (t *Tracker) add(st *graph.State, e Entry) {
 	apps := appsTouched(st, e)
-	if n := len(t.sets); n > 0 {
-		s := t.sets[n-1]
-		if together(s, e) {
+	// The newest recent set it belongs with: another author's change in
+	// between (an autoscaler) doesn't split a Helm upgrade.
+	for i := len(t.sets) - 1; i >= 0 && i >= len(t.sets)-recentSets; i-- {
+		if s := t.sets[i]; together(s, e) {
 			s.Entries = append(s.Entries, e)
 			s.Last = e.At
 			s.Apps = union(s.Apps, apps)
@@ -180,6 +184,9 @@ var appKinds = map[string]bool{"Deployment": true, "StatefulSet": true, "DaemonS
 
 // tracked are the kinds that make entries (ADR-0012, section 1).
 func tracked(n graph.Node) bool {
+	if n.Kind == "Secret" && strings.HasPrefix(n.Name, "sh.helm.release.v1.") {
+		return false // Helm's record of a release, written with every install and upgrade
+	}
 	switch n.Kind {
 	case "Deployment", "StatefulSet", "DaemonSet", "Job", "ConfigMap", "Secret", "Service", "Ingress",
 		"PersistentVolumeClaim", "ResourceQuota", "Namespace", "Node":
@@ -244,7 +251,11 @@ func compare(old, n graph.Node, existed bool, at time.Time) []Entry {
 		if n.Kind == "Node" {
 			return []Entry{entry(n, at, "created", "joined the cluster", nil)}
 		}
-		return []Entry{entry(n, at, "created", "created", by)}
+		e := entry(n, at, "created", "created", by)
+		if v := chartVersion(n); v != "" {
+			e.Version = &Versions{To: v}
+		}
+		return []Entry{e}
 	}
 	var out []Entry
 	add := func(what, summary string, who *graph.Change) { out = append(out, entry(n, at, what, summary, who)) }
@@ -271,7 +282,7 @@ func compare(old, n graph.Node, existed bool, at time.Time) []Entry {
 		if r0, r1 := old.Status.Replicas, n.Status.Replicas; r0 != nil && r1 != nil && r0.Desired != r1.Desired {
 			add("replicas", fmt.Sprintf("scaled %d → %d replicas", r0.Desired, r1.Desired), by)
 		}
-		return out
+		return withVersion(old, n, out)
 	}
 
 	written := n.Change != nil && (old.Change == nil || n.Change.At.After(old.Change.At))
@@ -283,6 +294,18 @@ func compare(old, n graph.Node, existed bool, at time.Time) []Entry {
 		add("changed", "selector changed", n.Change)
 	case n.Change.Tool != "controller":
 		add("changed", "changed", n.Change)
+	}
+	return withVersion(old, n, out)
+}
+
+// withVersion puts a release's version change on the first of an object's
+// entries, so a set made by an upgrade can say which.
+func withVersion(old, n graph.Node, out []Entry) []Entry {
+	if len(out) == 0 || slices.ContainsFunc(out, func(e Entry) bool { return e.Version != nil }) {
+		return out
+	}
+	if v := versionChange(old, n); v != nil {
+		out[0].Version = v
 	}
 	return out
 }
@@ -393,18 +416,21 @@ func resourceChanges(p, c graph.Container) string {
 // versionChange reads a chart or app version change from the standard
 // labels: helm.sh/chart ("shop-2.0.0") or app.kubernetes.io/version.
 func versionChange(old, n graph.Node) *Versions {
-	chart := func(x graph.Node) string {
-		v := x.Labels["helm.sh/chart"]
-		if i := strings.LastIndex(v, "-"); i >= 0 && i+1 < len(v) && v[i+1] >= '0' && v[i+1] <= '9' {
-			return v[i+1:]
-		}
-		return x.Labels["app.kubernetes.io/version"]
-	}
-	from, to := chart(old), chart(n)
+	from, to := chartVersion(old), chartVersion(n)
 	if to == "" || from == to {
 		return nil
 	}
 	return &Versions{From: from, To: to}
+}
+
+// chartVersion is an object's release version, from its chart label
+// ("storefront-1.2.0") or app.kubernetes.io/version.
+func chartVersion(x graph.Node) string {
+	v := x.Labels["helm.sh/chart"]
+	if i := strings.LastIndex(v, "-"); i >= 0 && i+1 < len(v) && v[i+1] >= '0' && v[i+1] <= '9' {
+		return v[i+1:]
+	}
+	return x.Labels["app.kubernetes.io/version"]
 }
 
 // appsTouched lists the apps an entry affects: an app itself, or the apps
@@ -460,9 +486,6 @@ func union(a, b []string) []string {
 
 // title names a set the way the feed shows it.
 func title(s *Set) string {
-	if len(s.Entries) == 1 {
-		return entryTitle(s.Entries[0])
-	}
 	var version *Versions
 	for _, e := range s.Entries {
 		if e.Version != nil {
@@ -471,18 +494,28 @@ func title(s *Set) string {
 		}
 	}
 	versions := ""
-	if version != nil && version.From != "" {
+	switch {
+	case version != nil && version.From != "":
 		versions = " " + version.From + " → " + version.To
+	case version != nil:
+		versions = " " + version.To
 	}
-	if o := s.Origin; o != nil {
+	installed := !slices.ContainsFunc(s.Entries, func(e Entry) bool { return e.What != "created" })
+	if o := s.Origin; o != nil && (len(s.Entries) > 1 || version != nil) {
 		switch o.Tool {
 		case "helm":
+			if installed {
+				return "Helm install " + o.Name + versions
+			}
 			return "Helm upgrade " + o.Name + versions
 		case "argocd":
 			return "Argo CD sync of " + o.Name + versions
 		case "flux":
 			return "Flux reconcile of " + o.Name + versions
 		}
+	}
+	if len(s.Entries) == 1 {
+		return entryTitle(s.Entries[0])
 	}
 	objects := map[string]bool{}
 	for _, e := range s.Entries {

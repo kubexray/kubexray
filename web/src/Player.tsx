@@ -41,7 +41,8 @@ export function Player() {
   const [selected, setSelected] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [drafting, setDrafting] = useState<Entry | null>(null);
-  const [view, setView] = useState<View>("map");
+  // ?view=changes or ?view=incidents opens on that view (kubexray.com links to it).
+  const [view, setView] = useState<View>(() => (["changes", "incidents"].includes(params.get("view") ?? "") ? (params.get("view") as View) : "map"));
   const [query, setQuery] = useState("");
   const [focus, setFocus] = useState(0); // remounts the map with the selection
 

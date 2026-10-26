@@ -91,6 +91,61 @@ func TestHelmUpgradeIsOneSet(t *testing.T) {
 	}
 }
 
+// What the demo story showed: Helm's release Secrets between the objects
+// of an install or upgrade, an upgrade that only scales, and a fresh install.
+func TestHelmInstallsAndUpgradesReadAsSuch(t *testing.T) {
+	t.Parallel()
+	st, tr := cluster(), New(MaxSets)
+	release := &graph.Origin{Tool: "helm", Name: "storefront"}
+	labels := func(v string) map[string]string { return map[string]string{"helm.sh/chart": "storefront-" + v} }
+	helm := func(s float64) *graph.Change { return by("helm", "helm", "", at(s)) }
+	secret := func(rev string, s float64) graph.Node {
+		return graph.Node{ID: "Secret/shop/sh.helm.release.v1.storefront." + rev, Kind: "Secret", Namespace: "shop", Name: "sh.helm.release.v1.storefront." + rev, Change: by("Helm", "helm", "", at(s))}
+	}
+	front := graph.Node{
+		ID: "Deployment/shop/storefront", Kind: "Deployment", Namespace: "shop", Name: "storefront", Origin: release, Labels: labels("1.0.0"), Change: helm(0),
+		Status: graph.Status{Ready: true, Replicas: &graph.Replicas{Desired: 2, Ready: 2, Updated: 2}},
+		Spec:   &graph.Spec{Revision: "1", Containers: []graph.Container{{Name: "storefront", Image: "nginx:1.28"}}},
+	}
+	svc := graph.Node{ID: "Service/shop/storefront", Kind: "Service", Namespace: "shop", Name: "storefront", Origin: release, Labels: labels("1.0.0"), Change: helm(0)}
+	apply(t, tr, st, at(0), front, secret("v1", 0), svc)
+
+	front.Labels, front.Change = labels("1.0.1"), helm(60)
+	front.Status.Replicas = &graph.Replicas{Desired: 3, Ready: 2, Updated: 3}
+	svc.Labels, svc.Change = labels("1.0.1"), helm(60)
+	apply(t, tr, st, at(60), secret("v2", 60), front, svc)
+
+	sets := tr.Sets(time.Time{})
+	if len(sets) != 2 {
+		t.Fatalf("%d sets, want the install and the upgrade: %+v", len(sets), sets)
+	}
+	if sets[1].Title != "Helm install storefront 1.0.0" || len(sets[1].Entries) != 2 {
+		t.Errorf("install = %q, %d entries", sets[1].Title, len(sets[1].Entries))
+	}
+	if sets[0].Title != "Helm upgrade storefront 1.0.0 → 1.0.1" {
+		t.Errorf("upgrade = %q, entries %+v", sets[0].Title, sets[0].Entries)
+	}
+}
+
+func TestAnotherAuthorDoesntSplitASet(t *testing.T) {
+	t.Parallel()
+	st, tr := cluster(), New(MaxSets)
+	api, cfg, checkout := st.Nodes["Deployment/shop/api"], st.Nodes["ConfigMap/shop/api-config"], st.Nodes["Deployment/shop/checkout"]
+	helm := by("helm", "helm", "", at(0))
+	api.Labels, api.Change = map[string]string{"helm.sh/chart": "shop-2.0.0"}, helm
+	api.Spec = &graph.Spec{Revision: "2", Containers: []graph.Container{{Name: "api", Image: "nginx:1.29", Limits: graph.Resources{Memory: "64Mi"}}}}
+	apply(t, tr, st, at(0), api)
+	checkout.Status.Replicas = &graph.Replicas{Desired: 4, Ready: 3, Updated: 4} // an autoscaler, in between
+	apply(t, tr, st, at(1), checkout)
+	cfg.Change = by("helm", "helm", "", at(2))
+	apply(t, tr, st, at(2), cfg)
+
+	sets := tr.Sets(time.Time{})
+	if len(sets) != 2 || sets[1].Title != "Helm upgrade shop 1.4.0 → 2.0.0" || len(sets[1].Entries) != 2 {
+		t.Fatalf("sets = %+v", sets)
+	}
+}
+
 func TestScaleAndDrift(t *testing.T) {
 	t.Parallel()
 	st, tr := cluster(), New(MaxSets)

@@ -1,0 +1,5 @@
+# The release version shown in kubexray's change feed ("Helm upgrade
+# storefront 1.0.0 → 1.1.0"): the story sets it on each upgrade.
+release: 1.0.0
+image: nginx:1.27-alpine
+replicas: 2

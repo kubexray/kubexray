@@ -97,6 +97,11 @@ p { margin: 0; }
 
 /* The same moment in the player */
 .still { padding: 48px 0 0; border-top: 1px solid var(--border); }
+.still-tabs { display: inline-flex; gap: 3px; margin-bottom: 14px; padding: 3px; border-radius: 8px; background: var(--sunken); }
+.still-tabs button { border: 0; background: transparent; padding: 6px 16px; border-radius: 6px; font: 500 14px var(--font-body); color: var(--muted); cursor: pointer; }
+.still-tabs button[aria-selected="true"] { background: var(--surface); color: var(--text); font-weight: 600; box-shadow: 0 1px 2px rgb(0 0 0 / 0.08); }
+.caption a { color: var(--accent); font-weight: 500; text-decoration: none; }
+.caption a:hover { text-decoration: underline; }
 .still-img { display: block; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; background: var(--surface); }
 .still-img:hover { border-color: var(--border-strong); }
 .still-img img, .shot img { width: 100%; height: auto; vertical-align: top; } /* display is the theme's */

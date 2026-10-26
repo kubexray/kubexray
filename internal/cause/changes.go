@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"fmt"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/kubexray/kubexray/internal/graph"
@@ -57,7 +58,7 @@ func Changes(st *graph.State, since time.Time, includeControllers bool) []Change
 	}
 	for _, n := range st.Nodes {
 		c := n.Change
-		if c == nil || c.At.Before(since) || n.Kind == "Pod" || n.Kind == "ReplicaSet" {
+		if c == nil || c.At.Before(since) || n.Kind == "Pod" || n.Kind == "ReplicaSet" || helmRecord(n) {
 			continue
 		}
 		if c.Tool == "controller" && !includeControllers {
@@ -77,4 +78,10 @@ func Changes(st *graph.State, since time.Time, includeControllers bool) []Change
 	}
 	slices.SortFunc(out, func(a, b Change) int { return cmp.Or(b.At.Compare(a.At), cmp.Compare(a.Object, b.Object)) })
 	return out
+}
+
+// helmRecord is Helm's record of a release (a Secret written with every
+// install and upgrade): bookkeeping, not a change to report.
+func helmRecord(n graph.Node) bool {
+	return n.Kind == "Secret" && strings.HasPrefix(n.Name, "sh.helm.release.v1.")
 }
