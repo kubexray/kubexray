@@ -1,6 +1,6 @@
 # 0014. Safety recommendations: every incident writes the guardrail that would have stopped it
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-10-26
 
 ## Context
@@ -92,6 +92,7 @@ Keys come from files or the environment and are never logged. Each draft costs o
 | ConfigMap edit | allowed values or format of a key |
 | Image change | the image must come from the registry and repository the app uses, by tag pattern or digest |
 | Resources | memory limit for this app at least the size it was running at before it ran out of memory |
+| Unschedulable | the app's requests no larger than the biggest node can give |
 | Probe | readiness probe path must be one the app serves (from the version that worked) |
 | Scale to zero | replicas at least 1 for an app a Service still routes to |
 | Quota | a new or lower ResourceQuota in the namespace must leave room for its apps' requests |
