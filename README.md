@@ -135,6 +135,24 @@ Likely cause: ConfigMap checkout-config was edited by kubectl patch at 13:59:00 
 Open in kubexray at the moment it started
 ```
 
+## Make sure it can't happen again
+
+After an incident is fixed, open the change that broke it and click **Draft a safety recommendation**. kubexray asks a language model for a Kubernetes admission policy that would have refused the change, then proves it against what actually happened before showing it ([ADR-0014](docs/adr/0014-safety-recommendations.md)). The policy must:
+- refuse the change that broke the app
+- allow the fix
+- allow everything running in the namespace now
+
+You see exactly what will be sent first, and kubexray never applies anything: you get the YAML, starting in warn-and-log mode.
+
+```sh
+# with a local model in Ollama: nothing leaves your machine
+kubexray --recommend=openai --recommend-model qwen3-coder:30b
+# or with Claude (claude-opus-5-5 by default)
+ANTHROPIC_API_KEY=... kubexray --recommend=anthropic
+```
+
+So far it covers ConfigMap changes; images, memory limits, probes, scaling and quotas are next.
+
 ## Every change, and what it did
 
 The **Changes** view lists every change to the cluster, newest first, and what each one did once things settled ([ADR-0012](docs/adr/0012-change-feed.md)):

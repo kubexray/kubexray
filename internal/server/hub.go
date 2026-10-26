@@ -35,9 +35,10 @@ type Hub struct {
 	mu        sync.Mutex
 	state     *graph.State
 	clients   map[*client]struct{}
-	incidents []byte // encoded IncidentsMessage, or nil before the first
-	payload   []byte // incidents without the timestamp, to detect changes
-	analyzed  uint64 // state seq at the last analysis
+	incidents []byte           // encoded IncidentsMessage, or nil before the first
+	current   []cause.Incident // the incidents in it
+	payload   []byte           // incidents without the timestamp, to detect changes
+	analyzed  uint64           // state seq at the last analysis
 	lastRun   time.Time
 
 	feed *feed.Tracker // the change feed, from every delta (ADR-0012)
@@ -52,6 +53,13 @@ type client struct {
 // queue of queue messages.
 func NewHub(maxClients, queue int) *Hub {
 	return &Hub{maxClients: maxClients, queue: queue, clients: map[*client]struct{}{}, ready: make(chan struct{}), feed: feed.New(feed.MaxSets)}
+}
+
+// Incidents are the incidents of the last analysis.
+func (h *Hub) Incidents() []cause.Incident {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.current
 }
 
 // Feed is the change feed the hub keeps. Rebuild it from recorded history
@@ -170,6 +178,7 @@ func (h *Hub) UpdateIncidents(now time.Time) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.analyzed, h.lastRun = st.Seq, now
+	h.current = msg.Incidents
 	if h.incidents != nil && bytes.Equal(payload, h.payload) {
 		return nil
 	}

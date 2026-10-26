@@ -47,7 +47,8 @@ func brokenApp(g *graph.Graph) {
 	g.UpsertNode(graph.Node{ID: "Service/shop/api", Kind: "Service", Namespace: "shop", Name: "api"})
 }
 
-func start(t *testing.T, maxClients int) *fixture {
+// start runs a live-mode server; setup configures it before it serves.
+func start(t *testing.T, maxClients int, setup ...func(*Server)) *fixture {
 	t.Helper()
 	g := graph.New()
 	brokenApp(g)
@@ -60,6 +61,9 @@ func start(t *testing.T, maxClients int) *fixture {
 	srv, err := New(hub, rec, web.Assets(), slog.New(slog.DiscardHandler), Info{Cluster: "test", Version: "dev"})
 	if err != nil {
 		t.Fatal(err)
+	}
+	for _, f := range setup {
+		f(srv)
 	}
 	ln, err := srv.Listen(t.Context(), 0)
 	if err != nil {

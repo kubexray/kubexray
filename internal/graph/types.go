@@ -10,6 +10,7 @@ package graph
 import (
 	"maps"
 	"slices"
+	"strings"
 	"time"
 )
 
@@ -99,6 +100,20 @@ func ID(kind, namespace, name string) string {
 		return kind + "/" + name
 	}
 	return kind + "/" + namespace + "/" + name
+}
+
+// ParseID splits a node ID into its kind, namespace and name: the inverse of
+// ID. Names and namespaces can't contain a slash.
+func ParseID(id string) (kind, namespace, name string) {
+	parts := strings.SplitN(id, "/", 3)
+	switch len(parts) {
+	case 3:
+		return parts[0], parts[1], parts[2]
+	case 2:
+		return parts[0], "", parts[1]
+	default:
+		return id, "", ""
+	}
 }
 
 // Status is a kind-specific summary; fields that don't apply stay empty.
