@@ -40,8 +40,8 @@ Each set that touches apps (directly, or through a ConfigMap, Secret or PVC they
 |---|---|
 | **Settling** | Its apps haven't finished rolling out yet (up to 10 minutes) |
 | **Healthy** | All its apps were ready and rolled out afterwards, with the time it took |
-| **Broke X** | The cause engine (ADR-0006) names one of its entries as the cause of an incident on X |
-| **Fixed it** | It was made while one of its apps had an incident, which ended within 10 minutes |
+| **Caused an incident** (on X) | The cause engine (ADR-0006) names one of its entries as the cause of an incident on X |
+| **Fixed an incident** | It was made while one of its apps had an incident, which ended within 10 minutes |
 | **No effect** | It touches no app (a node cordoned with room to spare, a new Service) |
 
 ### 4. Drift

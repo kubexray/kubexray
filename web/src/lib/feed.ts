@@ -10,7 +10,7 @@ export type Filter = "all" | "people" | "broke" | "drift" | "settling";
 export const FILTERS: { id: Filter; label: string }[] = [
   { id: "all", label: "All changes" },
   { id: "people", label: "People and tools" },
-  { id: "broke", label: "Broke something" },
+  { id: "broke", label: "Caused incidents" },
   { id: "drift", label: "Drift" },
   { id: "settling", label: "Still settling" },
 ];
@@ -27,7 +27,7 @@ export const shortName = (id: string) => id.slice(id.lastIndexOf("/") + 1);
 
 const VERDICT: Record<string, string> = {
   healthy: "Healthy",
-  fixed: "Fixed it",
+  fixed: "Fixed an incident",
   settling: "Settling",
   stuck: "Didn't settle",
   none: "No effect",
@@ -35,7 +35,7 @@ const VERDICT: Record<string, string> = {
 };
 
 export function verdictLabel(s: ChangeSet): string {
-  if (s.verdict === "broke") return `Broke ${s.incident ? shortName(s.incident) : "an app"}`;
+  if (s.verdict === "broke") return "Caused an incident"; // the note names the app
   return VERDICT[s.verdict] ?? s.verdict;
 }
 

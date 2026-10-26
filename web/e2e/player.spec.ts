@@ -96,11 +96,11 @@ test("the change feed says what each change did", async ({ page }) => {
   const cards = page.locator(".feed-card");
   await expect(cards).toHaveCount(3);
   await expect(cards.filter({ hasText: "api scaled 3 → 4 replicas" }).locator(".verdict")).toHaveText("Healthy");
-  await expect(cards.filter({ hasText: "Broke checkout" })).toContainText("ConfigMap checkout-config edited");
-  await expect(cards.filter({ hasText: "Fixed it" })).toContainText("checkout healthy");
+  await expect(cards.filter({ hasText: "Caused an incident" })).toContainText("ConfigMap checkout-config edited");
+  await expect(cards.filter({ hasText: "Fixed an incident" })).toContainText("checkout healthy");
   await shot(page, "changes");
 
-  await page.getByRole("button", { name: /^Broke something/ }).click();
+  await page.getByRole("button", { name: /^Caused incidents/ }).click();
   await expect(cards).toHaveCount(1);
   await page.getByRole("button", { name: /^All changes/ }).click();
   await page.getByPlaceholder("Search apps, people, images…").fill("api");
@@ -108,7 +108,7 @@ test("the change feed says what each change did", async ({ page }) => {
   await page.getByPlaceholder("Search apps, people, images…").fill("");
 
   // The change that broke checkout, opened, then rewound to on the map.
-  await cards.filter({ hasText: "Broke checkout" }).getByRole("button", { name: "Details" }).click();
+  await cards.filter({ hasText: "Caused an incident" }).getByRole("button", { name: "Details" }).click();
   await expect(page.locator("dialog.feed-drawer")).toContainText("What changed");
   await shot(page, "change-detail");
   await page.getByRole("button", { name: "Rewind to just before" }).click();
