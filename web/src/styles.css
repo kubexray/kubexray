@@ -353,6 +353,29 @@ dialog.feed-drawer::backdrop { background: color-mix(in srgb, var(--bg) 60%, tra
 .feed-drawer-list { margin: 0; padding: 0; list-style: none; display: grid; gap: 8px; }
 .feed-drawer button.icon { width: 36px; height: 36px; border-radius: 8px; border: 1px solid var(--border-strong); background: var(--surface); display: flex; align-items: center; justify-content: center; cursor: pointer; flex: none; }
 .feed-drawer .feed-actions { margin-top: auto; }
+
+/* Safety recommendations (ADR-0014), in the change drawer */
+.rec { display: grid; gap: 10px; padding-top: 16px; border-top: 1px solid var(--border); }
+.rec-lead, .rec-consent > p:first-child { color: var(--muted); }
+.rec-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.rec-actions button { padding: 8px 14px; border-radius: 8px; border: 1px solid var(--border-strong); background: var(--surface); font-weight: 500; cursor: pointer; }
+.rec-actions button.primary { background: var(--text); color: var(--bg); border-color: var(--text); font-weight: 600; }
+.rec-actions button:disabled { opacity: 0.6; cursor: progress; }
+.rec-consent, .rec-result { display: grid; gap: 10px; }
+.rec-request, .rec-yaml { margin: 0; max-height: 240px; overflow: auto; padding: 12px 14px; border-radius: 8px; background: var(--sunken); border: 1px solid var(--border); font: 12px/1.55 var(--font-data); white-space: pre-wrap; overflow-wrap: anywhere; }
+.rec-yaml { white-space: pre; overflow-wrap: normal; }
+.rec-note { color: var(--muted); font-size: 13px; }
+.rec-note code, .rec-failure { font: 12px var(--font-data); }
+.rec-head { display: flex; flex-wrap: wrap; gap: 6px; }
+.rec-title { font-weight: 600; }
+.rec-checks { margin: 0; padding: 0; list-style: none; display: grid; gap: 6px; }
+.rec-checks li { display: flex; gap: 8px; align-items: baseline; }
+.rec-checks li.pass > span:first-child { color: var(--ok); font-weight: 700; }
+.rec-checks li.fail > span:first-child { color: var(--crit); font-weight: 700; }
+.rec-tried { color: var(--muted); }
+.rec-failure { display: block; margin-top: 2px; color: color-mix(in srgb, var(--crit) 85%, var(--text)); }
+.rec-error p { color: color-mix(in srgb, var(--crit) 85%, var(--text)); }
+.rec-meta { color: var(--faint); font: 12px var(--font-data); }
 .feed-verdict-box { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-radius: 12px; background: var(--sunken); }
 .feed-verdict-box.broke { background: color-mix(in srgb, var(--crit) 10%, var(--surface)); }
 .feed-card .cause { margin-top: 6px; }

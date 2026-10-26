@@ -353,6 +353,8 @@ func ui(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	port := fs.Int("port", 0, "port to listen on, on 127.0.0.1 (default: a free port)")
 	noBrowser := fs.Bool("no-browser", false, "don't open the browser")
 	uiDir := fs.String("ui-dir", "", "serve the UI from this directory instead of the built-in one (for UI development)")
+	var recOpts recommendOptions
+	recOpts.flags(fs)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -380,6 +382,13 @@ func ui(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	srv, err := server.New(hub, rec, assets, log, server.Info{Cluster: conn.name, Version: version.Version})
 	if err != nil {
 		return err
+	}
+	svc, err := recOpts.service(&conn, log)
+	if err != nil {
+		return err
+	}
+	if svc != nil {
+		srv.SetRecommender(svc)
 	}
 	// Bind first, so a busy --port fails before a long cluster sync.
 	ln, err := srv.Listen(ctx, *port)

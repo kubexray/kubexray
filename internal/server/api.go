@@ -15,6 +15,18 @@ import (
 type HistoryResponse struct {
 	From time.Time `json:"from"`
 	To   time.Time `json:"to"`
+	// Recommend names the model safety recommendations are drafted with,
+	// when they're on (ADR-0014).
+	Recommend string `json:"recommend,omitempty"`
+}
+
+// RecommendPreview is what drafting a safety recommendation would send
+// (GET /api/recommend), for the person to agree to first.
+type RecommendPreview struct {
+	Model   string `json:"model"`
+	App     string `json:"app"`
+	Object  string `json:"object"`  // what the guardrail would protect, e.g. ConfigMap/shop/checkout-config
+	Request string `json:"request"` // the text sent to the model, exactly
 }
 
 // FeedResponse is the change feed (GET /api/feed, ADR-0012), newest first.

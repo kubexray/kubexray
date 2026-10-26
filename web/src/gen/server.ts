@@ -12,6 +12,21 @@ import type * as graph from "./graph";
 export interface HistoryResponse {
   from: string /* RFC 3339 */;
   to: string /* RFC 3339 */;
+  /**
+   * Recommend names the model safety recommendations are drafted with,
+   * when they're on (ADR-0014).
+   */
+  recommend?: string;
+}
+/**
+ * RecommendPreview is what drafting a safety recommendation would send
+ * (GET /api/recommend), for the person to agree to first.
+ */
+export interface RecommendPreview {
+  model: string;
+  app: string;
+  object: string; // what the guardrail would protect, e.g. ConfigMap/shop/checkout-config
+  request: string; // the text sent to the model, exactly
 }
 /**
  * FeedResponse is the change feed (GET /api/feed, ADR-0012), newest first.
@@ -28,3 +43,7 @@ export interface AtResponse {
   incidents: cause.Incident[];
   groups: cause.Group[];
 }
+
+//////////
+// source: recommend.go
+

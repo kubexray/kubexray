@@ -3,6 +3,7 @@ import type { Set as ChangeSet } from "../gen/feed";
 import { applyFilter, author, FILTERS, type Filter, filterCounts, hasDrift, justBefore, type Range, shortName, rangeWindow, summarize, verdictLabel, verdictNote, type Window } from "../lib/feed";
 import { clock, hm } from "../lib/format";
 import { ActivityHistogram } from "./ActivityHistogram";
+import { SafetyRecommendation } from "./SafetyRecommendation";
 
 interface Props {
   sets: ChangeSet[];
@@ -13,6 +14,8 @@ interface Props {
   canRewindTo: (ts: string) => boolean;
   /** Opens the map at a moment, with an object selected. */
   onRewind: (ts: string, select: string) => void;
+  /** The model safety recommendations are drafted with, when they're on. */
+  recommend?: string;
 }
 
 const SEEN = "kubexray.feed.seen";
@@ -49,7 +52,7 @@ function touches(s: ChangeSet): string {
 }
 
 /** The change feed (ADR-0012): every change, and what it did. */
-export function ChangesView({ sets, now, query, live, canRewindTo, onRewind }: Props) {
+export function ChangesView({ sets, now, query, live, canRewindTo, onRewind, recommend }: Props) {
   const [filter, setFilter] = useState<Filter>("all");
   const [range, setRange] = useState<Range>("24h");
   const [picked, setPicked] = useState<Window | null>(null);
@@ -190,12 +193,26 @@ export function ChangesView({ sets, now, query, live, canRewindTo, onRewind }: P
         ))}
       </section>
 
-      {open && <ChangeDetail set={open} canRewind={canRewindTo(justBefore(open))} onRewind={() => rewind(open)} onClose={() => setOpenId(null)} />}
+      {open && (
+        <ChangeDetail set={open} canRewind={canRewindTo(justBefore(open))} onRewind={() => rewind(open)} onClose={() => setOpenId(null)} recommend={recommend} />
+      )}
     </main>
   );
 }
 
-function ChangeDetail({ set: s, canRewind, onRewind, onClose }: { set: ChangeSet; canRewind: boolean; onRewind: () => void; onClose: () => void }) {
+function ChangeDetail({
+  set: s,
+  canRewind,
+  onRewind,
+  onClose,
+  recommend,
+}: {
+  set: ChangeSet;
+  canRewind: boolean;
+  onRewind: () => void;
+  onClose: () => void;
+  recommend?: string;
+}) {
   const dialog = useRef<HTMLDialogElement>(null);
   useEffect(() => {
     const d = dialog.current;
@@ -246,6 +263,8 @@ function ChangeDetail({ set: s, canRewind, onRewind, onClose }: { set: ChangeSet
           ))}
         </ul>
       </section>
+
+      {recommend && s.verdict === "broke" && s.incident && s.ended && <SafetyRecommendation key={s.id} set={s.id} app={s.incident} model={recommend} />}
 
       <div className="feed-actions">
         {canRewind && (

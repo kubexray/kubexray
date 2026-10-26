@@ -30,6 +30,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/coder/websocket"
@@ -39,6 +40,7 @@ import (
 	"github.com/kubexray/kubexray/internal/cause"
 	"github.com/kubexray/kubexray/internal/feed"
 	"github.com/kubexray/kubexray/internal/graph"
+	"github.com/kubexray/kubexray/internal/recommend"
 	"github.com/kubexray/kubexray/internal/recorder"
 	"github.com/kubexray/kubexray/internal/replay"
 )
@@ -81,8 +83,11 @@ type Server struct {
 	tokens *tokenFile    // serve mode with a token file
 	limit  *auth.Limiter // serve mode: bad bearer tokens per address
 
-	alerts    *alert.Notifier // serve mode: Alertmanager notifications (ADR-0011)
-	publicURL string          // where people open kubexray, for links in alerts
+	alerts *alert.Notifier // serve mode: Alertmanager notifications (ADR-0011)
+
+	recommender *recommend.Service // safety recommendations, when on (ADR-0014)
+	capturing   atomic.Bool        // a crash-log capture is running
+	publicURL   string             // where people open kubexray, for links in alerts
 }
 
 // SetAlerts makes the server an Alertmanager receiver that sends kubexray's
@@ -295,6 +300,7 @@ func (s *Server) watchIncidents(ctx context.Context) {
 			if err := s.hub.UpdateIncidents(s.now()); err != nil {
 				s.log.Warn("updating incidents", "err", err)
 			}
+			s.captureCrashLogs(ctx)
 		}
 	}
 }
@@ -314,6 +320,10 @@ func (s *Server) Handler() http.Handler {
 		api.HandleFunc("GET /api/feed", s.feed)
 		api.HandleFunc("GET /api/export", s.export)
 		api.HandleFunc("GET /api/me", s.me)
+		if s.recommender != nil {
+			api.HandleFunc("GET /api/recommend", s.recommendPreview)
+			api.HandleFunc("POST /api/recommend", s.recommend)
+		}
 		if s.alerts.Enabled() {
 			api.HandleFunc("POST /api/alertmanager", s.alertmanager)
 		}
@@ -619,7 +629,11 @@ func (s *Server) history(w http.ResponseWriter, _ *http.Request) {
 		http.Error(w, "nothing recorded yet", http.StatusNotFound)
 		return
 	}
-	writeJSON(w, HistoryResponse{From: from, To: to})
+	resp := HistoryResponse{From: from, To: to}
+	if s.recommender != nil {
+		resp.Recommend = s.recommender.ModelName()
+	}
+	writeJSON(w, resp)
 }
 
 func (s *Server) at(w http.ResponseWriter, r *http.Request) {

@@ -51,6 +51,8 @@ func serve(ctx context.Context, args []string, stderr io.Writer) error {
 	webhookFile := fs.String("webhook-url-file", "", "file holding a webhook URL: send Alertmanager alerts there as JSON")
 	var oidcFlags oidcOptions
 	oidcFlags.flags(fs)
+	var recOpts recommendOptions
+	recOpts.flags(fs)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -147,6 +149,13 @@ func serve(ctx context.Context, args []string, stderr io.Writer) error {
 	srv, err := server.New(hub, rec, web.Assets(), log, server.Info{Cluster: name, Version: version.Version})
 	if err != nil {
 		return err
+	}
+	svc, err := recOpts.service(&conn, log)
+	if err != nil {
+		return err
+	}
+	if svc != nil {
+		srv.SetRecommender(svc)
 	}
 	if notifier := alert.NewNotifier(slackURL, webhookURL, log); notifier.Enabled() {
 		srv.SetAlerts(notifier, *publicURL)

@@ -190,7 +190,7 @@ export function App() {
   const now = Date.parse(feed?.now ?? state.ts); // the server's clock, like the sets' times
   const page =
     view === "changes" ? (
-      <ChangesView sets={sets} now={now} query={query} live canRewindTo={canRewindTo} onRewind={(ts, id) => showOnMap(id, ts)} />
+      <ChangesView sets={sets} now={now} query={query} live canRewindTo={canRewindTo} onRewind={(ts, id) => showOnMap(id, ts)} recommend={history?.recommend} />
     ) : view === "incidents" ? (
       <IncidentsView incidents={incidents} groups={groups} sets={sets} now={at ? Date.parse(at) : now} onShow={(id) => showOnMap(id, at)} />
     ) : undefined;
