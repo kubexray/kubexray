@@ -96,7 +96,7 @@ kubexray answers all three, free and open source, from a single binary on your l
 
 - [x] Export: save a time window as a replay file (gzip NDJSON, the same messages as the live stream).
 - [x] Scrubbing: the same allow-list as the live stream, plus optional anonymization of names, namespaces and labels.
-- [x] Player: a static page that plays replay files. Drop a file in or open a shared link; no cluster access, no install. Live at [kubexray.github.io/kubexray/play](https://kubexray.github.io/kubexray/play/), behind the product site; kubexray.com will point there.
+- [x] Player: a static page that plays replay files. Drop a file in or open a shared link; no cluster access, no install. Live at [kubexray.com/play](https://kubexray.com/play/), behind the product site at [kubexray.com](https://kubexray.com).
 - [x] Incident permalinks: share a replay that opens on the incident, with the chain already highlighted.
 - [x] A recorded demo incident on the player's homepage.
 - [x] **Post-mortem draft:** one click exports Markdown with impact, timeline, likely cause, who made the change, the fix, duration and the replay link.
