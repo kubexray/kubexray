@@ -40,40 +40,88 @@
     </header>
 
     <main>
-      <section class="hero">
-        <div class="wrap">
-          <p class="pill">Free and open source · MIT · read-only</p>
-          <h1>The flight recorder for your Kubernetes&nbsp;cluster.</h1>
+      <section class="hero wrap">
+        <div class="hero-copy">
+          <p class="eyebrow">Flight recorder for Kubernetes</p>
+          <h1><span>See what changed.</span> <span>See what broke.</span> <span>Share what happened.</span></h1>
           <p class="lede">
-            kubexray records every change to your cluster. When something breaks, it shows you the change that likely caused it, who made it, and what to run next.
-            Then share the whole incident as a replay anyone can watch, without access to your cluster.
+            kubexray keeps a record of every change to your cluster. When something breaks, it names the change that likely caused it and who made it.
+            Then it plays the whole incident back for anyone on your team, with no access to your cluster.
           </p>
-          <div class="cta">
-            <a class="btn btn-primary" href="./play/?replay=demo.kxr&amp;app=Deployment%2Fshop%2Fcheckout">Watch a recorded incident</a>
-            <a class="btn" href="#install">Install with Helm</a>
+          <div class="cmd hero-cmd">
+            <code>helm install kubexray oci://ghcr.io/kubexray/charts/kubexray</code>
+            <button type="button" class="copy" data-copy>Copy</button>
           </div>
-          <p class="cta-note">The demo plays in your browser. No install, no cluster.</p>
+          <p class="hero-links">
+            <a href="#install">Other ways to install</a>
+            <a href="https://github.com/kubexray/kubexray">Source on GitHub</a>
+          </p>
         </div>
+
+        <figure class="record" aria-labelledby="record-title">
+          <header class="record-head">
+            <span class="wordmark small">kube<span>xray</span></span>
+            <span class="replay-badge">Replay</span>
+            <span id="record-title" class="record-meta">kind-kubexray-demo · 3m 45s recorded</span>
+          </header>
+          <ol class="tape">
+            <li>
+              <a class="tape-row" href="./play/?replay=demo.kxr&amp;app=Deployment%2Fshop%2Fcheckout&amp;t=2026-10-24T14%3A15%3A19Z">
+                <time>T+00:15</time>
+                <span class="rail" aria-hidden="true"><i class="down"></i><b></b></span>
+                <span class="what"><strong>api scaled 3 → 4 replicas</strong><small>by an autoscaler or kubectl scale</small></span>
+                <span class="verdict healthy">Healthy</span>
+              </a>
+            </li>
+            <li>
+              <a class="tape-row" href="./play/?replay=demo.kxr&amp;app=Deployment%2Fshop%2Fcheckout&amp;t=2026-10-24T14%3A15%3A59Z">
+                <time>T+00:55</time>
+                <span class="rail" aria-hidden="true"><i class="up"></i><i class="down red"></i><b class="red"></b></span>
+                <span class="what"><strong>ConfigMap checkout-config edited</strong><small>by kubectl patch</small></span>
+                <span class="verdict broke">Broke checkout</span>
+              </a>
+            </li>
+            <li class="incident">
+              <a class="tape-row" href="./play/?replay=demo.kxr&amp;app=Deployment%2Fshop%2Fcheckout&amp;t=2026-10-24T14%3A17%3A15Z">
+                <time>T+01:40</time>
+                <span class="rail" aria-hidden="true"><i class="up red"></i><i class="down"></i><b class="red ring"></b></span>
+                <span class="what">
+                  <strong><span class="incident-label">Incident</span> checkout is degraded</strong>
+                  <small>1 pod CrashLoopBackOff, 45 s after the edit</small>
+                  <small class="cause">Likely cause: the ConfigMap edit at T+00:55</small>
+                </span>
+              </a>
+            </li>
+            <li>
+              <a class="tape-row" href="./play/?replay=demo.kxr&amp;app=Deployment%2Fshop%2Fcheckout&amp;t=2026-10-24T14%3A17%3A59Z">
+                <time>T+02:55</time>
+                <span class="rail" aria-hidden="true"><i class="up"></i><i class="down"></i><b></b></span>
+                <span class="what"><strong>ConfigMap checkout-config edited</strong><small>by kubectl patch</small></span>
+                <span class="verdict fixed">Fixed it</span>
+              </a>
+            </li>
+            <li>
+              <a class="tape-row" href="./play/?replay=demo.kxr&amp;app=Deployment%2Fshop%2Fcheckout&amp;t=2026-10-24T14%3A18%3A11Z">
+                <time>T+03:07</time>
+                <span class="rail" aria-hidden="true"><i class="up"></i><b class="ok"></b></span>
+                <span class="what"><strong>checkout 3/3 ready</strong><small>recovered 12 s after the fix</small></span>
+              </a>
+            </li>
+          </ol>
+          <figcaption class="record-foot">
+            <span>A real recording from the demo cluster. Each line opens the player at that moment.</span>
+            <a class="btn btn-primary" href="./play/?replay=demo.kxr&amp;app=Deployment%2Fshop%2Fcheckout&amp;t=2026-10-24T14%3A15%3A50Z">Play the incident</a>
+          </figcaption>
+        </figure>
+      </section>
+
+      <section class="still" aria-label="The player">
         <div class="wrap wide">
-          <a class="frame" href="./play/?replay=demo.kxr&amp;app=Deployment%2Fshop%2Fcheckout" aria-label="Open the demo incident in the player">
+          <a class="still-img" href="./play/?replay=demo.kxr&amp;app=Deployment%2Fshop%2Fcheckout&amp;t=2026-10-24T14%3A17%3A15Z" aria-label="Open this moment in the player">
             <img class="on-light" src="/src/site/img/hero-light.webp" width="1440" height="900" alt="kubexray showing an incident: checkout is degraded, likely caused by an edit to the ConfigMap checkout-config, with the shop namespace mapped from Ingress to Service to app to config." />
             <img class="on-dark" src="/src/site/img/hero-dark.webp" width="1440" height="900" alt="" />
           </a>
-        </div>
-      </section>
-
-      <section class="pillars wrap" aria-label="What kubexray does">
-        <div class="pillar">
-          <h2>See what changed</h2>
-          <p>Every rollout, image, scale and config edit, who made it, and whether it settled healthy.</p>
-        </div>
-        <div class="pillar">
-          <h2>See what broke</h2>
-          <p>Incidents explained in plain English and traced back to the change that likely caused them.</p>
-        </div>
-        <div class="pillar">
-          <h2>Share what happened</h2>
-          <p>Export a scrubbed replay and a post-mortem draft. Your team watches it in the browser.</p>
+          <p class="caption"><span>T+02:11</span> The same moment in the player: the incident, the likely cause, and the failing path on the map.</p>
         </div>
       </section>
 
