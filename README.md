@@ -1,3 +1,12 @@
+<p align="center">
+  <a href="https://kubexray.com">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="icons/kubexray-horizontal.svg">
+      <img alt="kubexray" src="icons/kubexray-horizontal-light.svg" width="420">
+    </picture>
+  </a>
+</p>
+
 # kubexray
 
 [![CI](https://github.com/kubexray/kubexray/actions/workflows/ci.yml/badge.svg)](https://github.com/kubexray/kubexray/actions/workflows/ci.yml)

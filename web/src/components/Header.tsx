@@ -3,6 +3,7 @@ import type { Me } from "../lib/api";
 import { applyTheme, savedTheme, type Theme } from "../lib/theme";
 import type { StreamStatus } from "../lib/useStream";
 import { allWorkloads, type NamespaceView, workloadHealth } from "../lib/view";
+import { Wordmark } from "./Wordmark";
 
 const STATUS: Record<StreamStatus | "replay", string> = {
   connecting: "Connecting…",
@@ -42,9 +43,7 @@ export function Header({ view, status, rewound = false, label, nav, search, me }
   return (
     <header className="header">
       <div className="brand">
-        <h1>
-          kube<span>xray</span>
-        </h1>
+        <Wordmark />
         <span className={`status ${rewound ? "rewound" : status}`}>{rewound ? "Rewound" : STATUS[status]}</span>
         {label && <span className="label">{label}</span>}
       </div>

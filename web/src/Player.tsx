@@ -9,6 +9,7 @@ import { Workspace } from "./components/Workspace";
 import { changeEvents, mergeEvents } from "./lib/events";
 import { clock } from "./lib/format";
 import { firstIncident, incidentsAt, loadReplay, recoveredAt, type Replay, stateAt } from "./lib/replay";
+import { Wordmark } from "./components/Wordmark";
 
 /** Playback speed: a few minutes of incident in under a minute. */
 const SPEED = 10;
@@ -134,9 +135,7 @@ export function Player() {
           if (file) void open(file, null);
         }}
       >
-        <h1>
-          kube<span>xray</span>
-        </h1>
+        <Wordmark />
         <p className="tagline">The flight recorder for your Kubernetes cluster. Watch an incident as it happened: what changed, what broke, and why.</p>
         <div className="drop">
           <p>Drop a replay (.kxr) here, or</p>

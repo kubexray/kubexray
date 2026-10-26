@@ -11,7 +11,16 @@
     <meta name="description" content="kubexray is the flight recorder for your Kubernetes cluster: it records every change, traces what broke back to the change that caused it, and shares the incident as a replay anyone can watch. Free and open source." />
     <meta property="og:title" content="kubexray: the flight recorder for your Kubernetes cluster" />
     <meta property="og:description" content="See what changed. See what broke. Share what happened." />
+    <meta property="og:url" content="https://kubexray.com/" />
+    <meta property="og:type" content="website" />
+    <meta property="og:image" content="https://kubexray.com/social-card.png" />
+    <meta property="og:image:width" content="1280" />
+    <meta property="og:image:height" content="640" />
+    <meta property="og:image:alt" content="kubexray: the flight recorder for your Kubernetes cluster" />
+    <meta name="twitter:card" content="summary_large_image" />
     <title>kubexray: the flight recorder for your Kubernetes cluster</title>
+    <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
+    <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
     <!-- Old player links (/?replay=…) now live at /play/. -->
     <script src="./replay-link.js"></script>
     <script src="./theme.js"></script>
@@ -19,7 +28,7 @@
   <body class="site">
     <header class="nav">
       <div class="wrap nav-inner">
-        <a class="wordmark" href="./" aria-label="kubexray home">kube<span>xray</span></a>
+        <a class="wordmark" href="./" aria-label="kubexray home"><img class="mark" src="/src/assets/kubexray-icon.svg" alt="" width="28" height="28" /><span>kube<span>xray</span></span></a>
         <nav class="nav-links" aria-label="Site">
           <a href="#features">Features</a>
           <a href="#install">Install</a>
@@ -60,7 +69,7 @@
 
         <figure class="record" aria-labelledby="record-title">
           <header class="record-head">
-            <span class="wordmark small">kube<span>xray</span></span>
+            <span class="wordmark small"><img class="mark" src="/src/assets/kubexray-icon.svg" alt="" width="20" height="20" /><span>kube<span>xray</span></span></span>
             <span class="replay-badge">Replay</span>
             <span id="record-title" class="record-meta">kind-kubexray-demo · 3m 45s recorded</span>
           </header>
@@ -260,7 +269,7 @@
 
     <footer class="footer">
       <div class="wrap footer-inner">
-        <span class="wordmark small">kube<span>xray</span></span>
+        <span class="wordmark small"><img class="mark" src="/src/assets/kubexray-icon.svg" alt="" width="20" height="20" /><span>kube<span>xray</span></span></span>
         <nav aria-label="Project">
           <a href="https://github.com/kubexray/kubexray">GitHub</a>
           <a href="https://github.com/kubexray/kubexray/tree/main/charts/kubexray">Helm chart</a>

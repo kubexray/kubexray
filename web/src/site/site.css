@@ -18,8 +18,10 @@ p { margin: 0; }
 /* Navigation */
 .nav { position: sticky; top: 0; z-index: 10; background: color-mix(in srgb, var(--bg) 88%, transparent); backdrop-filter: blur(10px); border-bottom: 1px solid var(--border); }
 .nav-inner { display: flex; align-items: center; gap: 28px; height: 60px; }
-.wordmark { font: 700 22px var(--font-display); letter-spacing: -0.01em; text-decoration: none; color: var(--text); }
-.wordmark span { color: var(--accent); }
+.wordmark { display: inline-flex; align-items: center; gap: 9px; font: 700 22px var(--font-display); letter-spacing: -0.01em; text-decoration: none; color: var(--text); }
+.wordmark .mark { flex: none; border-radius: 7px; }
+.wordmark.small .mark { border-radius: 5px; }
+.wordmark > span > span { color: var(--accent); }
 .wordmark.small { font-size: 18px; }
 .nav-links { display: flex; gap: 22px; font-size: 14px; font-weight: 500; }
 .nav-links a { color: var(--muted); text-decoration: none; }
