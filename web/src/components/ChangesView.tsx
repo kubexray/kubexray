@@ -116,7 +116,7 @@ export function ChangesView({ sets, now, query, live, canRewindTo, onRewind, rec
           <div className="feed-stat-note">by {today.authors} {today.authors === 1 ? "person or tool" : "people and tools"}</div>
         </div>
         <div className="feed-stat">
-          <div className="feed-stat-label">Broke something</div>
+          <div className="feed-stat-label">Caused incidents</div>
           <div className={`feed-stat-value${today.broke ? " crit" : ""}`}>{today.broke}</div>
           <div className="feed-stat-note">{today.broke ? "see the cards marked in red" : "nothing broke today"}</div>
         </div>

@@ -14,7 +14,7 @@ interface Props {
 }
 
 const ORDER: Outcome[] = ["broke", "drift", "settling", "healthy", "other"];
-const LABEL: Record<Outcome, string> = { broke: "Broke something", drift: "Drift", settling: "Settling", healthy: "Healthy", other: "Other" };
+const LABEL: Record<Outcome, string> = { broke: "Caused an incident", drift: "Drift", settling: "Settling", healthy: "Healthy", other: "Other" };
 const TIPS = 5; // changes listed in a bar's tooltip
 
 function when(t: number, range: Range): string {

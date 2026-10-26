@@ -167,9 +167,9 @@ So far it covers ConfigMap changes; images, memory limits, probes, scaling and q
 The **Changes** view lists every change to the cluster, newest first, and what each one did once things settled ([ADR-0012](docs/adr/0012-change-feed.md)):
 
 ```text
-5:17 PM  ConfigMap checkout-config edited     by kubectl patch       Fixed it     checkout healthy 12s later
-5:15 PM  ConfigMap checkout-config edited     by kubectl patch       Broke checkout   degraded 45s later · over at 5:18 PM
-5:15 PM  api scaled 3 → 4 replicas            by kubectl scale       Healthy      settled in 1m 0s
+5:17 PM  ConfigMap checkout-config edited     by kubectl patch       Fixed an incident    checkout healthy 12s later
+5:15 PM  ConfigMap checkout-config edited     by kubectl patch       Caused an incident   checkout degraded 45s later · over at 5:18 PM
+5:15 PM  api scaled 3 → 4 replicas            by kubectl scale       Healthy              settled in 1m 0s
 ```
 
 A Helm upgrade or Argo CD sync is one line with its version ("Helm upgrade shop 1.4.0 → 2.0.0"). Hand edits to objects Helm or a GitOps tool manages are flagged as **drift**. When you come back, it tells you what happened **since you last looked**. Filter by what broke, drift or what's still settling, search by app, person or image, and open a change to rewind the map to just before it.
