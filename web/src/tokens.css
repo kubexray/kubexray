@@ -1,0 +1,29 @@
+/* kubexray's colors and type, shared by the app and the site (kubexray.com).
+   Light by default; dark when chosen (lib/theme.ts). */
+:root {
+  --bg: #f5f6f7;
+  --surface: #ffffff;
+  --sunken: #eef0f2;
+  --border: #e1e4e8;
+  --border-strong: #c9ced4;
+  --text: #15191d;
+  --muted: #65707b;
+  --faint: #9aa3ac;
+  --accent: #0a7491;
+  --accent-soft: #e3f1f5;
+  --ok: #2e8b5f;
+  --warn: #a8690b;
+  --crit: #c4342c;
+  --crit-soft: #fbeaea;
+  --font-display: "Bricolage Grotesque", "Avenir Next", system-ui, sans-serif;
+  --font-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-data: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+  color-scheme: light;
+}
+/* Dark, when chosen in the header (lib/theme.ts); light is the default. */
+:root[data-theme="dark"] {
+  --bg: #0f1215; --surface: #161a1e; --sunken: #12161a; --border: #252b31; --border-strong: #353d45;
+  --text: #e5e8eb; --muted: #8b959f; --faint: #5d6770; --accent: #7cc6da; --accent-soft: #16303a;
+  --ok: #5cbf8c; --warn: #e2a84e; --crit: #f07068; --crit-soft: #331b1b;
+  color-scheme: dark;
+}

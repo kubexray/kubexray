@@ -1,6 +1,7 @@
 name: Player
 
-# Publishes the replay player (ADR-0008) as a static site on GitHub Pages.
+# Publishes kubexray.com on GitHub Pages: the product site, and the replay
+# player (ADR-0008) at /play/ with the demo incident.
 on:
   push:
     branches: [main]

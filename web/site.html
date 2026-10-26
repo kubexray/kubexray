@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!-- Static hosting can't send headers, so the policy is set here. -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'"
+    />
+    <meta name="description" content="kubexray is the flight recorder for your Kubernetes cluster: it records every change, traces what broke back to the change that caused it, and shares the incident as a replay anyone can watch. Free and open source." />
+    <meta property="og:title" content="kubexray: the flight recorder for your Kubernetes cluster" />
+    <meta property="og:description" content="See what changed. See what broke. Share what happened." />
+    <title>kubexray: the flight recorder for your Kubernetes cluster</title>
+    <!-- Old player links (/?replay=…) now live at /play/. -->
+    <script src="./replay-link.js"></script>
+    <script src="./theme.js"></script>
+  </head>
+  <body class="site">
+    <header class="nav">
+      <div class="wrap nav-inner">
+        <a class="wordmark" href="./" aria-label="kubexray home">kube<span>xray</span></a>
+        <nav class="nav-links" aria-label="Site">
+          <a href="#features">Features</a>
+          <a href="#install">Install</a>
+          <a href="https://github.com/kubexray/kubexray/tree/main/docs">Docs</a>
+          <a href="./play/">Player</a>
+        </nav>
+        <div class="nav-end">
+          <button type="button" class="theme-toggle" data-theme-toggle aria-label="Switch to dark mode" title="Switch to dark mode">
+            <svg class="icon-moon" aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z" /></svg>
+            <svg class="icon-sun" aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4" /><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" /></svg>
+          </button>
+          <a class="btn btn-ghost" href="https://github.com/kubexray/kubexray">
+            <svg aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0 0 16 8c0-4.42-3.58-8-8-8Z" /></svg>
+            GitHub
+          </a>
+        </div>
+      </div>
+    </header>
+
+    <main>
+      <section class="hero">
+        <div class="wrap">
+          <p class="pill">Free and open source · MIT · read-only</p>
+          <h1>The flight recorder for your Kubernetes&nbsp;cluster.</h1>
+          <p class="lede">
+            kubexray records every change to your cluster. When something breaks, it shows you the change that likely caused it, who made it, and what to run next.
+            Then share the whole incident as a replay anyone can watch, without access to your cluster.
+          </p>
+          <div class="cta">
+            <a class="btn btn-primary" href="./play/?replay=demo.kxr&amp;app=Deployment%2Fshop%2Fcheckout">Watch a recorded incident</a>
+            <a class="btn" href="#install">Install with Helm</a>
+          </div>
+          <p class="cta-note">The demo plays in your browser. No install, no cluster.</p>
+        </div>
+        <div class="wrap wide">
+          <a class="frame" href="./play/?replay=demo.kxr&amp;app=Deployment%2Fshop%2Fcheckout" aria-label="Open the demo incident in the player">
+            <img class="on-light" src="/src/site/img/hero-light.webp" width="1440" height="900" alt="kubexray showing an incident: checkout is degraded, likely caused by an edit to the ConfigMap checkout-config, with the shop namespace mapped from Ingress to Service to app to config." />
+            <img class="on-dark" src="/src/site/img/hero-dark.webp" width="1440" height="900" alt="" />
+          </a>
+        </div>
+      </section>
+
+      <section class="pillars wrap" aria-label="What kubexray does">
+        <div class="pillar">
+          <h2>See what changed</h2>
+          <p>Every rollout, image, scale and config edit, who made it, and whether it settled healthy.</p>
+        </div>
+        <div class="pillar">
+          <h2>See what broke</h2>
+          <p>Incidents explained in plain English and traced back to the change that likely caused them.</p>
+        </div>
+        <div class="pillar">
+          <h2>Share what happened</h2>
+          <p>Export a scrubbed replay and a post-mortem draft. Your team watches it in the browser.</p>
+        </div>
+      </section>
+
+      <section id="features" class="features wrap">
+        <article class="feature">
+          <div class="feature-text">
+            <p class="eyebrow">Caused by</p>
+            <h2>Every incident comes with its likely cause</h2>
+            <p>Dashboards tell you a pod is crashing. kubexray tells you why, and what changed just before.</p>
+            <ul class="ticks">
+              <li>What's wrong, in plain English, with the command to run next</li>
+              <li>The likely cause, who made it, and the evidence for it</li>
+              <li>One cause with many symptoms is one incident, not twelve alerts</li>
+            </ul>
+          </div>
+          <div class="shot">
+            <img class="on-light" src="/src/site/img/cause-light.webp" width="1036" height="500" loading="lazy" alt="An incident card for checkout, with what's wrong and the likely cause, above the map with the failing path highlighted in red." />
+            <img class="on-dark" src="/src/site/img/cause-dark.webp" width="1036" height="500" loading="lazy" alt="" />
+          </div>
+        </article>
+
+        <article class="feature flip">
+          <div class="feature-text">
+            <p class="eyebrow">Change feed</p>
+            <h2>Every change, and what it did</h2>
+            <p>One line per Helm upgrade, Argo CD sync or kubectl edit, with a verdict once things settle.</p>
+            <ul class="verdicts" aria-label="Verdicts">
+              <li><span class="verdict healthy">Healthy</span> settled, and how long it took</li>
+              <li><span class="verdict broke">Broke checkout</span> and when it was over</li>
+              <li><span class="verdict fixed">Fixed it</span> brought an app back</li>
+              <li><span class="verdict drift">Drift</span> hand edits to managed objects</li>
+            </ul>
+          </div>
+          <div class="shot">
+            <img class="on-light" src="/src/site/img/changes-light.webp" width="1240" height="716" loading="lazy" alt="The Changes view: stat cards, a histogram of changes over time, and change cards marked Healthy, Broke checkout and Fixed it." />
+            <img class="on-dark" src="/src/site/img/changes-dark.webp" width="1240" height="716" loading="lazy" alt="" />
+          </div>
+        </article>
+
+        <article class="feature stacked">
+          <div class="feature-text">
+            <p class="eyebrow">Rewind</p>
+            <h2>Go back to the moment before it broke</h2>
+            <p>kubexray records around the clock. Drag the timeline to any moment and the whole cluster is drawn as it was. Compare two moments to see exactly what changed in between.</p>
+          </div>
+          <div class="shot strip">
+            <img class="on-light" src="/src/site/img/rewind-light.webp" width="1408" height="56" loading="lazy" alt="The timeline: play, a track with red marks where things went wrong, Compare, and the current moment." />
+            <img class="on-dark" src="/src/site/img/rewind-dark.webp" width="1408" height="56" loading="lazy" alt="" />
+          </div>
+        </article>
+
+        <article class="feature flip">
+          <div class="feature-text">
+            <p class="eyebrow">In your terminal</p>
+            <h2>Ask why, get an answer</h2>
+            <p><code>kubexray why</code> gives the same diagnosis without opening a browser: impact, symptom, likely cause, evidence, and what to run next.</p>
+          </div>
+          <figure class="terminal" aria-label="kubexray why output">
+            <div class="terminal-bar" aria-hidden="true"><i></i><i></i><i></i></div>
+<pre><span class="prompt">$</span> kubexray why deploy/checkout -n shop
+<b>checkout</b> (Deployment, shop) is <span class="crit">degraded</span>: 2 of 3 pods ready
+  <span class="k">impact</span>        Service checkout → 2 of 3 pods ready
+  <span class="k">symptom</span>       1 pod CrashLoopBackOff
+  <span class="k">likely cause</span>  ConfigMap checkout-config was edited
+                by kubectl patch at 00:09:47 (1m ago)
+  <span class="k">evidence</span>      1 pod started after the edit is failing
+                2 pods started before it are healthy
+  <span class="k">next</span>          kubectl -n shop rollout restart deployment/checkout</pre>
+          </figure>
+        </article>
+      </section>
+
+      <section class="grid-section wrap" aria-labelledby="prod">
+        <h2 id="prod" class="section-title">Built to run in production</h2>
+        <div class="grid">
+          <div class="card">
+            <h3>Read-only and private</h3>
+            <p>It only lists and watches. Secret and ConfigMap contents are never read, and replays are scrubbed.</p>
+          </div>
+          <div class="card">
+            <h3>Alerts with the cause attached</h3>
+            <p>An Alertmanager receiver that forwards to Slack or a webhook with the likely cause and a link to the moment it started.</p>
+          </div>
+          <div class="card">
+            <h3>Sign in with your company accounts</h3>
+            <p>Built-in OpenID Connect for Google, Okta, Entra ID and Keycloak, with an allow-list and an audit log.</p>
+          </div>
+          <div class="card">
+            <h3>History that survives restarts</h3>
+            <p>Seven days on a volume by default, with a disk budget. The incident from 3 a.m. is still there in the morning.</p>
+          </div>
+          <div class="card">
+            <h3>Fast at scale</h3>
+            <p>Every incident and its cause found in 1 ms on 1,000 pods. The full map renders in about 80 ms.</p>
+          </div>
+          <div class="card">
+            <h3>Post-mortems drafted for you</h3>
+            <p>A Markdown timeline of what changed, what broke and when it recovered, linking to the replay.</p>
+          </div>
+        </div>
+      </section>
+
+      <section id="install" class="install wrap" aria-labelledby="install-title">
+        <h2 id="install-title" class="section-title">Install</h2>
+        <div class="install-grid">
+          <div class="card install-card">
+            <h3>In your cluster</h3>
+            <p>Records around the clock behind authentication. Open it with a port-forward, or put it behind an Ingress with sign-in.</p>
+            <div class="cmd">
+              <code>helm install kubexray oci://ghcr.io/kubexray/charts/kubexray -n kubexray --create-namespace</code>
+              <button type="button" class="copy" data-copy>Copy</button>
+            </div>
+            <a class="more" href="https://github.com/kubexray/kubexray/blob/main/charts/kubexray/values.yaml">Helm chart values →</a>
+          </div>
+          <div class="card install-card">
+            <h3>On your laptop</h3>
+            <p>One binary that uses your kubeconfig, like kubectl. It prints which cluster it's reading before it connects.</p>
+            <div class="cmd">
+              <code>brew install --cask kubexray/tap/kubexray</code>
+              <button type="button" class="copy" data-copy>Copy</button>
+            </div>
+            <a class="more" href="https://github.com/kubexray/kubexray/releases">All releases →</a>
+          </div>
+        </div>
+      </section>
+
+      <section class="closing wrap">
+        <h2>Watch an incident as it happened</h2>
+        <p>A ConfigMap edit breaks checkout a minute later. See kubexray catch it, explain it and trace it back.</p>
+        <div class="cta">
+          <a class="btn btn-primary" href="./play/?replay=demo.kxr&amp;app=Deployment%2Fshop%2Fcheckout">Watch the demo</a>
+          <a class="btn" href="https://github.com/kubexray/kubexray">Star on GitHub</a>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <div class="wrap footer-inner">
+        <span class="wordmark small">kube<span>xray</span></span>
+        <nav aria-label="Project">
+          <a href="https://github.com/kubexray/kubexray">GitHub</a>
+          <a href="https://github.com/kubexray/kubexray/tree/main/charts/kubexray">Helm chart</a>
+          <a href="https://github.com/kubexray/kubexray/tree/main/docs/adr">Design decisions</a>
+          <a href="https://github.com/kubexray/kubexray/blob/main/ROADMAP.md">Roadmap</a>
+          <a href="https://github.com/kubexray/kubexray/security/policy">Security</a>
+        </nav>
+        <span class="muted">MIT licensed</span>
+      </div>
+    </footer>
+    <script type="module" src="/src/site/main.ts"></script>
+  </body>
+</html>

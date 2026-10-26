@@ -6,10 +6,11 @@ import { defineConfig } from "vitest/config";
 //    kubexray and kubexray play. No dev server: the UI only works behind the
 //    server's session and same-origin checks; for UI work run `npm run watch`
 //    and `kubexray --ui-dir ../internal/web/dist`.
-//  - pages: the player alone, as a static site (GitHub Pages / kubexray.com).
+//  - pages: kubexray.com, a static site (GitHub Pages): the product site,
+//    and the player at /play/ with the demo replay.
 export default defineConfig(({ mode }) => {
   const pages = mode === "pages";
-  const input: Record<string, string> = pages ? { player: "player.html" } : { index: "index.html", player: "player.html" };
+  const input: Record<string, string> = pages ? { site: "site.html", player: "player.html" } : { index: "index.html", player: "player.html" };
   return {
     plugins: [react()],
     base: pages ? "./" : "/",
