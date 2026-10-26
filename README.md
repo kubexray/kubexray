@@ -11,7 +11,7 @@ See what changed. See what broke. Share what happened.
 
 > **Status:** early development. The live map, incident detection with grouped causes, rewind, `kubexray why`, shareable replays and post-mortem drafts all work. See the [roadmap](ROADMAP.md).
 >
-> **[Watch a recorded incident in your browser →](https://kubexray.github.io/kubexray/)** No install, no cluster.
+> **[Watch a recorded incident in your browser →](https://kubexray.github.io/kubexray/play/?replay=demo.kxr&app=Deployment%2Fshop%2Fcheckout)** No install, no cluster. More at the [kubexray site](https://kubexray.github.io/kubexray/).
 
 ## Why
 
@@ -28,7 +28,7 @@ Dashboards tell you a pod is crashing. During an incident you need to know more:
                    image  nginx:1.27  →  nginx:1.72
   ```
 
-- **Can I show my team?** Export the incident as a replay. Anyone can watch it in the [kubexray player](https://kubexray.github.io/kubexray/), without access to your cluster, and kubexray drafts the post-mortem for you.
+- **Can I show my team?** Export the incident as a replay. Anyone can watch it in the [kubexray player](https://kubexray.github.io/kubexray/play/), without access to your cluster, and kubexray drafts the post-mortem for you.
 
 ## Performance
 
@@ -157,7 +157,7 @@ On the incident card, **Share replay** downloads the incident as a `.kxr` file: 
 
 Anyone can play it:
 
-- drop it on the [kubexray player](https://kubexray.github.io/kubexray/), which runs entirely in the browser and uploads nothing, or
+- drop it on the [kubexray player](https://kubexray.github.io/kubexray/play/), which runs entirely in the browser and uploads nothing, or
 - run `./bin/kubexray play incident.kxr`.
 
 The player's timeline plays and scrubs the incident, and **Copy link to this moment** shares a link that opens on the same moment and app, for replays hosted at an https address.

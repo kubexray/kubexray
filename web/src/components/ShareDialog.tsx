@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { Entry } from "./IncidentCard";
 
 /** The player that opens replay files without a cluster (ADR-0008). */
-export const PLAYER_URL = "https://kubexray.github.io/kubexray/";
+export const PLAYER_URL = "https://kubexray.github.io/kubexray/play/";
 
 interface Props {
   entry: Entry;

@@ -15,7 +15,7 @@ async function seek(page: Page, to: "min" | "max") {
 }
 
 async function openDemo(page: Page) {
-  await page.goto("/");
+  await page.goto("/play/");
   await page.getByRole("button", { name: "Watch a demo incident" }).click();
   await expect(page.locator("section.incident h2")).toHaveText("checkout is degraded");
 }
@@ -63,13 +63,19 @@ test("a post-mortem draft is one click away", async ({ page }) => {
 });
 
 test("a link opens the replay with the app selected", async ({ page }) => {
-  await page.goto("/?replay=%2Fdemo.kxr&app=Deployment%2Fshop%2Fcheckout");
+  await page.goto("/play/?replay=demo.kxr&app=Deployment%2Fshop%2Fcheckout");
   await expect(page.locator("section.incident h2")).toHaveText("checkout is degraded");
   await expect(page.locator(".details .name")).toHaveText("checkout");
 });
 
+test("links made before the player moved to /play/ still open the replay", async ({ page }) => {
+  await page.goto("/?replay=%2Fdemo.kxr&app=Deployment%2Fshop%2Fcheckout");
+  await expect(page).toHaveURL(/\/play\/\?replay=%2Fdemo\.kxr&app=Deployment%2Fshop%2Fcheckout$/);
+  await expect(page.locator(".details .name")).toHaveText("checkout");
+});
+
 test("replay links must be https or on this site", async ({ page }) => {
-  await page.goto("/?replay=http%3A%2F%2Fexample.com%2Fx.kxr");
+  await page.goto("/play/?replay=http%3A%2F%2Fexample.com%2Fx.kxr");
   await expect(page.getByText("Replay links must use https, or be on this site.")).toBeVisible();
 });
 
