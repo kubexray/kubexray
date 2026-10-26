@@ -150,6 +150,21 @@ kubexray answers all three, free and open source, from a single binary on your l
 
 ---
 
+## v0.6: Safety recommendations
+
+After an incident, kubexray drafts the admission policy that would have stopped it, and proves it against the recording before showing it ([ADR-0014](docs/adr/0014-safety-recommendations.md)).
+
+- [ ] The proof, in plain code: compile with the API server's CEL libraries, refuse broad rules, reject the change that broke the app, accept the fix, everything running now and every healthy recorded version.
+- [ ] Rebuilding the bad object: recorded workload fields; ConfigMap values reconstructed from the crash log, labelled as such.
+- [ ] Providers: Anthropic (official Go SDK) and OpenAI-compatible endpoints (Ollama, vLLM); keys from files; the draft schema; up to two retries with the failures.
+- [ ] Draft a safety recommendation: a consent dialog listing what will be sent, the policy and binding (Warn and Audit by default), the rationale and each check; in post-mortems and replays.
+- [ ] Helm values (`recommendations.*`, with ConfigMap contents and `pods/log` only when on), `kubexray recommend`, audit lines.
+- [ ] Tests: fixtures for each cause; a crash log that gives orders; e2e where the proven policy, applied with Deny, makes the API server refuse `make break`.
+
+**Done when:** the demo incident ends with a proven recommendation, and applying it makes the API server refuse the same break.
+
+---
+
 ## Later
 
 - **Blast radius:** select a ConfigMap, Secret, Service or node and see everything that depends on it.

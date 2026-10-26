@@ -17,6 +17,7 @@ Short documents capturing significant decisions, their context and consequences.
 | [0011](0011-alerts.md) | Alerts: from Alertmanager to the likely cause | Accepted |
 | [0012](0012-change-feed.md) | Change feed: every change, what it did | Accepted |
 | [0013](0013-sign-in.md) | Sign-in for kubexray on the internet | Accepted |
+| [0014](0014-safety-recommendations.md) | Safety recommendations: every incident writes the guardrail that would have stopped it | Accepted |
 
 ## Template
 
