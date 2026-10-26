@@ -27,12 +27,27 @@ import (
 	"k8s.io/apiserver/pkg/authentication/user"
 	"k8s.io/apiserver/pkg/authorization/authorizer"
 	"k8s.io/apiserver/pkg/cel/environment"
+	"sigs.k8s.io/yaml"
 )
 
 // Guardrail is a recommended policy and the binding that enables it.
 type Guardrail struct {
 	Policy  *admv1.ValidatingAdmissionPolicy        `json:"policy"`
 	Binding *admv1.ValidatingAdmissionPolicyBinding `json:"binding"`
+}
+
+// YAML is the guardrail as one file for kubectl apply: the policy, then the
+// binding.
+func (g Guardrail) YAML() ([]byte, error) {
+	p, err := yaml.Marshal(g.Policy)
+	if err != nil {
+		return nil, err
+	}
+	b, err := yaml.Marshal(g.Binding)
+	if err != nil {
+		return nil, err
+	}
+	return slices.Concat(p, []byte("---\n"), b), nil
 }
 
 // Want is what a case expects of the policy.
