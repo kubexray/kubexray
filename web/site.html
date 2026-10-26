@@ -49,6 +49,7 @@
     </header>
 
     <main>
+      <div class="first-screen">
       <section class="hero wrap">
         <div class="hero-copy">
           <p class="eyebrow">Flight recorder for Kubernetes</p>
@@ -124,7 +125,23 @@
         </figure>
       </section>
 
-      <section class="still" aria-label="The player">
+      <!-- The mark's beam, turned to point down: a searchlight on what's next. -->
+      <a class="scroll-cue" href="#player">
+        <span>See it in the player</span>
+        <svg viewBox="0 0 128 184" width="34" height="49" aria-hidden="true">
+          <g class="wheel" stroke-width="7" stroke-linecap="round" fill="none">
+            <circle cx="64" cy="64" r="34" />
+            <path d="M64 19V109 M19 64H109 M32 32L96 96 M96 32L32 96" />
+            <path d="M64 14V23 M64 105V114 M14 64H23 M105 64H114 M28 28L34 34 M94 94L100 100 M100 28L94 34 M34 94L28 100" />
+          </g>
+          <path class="beam" d="M64 64L36 180H92Z" />
+          <path class="beam-core" d="M64 64L52 180H76Z" />
+          <circle class="hub" cx="64" cy="64" r="9" />
+        </svg>
+      </a>
+      </div>
+
+      <section class="still" id="player" aria-label="The player">
         <div class="wrap wide">
           <a class="still-img" href="./play/?replay=demo.kxr&amp;app=Deployment%2Fshop%2Fcheckout&amp;t=2026-10-24T14%3A17%3A15Z" aria-label="Open this moment in the player">
             <img class="on-light" src="/src/site/img/hero-light.webp" width="1440" height="900" alt="kubexray showing an incident: checkout is degraded, likely caused by an edit to the ConfigMap checkout-config, with the shop namespace mapped from Ingress to Service to app to config." />

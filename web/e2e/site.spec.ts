@@ -46,3 +46,12 @@ test("the site fits a phone", async ({ page }) => {
   await page.goto("/");
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
 });
+
+test("the first screen fills the window, and the beam points to the player", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+  await expect(page.locator(".record")).toBeInViewport();
+  await expect(page.locator(".still-img")).not.toBeInViewport();
+  await page.getByRole("link", { name: "See it in the player" }).click();
+  await expect(page.locator(".still-img")).toBeInViewport();
+});
