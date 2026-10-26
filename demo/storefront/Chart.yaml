@@ -1,0 +1,4 @@
+apiVersion: v2
+name: storefront
+description: The shop's storefront, installed with Helm in the demo story (scripts/demo-story.sh).
+version: 1.0.0

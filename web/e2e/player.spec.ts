@@ -94,21 +94,24 @@ test("the change feed says what each change did", async ({ page }) => {
   await openDemo(page);
   await page.getByRole("button", { name: "Changes", exact: true }).click();
   const cards = page.locator(".feed-card");
-  await expect(cards).toHaveCount(3);
+  await expect(cards).toHaveCount(14); // the demo's half hour
   await expect(cards.filter({ hasText: "api scaled 3 → 4 replicas" }).locator(".verdict")).toHaveText("Healthy");
-  await expect(cards.filter({ hasText: "Caused an incident" })).toContainText("ConfigMap checkout-config edited");
-  await expect(cards.filter({ hasText: "Fixed an incident" })).toContainText("checkout healthy");
+  await expect(cards.filter({ hasText: "Helm upgrade storefront 1.0.0 → 1.1.0" }).locator(".verdict")).toHaveText("Healthy");
+  const configEdits = cards.filter({ hasText: "ConfigMap checkout-config edited" });
+  await expect(configEdits.filter({ hasText: "Caused an incident" })).toContainText("checkout is degraded");
+  await expect(configEdits.filter({ hasText: "Fixed an incident" })).toContainText("checkout healthy");
+  await expect(cards.filter({ hasText: "pod template changed" })).toContainText("managed by Helm"); // the hand edit: drift
   await shot(page, "changes");
 
   await page.getByRole("button", { name: /^Caused incidents/ }).click();
-  await expect(cards).toHaveCount(1);
+  await expect(cards).toHaveCount(2);
   await page.getByRole("button", { name: /^All changes/ }).click();
-  await page.getByPlaceholder("Search apps, people, images…").fill("api");
-  await expect(cards).toHaveCount(1);
+  await page.getByPlaceholder("Search apps, people, images…").fill("checkout-config");
+  await expect(cards).toHaveCount(2);
   await page.getByPlaceholder("Search apps, people, images…").fill("");
 
   // The change that broke checkout, opened, then rewound to on the map.
-  await cards.filter({ hasText: "Caused an incident" }).getByRole("button", { name: "Details" }).click();
+  await configEdits.filter({ hasText: "Caused an incident" }).getByRole("button", { name: "Details" }).click();
   await expect(page.locator("dialog.feed-drawer")).toContainText("What changed");
   await shot(page, "change-detail");
   await page.getByRole("button", { name: "Rewind to just before" }).click();
@@ -139,11 +142,11 @@ test("the histogram shows and picks changes", async ({ page }) => {
   await expect(page.locator(".hist-window")).toContainText("Showing");
   const cards = page.locator(".feed-card");
   const picked = await cards.count();
-  expect(picked).toBeLessThan(3);
+  expect(picked).toBeLessThan(14);
   await page.locator(".hist-window").getByRole("button", { name: "Clear" }).click();
-  await expect(cards).toHaveCount(3);
+  await expect(cards).toHaveCount(14);
 
-  // Drag across every bar with changes: all three again, in a window.
+  // Drag across every bar with changes: all of them again, in a window.
   const first = await full.first().boundingBox();
   const last = await full.last().boundingBox();
   if (!first || !last) throw new Error("no bars");
@@ -152,5 +155,5 @@ test("the histogram shows and picks changes", async ({ page }) => {
   await page.mouse.move(last.x + last.width - 2, last.y + last.height - 4, { steps: 8 });
   await page.mouse.up();
   await expect(page.locator(".hist-window")).toBeVisible();
-  await expect(cards).toHaveCount(3);
+  await expect(cards).toHaveCount(14);
 });

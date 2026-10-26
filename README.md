@@ -69,6 +69,8 @@ make fix         # put it back
 make demo-down   # delete the cluster
 ```
 
+`scripts/demo-story.sh` plays half an hour in the life of the shop on the demo cluster: scaling, deploys, Helm upgrades, a hand edit and two incidents with their fixes. The public demo on kubexray.com is a recording of it.
+
 Other ways to break it, each with the answer kubexray should give:
 
 | `SCENARIO=` | What happens | kubexray says |

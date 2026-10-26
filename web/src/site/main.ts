@@ -30,3 +30,25 @@ for (const button of document.querySelectorAll<HTMLButtonElement>("[data-copy]")
     );
   });
 }
+
+// The Map | Changes switch over the player screenshots (a tab list).
+const tabs = [...document.querySelectorAll<HTMLButtonElement>('.still-tabs [role="tab"]')];
+const select = (tab: HTMLButtonElement) => {
+  for (const t of tabs) {
+    const on = t === tab;
+    t.setAttribute("aria-selected", String(on));
+    t.tabIndex = on ? 0 : -1;
+    const panel = document.getElementById(t.getAttribute("aria-controls") ?? "");
+    if (panel) panel.hidden = !on;
+  }
+};
+for (const [i, tab] of tabs.entries()) {
+  tab.addEventListener("click", () => select(tab));
+  tab.addEventListener("keydown", (e) => {
+    if (e.key !== "ArrowRight" && e.key !== "ArrowLeft") return;
+    const next = tabs[(i + (e.key === "ArrowRight" ? 1 : tabs.length - 1)) % tabs.length];
+    if (!next) return;
+    select(next);
+    next.focus();
+  });
+}

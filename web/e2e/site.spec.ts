@@ -27,16 +27,16 @@ test("each moment of the record opens the player there", async ({ page }) => {
   await page.goto("/");
   await page.locator(".tape li.incident a").click();
   await expect(page.locator("section.incident h2")).toHaveText("checkout is degraded");
-  await expect(page.getByText(/2m 1[01]s of 3m/)).toBeVisible(); // T+02:11, where the link points
+  await expect(page.getByText(/11m 4\ds of 31m/)).toBeVisible(); // T+11:45, where the link points
 });
 
 test("the site follows the theme chosen in the product", async ({ page }) => {
   await page.goto("/");
   await expect(page.locator("html")).not.toHaveAttribute("data-theme", "dark");
-  await expect(page.locator(".still-img img.on-light")).toBeVisible();
+  await expect(page.locator("#still-map .still-img img.on-light")).toBeVisible();
   await page.getByRole("button", { name: "Switch to dark mode" }).click();
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
-  await expect(page.locator(".still-img img.on-dark")).toBeVisible();
+  await expect(page.locator("#still-map .still-img img.on-dark")).toBeVisible();
   await page.goto("/play/"); // one choice for the site and the player
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
 });
@@ -51,7 +51,20 @@ test("the first screen fills the window, and the beam points to the player", asy
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/");
   await expect(page.locator(".record")).toBeInViewport();
-  await expect(page.locator(".still-img")).not.toBeInViewport();
+  await expect(page.locator("#still-map .still-img")).not.toBeInViewport();
   await page.getByRole("link", { name: "See it in the player" }).click();
-  await expect(page.locator(".still-img")).toBeInViewport();
+  await expect(page.locator("#still-map .still-img")).toBeInViewport();
+});
+
+test("the player screenshots switch between the map and the Changes page", async ({ page }) => {
+  await page.goto("/");
+  const changes = page.getByRole("tab", { name: "Changes" });
+  await expect(page.locator("#still-changes")).toBeHidden();
+  await changes.click();
+  await expect(changes).toHaveAttribute("aria-selected", "true");
+  await expect(page.locator("#still-map")).toBeHidden();
+  await page.getByRole("link", { name: "Open the Changes page in the player" }).click();
+  await expect(page).toHaveURL(/\/play\/\?replay=demo\.kxr&view=changes$/);
+  await expect(page.locator(".feed-card").first()).toBeVisible();
+  await expect(page.getByRole("button", { name: "Hour", exact: true })).toHaveAttribute("aria-pressed", "true"); // the range that fits the recording
 });

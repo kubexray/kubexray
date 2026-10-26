@@ -110,6 +110,14 @@ export function rangeOf(range: Range): { span: number; bar: number } {
   return RANGES.find((x) => x.id === range) ?? { span: 86_400_000, bar: 1_800_000 };
 }
 
+/** The smallest range that shows every change, so a short recording gets
+ * minute bars rather than one tall one. */
+export function fittingRange(sets: ChangeSet[], now: number): Range {
+  const oldest = Math.min(...sets.map((s) => Date.parse(s.at)).filter(Number.isFinite));
+  if (!Number.isFinite(oldest)) return "24h";
+  return RANGES.find((r) => now - oldest <= r.span)?.id ?? "7d";
+}
+
 /** The time a range covers, ending with the bar now is in. */
 export function rangeWindow(range: Range, now: number): Window {
   const r = rangeOf(range);
