@@ -172,7 +172,7 @@ Diffs on every change, like Argo CD shows them, with values kept inside the clus
 - [x] See diff: names, sources and fingerprints for pod templates; ConfigMap and Secret edits say what isn't read.
 - [x] Values: env values, commands and ConfigMap contents in the UI; Secrets never read; credential-looking names and values masked; values stripped from replays, alerts and post-mortems unless included; `--values` and `diffs.values`.
 - [x] Every resource kind: a cleaned manifest history for Ingress, HPA, PodDisruptionBudget, NetworkPolicy, RBAC, CronJob, StorageClass, LimitRange and custom resources the chart is given; diffs in lines or YAML.
-- [ ] Incidents and recommendations name the exact value that changed.
+- [x] Incident cards name the exact value that changed ("LOG_LEVEL info → verbose"); alerts, post-mortems and the AI model still get no values.
 - [ ] Drift against what Helm or Argo CD last applied, with the command to put it back.
 - [ ] Values follow Kubernetes permissions for signed-in people (SubjectAccessReview).
 
