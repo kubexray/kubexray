@@ -52,10 +52,26 @@ export interface Node {
   change?: Change; // latest non-status write
   origin?: Origin; // Helm, Argo CD or Flux
   selector?: { [key: string]: string}; // a Service's pod selector
+  /**
+   * Data is a ConfigMap's contents, only when values are on (ADR-0017).
+   * Secrets are never read.
+   */
+  data?: { [key: string]: Value};
 }
 /**
- * Spec is the allow-listed desired state of a workload or pod. Commands,
- * args and environment variables are deliberately absent.
+ * Value is a value kubexray may show in a diff (ADR-0017): its text when
+ * values are on and it isn't masked, and always a fingerprint, so a change
+ * shows even when the text is hidden.
+ */
+export interface Value {
+  text?: string;
+  hash?: string; // "fp:…", keyed per run
+  masked?: string; // why the text is hidden or cut: name, value or size
+}
+/**
+ * Spec is the allow-listed desired state of a workload or pod. Values of
+ * commands, args and environment variables are kept only when values are on
+ * (ADR-0017), masked where they look like credentials.
  */
 export interface Spec {
   generation?: number /* int64 */;
@@ -86,12 +102,13 @@ export interface Container {
   limits?: Resources;
   probes?: Probes; // which are defined, and what they check (ADR-0009, ADR-0015)
   /**
-   * Environment variables by name and source; a literal value only as a
-   * fingerprint, never the value (ADR-0015).
+   * Environment variables by name and source; a literal value as a
+   * fingerprint (ADR-0015), and its text when values are on (ADR-0017).
    */
   env?: EnvVar[];
   envFrom?: string[]; // "ConfigMap/name", "Secret/name"
   command?: string; // a fingerprint of the command and args
+  run?: Value; // the command and args, when values are on
   ports?: string[]; // "80/TCP"
 }
 /**
@@ -110,6 +127,11 @@ export interface EnvVar {
    * value changed without saying what it was.
    */
   value?: string;
+  /**
+   * Text is the literal value when values are on, unless it's masked.
+   */
+  text?: string;
+  masked?: string; // name, value or size: why Text is hidden or cut
 }
 /**
  * Probes records which health probes a container defines.

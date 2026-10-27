@@ -66,6 +66,7 @@ spec:
             {{- if not .Values.rbac.secrets }}
             - --no-secrets
             {{- end }}
+            - --values={{ .Values.diffs.values }}
             {{- with .Values.clusterName }}
             - --cluster-name={{ . }}
             {{- end }}

@@ -1,6 +1,6 @@
 # 0015. Diffs: what changed, without the values
 
-- Status: Accepted
+- Status: Accepted (amended by [0017](0017-values-in-diffs.md): values are kept for the UI, masked where they look like credentials)
 - Date: 2026-10-27
 
 ## Context

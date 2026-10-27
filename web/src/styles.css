@@ -335,7 +335,8 @@ dialog.postmortem textarea { display: block; width: 100%; box-sizing: border-box
 .diff-line.del .diff-op { color: var(--crit); font-weight: 600; }
 .diff-line.note .diff-op { color: var(--warn); font-weight: 600; }
 .diff-path { color: var(--muted); white-space: nowrap; }
-.diff-val { color: var(--text); overflow-wrap: anywhere; }
+.diff-val { color: var(--text); overflow-wrap: anywhere; white-space: pre-wrap; }
+.diff-line.same .diff-val { color: var(--muted); }
 .diff-note { color: var(--faint); font-family: var(--font-body); }
 .feed-drawer-list .diff-view { margin-top: 6px; }
 .feed-card time { white-space: nowrap; font: 500 13px var(--font-data); color: var(--muted); padding-top: 2px; font-variant-numeric: tabular-nums; }

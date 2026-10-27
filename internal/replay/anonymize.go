@@ -137,6 +137,14 @@ func (a *anonymizer) node(n *graph.Node) {
 	if n.Parent != "" {
 		n.Parent = a.id(n.Parent)
 	}
+	*n = graph.WithoutValues(*n) // never values (ADR-0017); keys are names
+	if n.Data != nil {
+		data := make(map[string]graph.Value, len(n.Data))
+		for k, v := range n.Data {
+			data[a.replace("key", k, "key")] = v
+		}
+		n.Data = data
+	}
 	n.Labels = a.labels(n.Labels)
 	n.Selector = a.labels(n.Selector) // the same replacements, so it still matches
 	// Kubernetes messages name nodes, volumes and keys: dropped (ADR-0009).

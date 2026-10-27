@@ -1,7 +1,9 @@
 package feed
 
 import (
+	"cmp"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 
@@ -9,7 +11,8 @@ import (
 )
 
 // DiffLine is one difference in an object, before and after a change
-// (ADR-0015). Values kubexray doesn't record are described, not shown.
+// (ADR-0017). Values kubexray doesn't record, or masks, are described,
+// not shown.
 type DiffLine struct {
 	Path string `json:"path"` // e.g. "env PROMO_BANNER", "image", "readiness probe"
 	Op   string `json:"op"`   // added, removed or changed
@@ -136,20 +139,67 @@ func (d *differ) container(label string, p, c graph.Container) {
 	}
 	d.env(label, p.Env, c.Env)
 	d.list(label+"env from", p.EnvFrom, c.EnvFrom)
-	switch {
-	case p.Command == c.Command:
-	case p.Command == "":
-		d.add(DiffLine{Path: label + "command", Op: Added, Note: "contents aren't recorded"})
-	case c.Command == "":
-		d.add(DiffLine{Path: label + "command", Op: Removed, Note: "contents aren't recorded"})
-	default:
-		d.add(DiffLine{Path: label + "command", Op: Changed, Note: "contents aren't recorded"})
+	if p.Command != c.Command {
+		d.recorded(label+"command", p.Command != "", c.Command != "", p.Run, c.Run, "contents aren't recorded")
 	}
 	d.list(label+"port", p.Ports, c.Ports)
 }
 
-// env compares environment variables by name. Literal values are only
-// fingerprints: a change is reported without saying what the value was.
+// recorded reports a value that changed, with its text when it was
+// recorded, and why not when it wasn't.
+func (d *differ) recorded(path string, was, now bool, from, to graph.Value, unread string) {
+	l := DiffLine{Path: path, Op: Changed, From: from.Text, To: to.Text}
+	switch {
+	case !was:
+		l.Op, l.From = Added, ""
+	case !now:
+		l.Op, l.To = Removed, ""
+	}
+	l.Note = note(unread, from, to, l.Op)
+	d.add(l)
+}
+
+// note says why a value isn't shown, or isn't shown whole.
+func note(unread string, from, to graph.Value, op string) string {
+	m := to.Masked
+	if op == Removed || m == "" {
+		m = cmp.Or(m, from.Masked)
+	}
+	switch m {
+	case "name":
+		return "hidden: the name looks like a credential"
+	case "value":
+		return "parts that look like credentials are hidden"
+	case "size":
+		return "too long to show whole"
+	case "binary":
+		return "binary: only that it changed"
+	}
+	if (op != Added && from.Text == "") || (op != Removed && to.Text == "") {
+		return unread
+	}
+	return ""
+}
+
+// dataDiff compares a ConfigMap's keys, with their values when recorded.
+func dataDiff(was, now map[string]graph.Value) []DiffLine {
+	var d differ
+	for _, k := range slices.Sorted(maps.Keys(now)) {
+		p, ok := was[k]
+		if v := now[k]; !ok || p.Hash != v.Hash {
+			d.recorded(k, ok, true, p, v, "values aren't recorded")
+		}
+	}
+	for _, k := range slices.Sorted(maps.Keys(was)) {
+		if _, ok := now[k]; !ok {
+			d.recorded(k, true, false, was[k], graph.Value{}, "values aren't recorded")
+		}
+	}
+	return d.lines
+}
+
+// env compares environment variables by name. A literal value shows when
+// it was recorded; otherwise only its fingerprint says it changed.
 func (d *differ) env(label string, was, now []graph.EnvVar) {
 	find := func(vs []graph.EnvVar, name string) (graph.EnvVar, bool) {
 		i := slices.IndexFunc(vs, func(v graph.EnvVar) bool { return v.Name == name })
@@ -162,12 +212,14 @@ func (d *differ) env(label string, was, now []graph.EnvVar) {
 		p, ok := find(was, v.Name)
 		path := label + "env " + v.Name
 		switch {
+		case !ok && v.From == "" && v.Text != "":
+			d.add(DiffLine{Path: path, Op: Added, To: v.Text, Note: note("", graph.Value{}, envValue(v), Added)})
 		case !ok:
 			d.add(DiffLine{Path: path, Op: Added, To: source(v), Note: literal(v)})
 		case p.From != v.From:
 			d.changed(path, source(p), source(v))
 		case p.Value != v.Value:
-			d.add(DiffLine{Path: path, Op: Changed, Note: "its value changed; values aren't recorded"})
+			d.recorded(path, true, true, envValue(p), envValue(v), "its value changed; values aren't recorded")
 		}
 	}
 	for _, v := range was {
@@ -175,6 +227,10 @@ func (d *differ) env(label string, was, now []graph.EnvVar) {
 			d.add(DiffLine{Path: label + "env " + v.Name, Op: Removed, From: source(v)})
 		}
 	}
+}
+
+func envValue(v graph.EnvVar) graph.Value {
+	return graph.Value{Text: v.Text, Hash: v.Value, Masked: v.Masked}
 }
 
 // source says where an environment variable's value comes from.
@@ -187,17 +243,22 @@ func source(v graph.EnvVar) string {
 
 func literal(v graph.EnvVar) string {
 	if v.From == "" {
-		return "values aren't recorded"
+		return note("values aren't recorded", graph.Value{}, envValue(v), Added)
 	}
 	return ""
 }
 
-// describe sums up a template diff in a few words, for the feed line:
-// "env PROMO_BANNER added", "command changed and 2 more".
+// describe sums up a diff in a few words, for the feed line: "env
+// PROMO_BANNER added", "LOG_LEVEL info → verbose", "command changed and 2
+// more".
 func describe(lines []DiffLine) string {
 	var parts []string
 	for _, l := range lines {
 		if l.Path == "replicas" || l.Path == "release version" {
+			continue
+		}
+		if l.Op == Changed && l.From != "" && l.To != "" && len(l.From)+len(l.To) <= 40 && !strings.ContainsAny(l.From+l.To, "\n") {
+			parts = append(parts, l.Path+" "+l.From+" → "+l.To)
 			continue
 		}
 		parts = append(parts, l.Path+" "+l.Op)

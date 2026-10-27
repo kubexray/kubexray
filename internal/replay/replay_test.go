@@ -33,7 +33,7 @@ func recording(t *testing.T) [][]byte {
 			Containers: []graph.Container{{
 				Name: "checkout", Image: "registry.acme.internal/payments/checkout:4.2.0",
 				Env: []graph.EnvVar{
-					{Name: "PAYMENTS_GATEWAY_URL", Value: "fp:0123456789ab"},
+					{Name: "PAYMENTS_GATEWAY_URL", Value: "fp:0123456789ab", Text: "https://zebra-gateway"},
 					{Name: "ACME_DB_PASSWORD", From: "Secret/payments-db:acme-password"},
 				},
 				EnvFrom: []string{"ConfigMap/checkout-config"},
@@ -46,6 +46,7 @@ func recording(t *testing.T) [][]byte {
 	cm := graph.Node{
 		ID: "ConfigMap/payments-prod/checkout-config", Kind: "ConfigMap", Namespace: "payments-prod", Name: "checkout-config", Created: at(-60),
 		Change: &graph.Change{At: at(-60), By: "helm", Tool: "helm"},
+		Data:   map[string]graph.Value{"PAYMENTS_MODE": {Text: "zebra-v1", Hash: "fp:aaaaaaaaaaaa"}},
 	}
 	pod := func(name string, created float64, ready bool, reason string) graph.Node {
 		return graph.Node{
@@ -76,6 +77,7 @@ func recording(t *testing.T) [][]byte {
 	add(snap, at(-1))
 
 	cm.Change = &graph.Change{At: at(0), By: "kubectl-patch", Tool: "kubectl", Via: "patch"} // the edit
+	cm.Data = map[string]graph.Value{"PAYMENTS_MODE": {Text: "zebra-v2", Hash: "fp:bbbbbbbbbbbb"}}
 	g.UpsertNode(cm)
 	d, _ := g.Flush()
 	add(d, at(0))
@@ -123,7 +125,7 @@ func TestRoundTrip(t *testing.T) {
 		t.Errorf("changes = %+v", f.Changes)
 	}
 	// The change feed: the edit, judged by what it did.
-	if len(f.Feed) != 1 || f.Feed[0].Title != "ConfigMap checkout-config edited" || f.Feed[0].Verdict != "broke" || f.Feed[0].Incident != "Deployment/payments-prod/checkout" {
+	if len(f.Feed) != 1 || f.Feed[0].Title != "ConfigMap checkout-config edited (PAYMENTS_MODE changed)" || f.Feed[0].Verdict != "broke" || f.Feed[0].Incident != "Deployment/payments-prod/checkout" {
 		t.Errorf("feed = %+v", f.Feed)
 	}
 }
@@ -326,5 +328,35 @@ func TestWriteNeedsMessages(t *testing.T) {
 	t.Parallel()
 	if err := Write(t.Context(), io.Discard, nil, Options{}); err == nil {
 		t.Error("Write of nothing succeeded")
+	}
+}
+
+func TestValuesOnlyWhenAsked(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		opts Options
+		kept bool
+	}{
+		{Options{}, false},
+		{Options{Values: true}, true},
+		{Options{Values: true, Anonymize: true}, false},
+	} {
+		c.opts.From, c.opts.To = t0.Add(-time.Minute), t0.Add(3*time.Minute)
+		var buf bytes.Buffer
+		if err := Write(t.Context(), &buf, recording(t), c.opts); err != nil {
+			t.Fatal(err)
+		}
+		zr, err := gzip.NewReader(&buf)
+		if err != nil {
+			t.Fatal(err)
+		}
+		text, _ := io.ReadAll(zr)
+		if got := strings.Contains(string(text), "zebra"); got != c.kept {
+			t.Errorf("%+v: values kept = %v", c.opts, got)
+		}
+		// The change is still there, by fingerprint.
+		if !strings.Contains(string(text), "fp:bbbbbbbbbbbb") {
+			t.Errorf("%+v: lost the fingerprint", c.opts)
+		}
 	}
 }

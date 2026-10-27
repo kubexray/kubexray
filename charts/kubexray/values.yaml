@@ -54,6 +54,14 @@ rbac:
   # metadata: it grants read access to every Secret's contents. Off by default.
   secrets: false
 
+diffs:
+  # Keep ConfigMap and environment values so diffs show them, like
+  # "LOG_LEVEL info → verbose" (ADR-0017). Values whose name or contents look
+  # like a credential are hidden, Secrets are never read, and replays and
+  # alerts leave values out unless someone chooses to include them. Off:
+  # names and fingerprints only, "LOG_LEVEL changed".
+  values: true
+
 persistence:
   # History on a volume, so it survives restarts. Without it, history lives in
   # the pod's memory and starts over when the pod does.

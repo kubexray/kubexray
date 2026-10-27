@@ -6,7 +6,8 @@ import type * as graph from "./graph";
 
 /**
  * DiffLine is one difference in an object, before and after a change
- * (ADR-0015). Values kubexray doesn't record are described, not shown.
+ * (ADR-0017). Values kubexray doesn't record, or masks, are described,
+ * not shown.
  */
 export interface DiffLine {
   path: string; // e.g. "env PROMO_BANNER", "image", "readiness probe"

@@ -80,3 +80,56 @@ func TestDiffOfATemplate(t *testing.T) {
 		}
 	}
 }
+
+func TestDiffWithValues(t *testing.T) {
+	t.Parallel()
+	st, tr := cluster(), New(MaxSets)
+	cfg := st.Nodes["ConfigMap/shop/checkout-config"]
+	cfg.Data = map[string]graph.Value{
+		"LOG_LEVEL": {Text: "info", Hash: "fp:1"},
+		"API_TOKEN": {Hash: "fp:2", Masked: "name"},
+		"OLD":       {Text: "x", Hash: "fp:3"},
+	}
+	st.Nodes[cfg.ID] = cfg
+	cfg.Data = map[string]graph.Value{
+		"LOG_LEVEL": {Text: "verbose", Hash: "fp:4"},
+		"API_TOKEN": {Hash: "fp:5", Masked: "name"},
+		"NEW":       {Text: "on", Hash: "fp:6"},
+	}
+	cfg.Change = by("kubectl-edit", "kubectl", "edit", at(0))
+	apply(t, tr, st, at(0), cfg)
+
+	e := only(t, tr).Entries[0]
+	if e.Summary != "edited (API_TOKEN changed, LOG_LEVEL info → verbose and 2 more)" {
+		t.Errorf("summary = %q", e.Summary)
+	}
+	want := []DiffLine{
+		{Path: "API_TOKEN", Op: Changed, Note: "hidden: the name looks like a credential"},
+		{Path: "LOG_LEVEL", Op: Changed, From: "info", To: "verbose"},
+		{Path: "NEW", Op: Added, To: "on"},
+		{Path: "OLD", Op: Removed, From: "x"},
+	}
+	if !slices.Equal(e.Diff, want) {
+		t.Errorf("diff = %+v", e.Diff)
+	}
+}
+
+func TestEnvDiffWithValues(t *testing.T) {
+	t.Parallel()
+	c := func(env ...graph.EnvVar) graph.Spec {
+		return graph.Spec{Containers: []graph.Container{{Name: "api", Env: env}}}
+	}
+	var d differ
+	d.template(
+		c(graph.EnvVar{Name: "LOG_LEVEL", Value: "fp:a", Text: "info"}, graph.EnvVar{Name: "DB_URL", Value: "fp:b", Text: "postgres://[redacted]@db", Masked: "value"}),
+		c(graph.EnvVar{Name: "LOG_LEVEL", Value: "fp:c", Text: "debug"}, graph.EnvVar{Name: "DB_URL", Value: "fp:d", Text: "postgres://[redacted]@db2", Masked: "value"}, graph.EnvVar{Name: "NEW", Value: "fp:e", Text: "1"}),
+	)
+	want := []DiffLine{
+		{Path: "env LOG_LEVEL", Op: Changed, From: "info", To: "debug"},
+		{Path: "env DB_URL", Op: Changed, From: "postgres://[redacted]@db", To: "postgres://[redacted]@db2", Note: "parts that look like credentials are hidden"},
+		{Path: "env NEW", Op: Added, To: "1"},
+	}
+	if !slices.Equal(d.lines, want) {
+		t.Errorf("diff = %+v", d.lines)
+	}
+}

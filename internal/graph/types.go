@@ -42,10 +42,23 @@ type Node struct {
 	Change    *Change           `json:"change,omitempty"`   // latest non-status write
 	Origin    *Origin           `json:"origin,omitempty"`   // Helm, Argo CD or Flux
 	Selector  map[string]string `json:"selector,omitempty"` // a Service's pod selector
+	// Data is a ConfigMap's contents, only when values are on (ADR-0017).
+	// Secrets are never read.
+	Data map[string]Value `json:"data,omitempty"`
 }
 
-// Spec is the allow-listed desired state of a workload or pod. Commands,
-// args and environment variables are deliberately absent.
+// Value is a value kubexray may show in a diff (ADR-0017): its text when
+// values are on and it isn't masked, and always a fingerprint, so a change
+// shows even when the text is hidden.
+type Value struct {
+	Text   string `json:"text,omitempty"`
+	Hash   string `json:"hash,omitempty"`   // "fp:…", keyed per run
+	Masked string `json:"masked,omitempty"` // why the text is hidden or cut: name, value or size
+}
+
+// Spec is the allow-listed desired state of a workload or pod. Values of
+// commands, args and environment variables are kept only when values are on
+// (ADR-0017), masked where they look like credentials.
 type Spec struct {
 	Generation int64       `json:"generation,omitempty"`
 	Revision   string      `json:"revision,omitempty"` // deployment.kubernetes.io/revision
@@ -69,11 +82,12 @@ type Container struct {
 	Requests  Resources `json:"requests,omitzero"`
 	Limits    Resources `json:"limits,omitzero"`
 	Probes    Probes    `json:"probes,omitzero"` // which are defined, and what they check (ADR-0009, ADR-0015)
-	// Environment variables by name and source; a literal value only as a
-	// fingerprint, never the value (ADR-0015).
+	// Environment variables by name and source; a literal value as a
+	// fingerprint (ADR-0015), and its text when values are on (ADR-0017).
 	Env     []EnvVar `json:"env,omitempty"`
 	EnvFrom []string `json:"envFrom,omitempty"` // "ConfigMap/name", "Secret/name"
 	Command string   `json:"command,omitempty"` // a fingerprint of the command and args
+	Run     Value    `json:"run,omitzero"`      // the command and args, when values are on
 	Ports   []string `json:"ports,omitempty"`   // "80/TCP"
 }
 
@@ -87,6 +101,56 @@ type EnvVar struct {
 	// Value is a fingerprint of a literal value ("fp:…"): it shows that a
 	// value changed without saying what it was.
 	Value string `json:"value,omitempty"`
+	// Text is the literal value when values are on, unless it's masked.
+	Text   string `json:"text,omitempty"`
+	Masked string `json:"masked,omitempty"` // name, value or size: why Text is hidden or cut
+}
+
+// WithoutValues returns a node with every value removed: what leaves the
+// cluster unless someone chooses to include values (ADR-0017). Names,
+// sources and fingerprints stay.
+func WithoutValues(n Node) Node {
+	if len(n.Data) > 0 {
+		data := make(map[string]Value, len(n.Data))
+		for k, v := range n.Data {
+			data[k] = Value{Hash: v.Hash}
+		}
+		n.Data = data
+	}
+	if n.Spec != nil && slices.ContainsFunc(n.Spec.Containers, hasValues) {
+		spec := *n.Spec
+		spec.Containers = slices.Clone(spec.Containers)
+		for i, c := range spec.Containers {
+			c.Run = Value{Hash: c.Run.Hash}
+			if len(c.Env) > 0 {
+				env := slices.Clone(c.Env)
+				for j := range env {
+					env[j].Text, env[j].Masked = "", ""
+				}
+				c.Env = env
+			}
+			spec.Containers[i] = c
+		}
+		n.Spec = &spec
+	}
+	return n
+}
+
+// StripValues applies WithoutValues to every node in a message.
+func StripValues(m *Message) {
+	for i, n := range m.Nodes {
+		m.Nodes[i] = WithoutValues(n)
+	}
+	for i, op := range m.Ops {
+		if op.Node != nil {
+			n := WithoutValues(*op.Node)
+			m.Ops[i].Node = &n
+		}
+	}
+}
+
+func hasValues(c Container) bool {
+	return c.Run.Text != "" || slices.ContainsFunc(c.Env, func(e EnvVar) bool { return e.Text != "" || e.Masked != "" })
 }
 
 // Probes records which health probes a container defines.
@@ -179,7 +243,8 @@ func (n Node) Equal(o Node) bool {
 		equalPtr(n.Spec, o.Spec, Spec.Equal) &&
 		equalPtr(n.Change, o.Change, Change.Equal) &&
 		equalPtr(n.Origin, o.Origin, func(a, b Origin) bool { return a == b }) &&
-		maps.Equal(n.Selector, o.Selector)
+		maps.Equal(n.Selector, o.Selector) &&
+		maps.Equal(n.Data, o.Data)
 }
 
 // Equal reports whether two specs are identical.
@@ -192,7 +257,7 @@ func (s Spec) Equal(o Spec) bool {
 func (c Container) Equal(o Container) bool {
 	return c.Name == o.Name && c.Image == o.Image && c.Init == o.Init && c.Ephemeral == o.Ephemeral &&
 		c.Requests == o.Requests && c.Limits == o.Limits && c.Probes == o.Probes &&
-		slices.Equal(c.Env, o.Env) && slices.Equal(c.EnvFrom, o.EnvFrom) && c.Command == o.Command && slices.Equal(c.Ports, o.Ports)
+		slices.Equal(c.Env, o.Env) && slices.Equal(c.EnvFrom, o.EnvFrom) && c.Command == o.Command && c.Run == o.Run && slices.Equal(c.Ports, o.Ports)
 }
 
 // Equal reports whether two changes are identical.

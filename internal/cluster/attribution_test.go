@@ -194,14 +194,15 @@ func TestDeploymentSpec(t *testing.T) {
 	}
 	n, _ := mapDeployment(d)
 	api := n.Spec.Containers[1]
-	// Names and fingerprints only: the values never reach the graph.
-	if len(api.Env) != 1 || api.Env[0].Name != "DB_PASSWORD" || !strings.HasPrefix(api.Env[0].Value, "fp:") || !strings.HasPrefix(api.Command, "fp:") {
-		t.Errorf("env %+v, command %q", api.Env, api.Command)
+	// A password's name masks it even with values on.
+	if len(api.Env) != 1 || api.Env[0].Name != "DB_PASSWORD" || api.Env[0].Text != "" || api.Env[0].Masked != "name" || !strings.HasPrefix(api.Env[0].Value, "fp:") {
+		t.Errorf("env %+v", api.Env)
 	}
-	if raw, _ := json.Marshal(n.Spec); strings.Contains(string(raw), "hunter2") || strings.Contains(string(raw), "secret-token") {
-		t.Errorf("the recorded spec contains a value: %s", raw)
+	// Without values, names and fingerprints only.
+	if raw, _ := json.Marshal(graph.WithoutValues(n).Spec); strings.Contains(string(raw), "hunter2") || strings.Contains(string(raw), "secret-token") {
+		t.Errorf("the spec without values contains a value: %s", raw)
 	}
-	api.Env, api.Command = nil, ""
+	api.Env, api.Command, api.Run = nil, "", graph.Value{}
 	n.Spec.Containers[1] = api
 	want := graph.Spec{Generation: 7, Revision: "14", Containers: []graph.Container{
 		{Name: "migrate", Image: "shop/migrate:3", Init: true},
@@ -256,7 +257,7 @@ func TestChangeAndOriginOnEveryNode(t *testing.T) {
 }
 
 // What a diff can show, and what it must never contain (ADR-0015).
-func TestPodTemplatesKeepNamesNotValues(t *testing.T) {
+func TestPodTemplatesValuesAndWithout(t *testing.T) {
 	t.Parallel()
 	pod := func(level string) graph.Spec {
 		n, _ := mapPod(&corev1.Pod{Spec: corev1.PodSpec{
@@ -293,10 +294,56 @@ func TestPodTemplatesKeepNamesNotValues(t *testing.T) {
 	if debug.Containers[0].Env[0].Value == c.Env[0].Value {
 		t.Error("a changed value has the same fingerprint")
 	}
-	raw, _ := json.Marshal(info)
-	for _, secret := range []string{"info", "s3cret", "hunter2"} {
+	// With values: the text, and a credential in the command redacted.
+	if c.Env[0].Text != "info" || c.Run.Text != "sh -c run --token=[redacted]" || c.Run.Masked != "value" {
+		t.Errorf("values: env %+v, run %+v", c.Env[0], c.Run)
+	}
+	// Without values: none of them.
+	raw, _ := json.Marshal(graph.WithoutValues(graph.Node{Spec: &info}).Spec)
+	for _, secret := range []string{`"info"`, "s3cret", "hunter2", "run --token"} {
 		if strings.Contains(string(raw), secret) {
-			t.Errorf("the recorded spec contains %q: %s", secret, raw)
+			t.Errorf("the spec without values contains %q: %s", secret, raw)
 		}
+	}
+	if raw, _ := json.Marshal(info); strings.Contains(string(raw), "hunter2") || strings.Contains(string(raw), "s3cret") {
+		t.Errorf("a credential got through with values on: %s", raw)
+	}
+}
+
+func TestConfigMapContents(t *testing.T) {
+	t.Parallel()
+	cm := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "checkout-config"},
+		Data: map[string]string{
+			"LOG_LEVEL":    "info",
+			"API_TOKEN":    "abc",
+			"DATABASE_URL": "postgres://app:" + "s3cret@db/shop", // a fake credential, split so scanners skip it
+			"BIG":          strings.Repeat("x", maxValue+10),
+		},
+		BinaryData: map[string][]byte{"logo.png": []byte("\x89PNG")},
+	}
+	if _, err := stripObject(cm); err != nil {
+		t.Fatal(err)
+	}
+	n, _ := mapConfigMap(cm)
+	d := n.Data
+	if d["LOG_LEVEL"].Text != "info" || d["API_TOKEN"].Text != "" || d["API_TOKEN"].Masked != "name" {
+		t.Errorf("data = %+v", d)
+	}
+	if d["DATABASE_URL"].Text != "postgres://[redacted]@db/shop" || d["DATABASE_URL"].Masked != "value" {
+		t.Errorf("url = %+v", d["DATABASE_URL"])
+	}
+	if d["BIG"].Masked != "size" || len(d["BIG"].Text) != maxValue || d["logo.png"].Masked != "binary" || !strings.HasPrefix(d["logo.png"].Hash, "fp:") {
+		t.Errorf("big %q…, binary %+v", d["BIG"].Masked, d["logo.png"])
+	}
+	for k, v := range graph.WithoutValues(n).Data {
+		if v.Text != "" || v.Hash == "" {
+			t.Errorf("%s without values = %+v", k, v)
+		}
+	}
+	system := cm.DeepCopy()
+	system.Namespace = "kube-system"
+	if n, _ := mapConfigMap(system); n.Data != nil {
+		t.Errorf("kept values from kube-system: %+v", n.Data)
 	}
 }

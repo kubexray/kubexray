@@ -21,6 +21,9 @@ type Options struct {
 	Cluster   string
 	Version   string
 	Anonymize bool
+	// Values keeps the recorded values (ADR-0017). Anonymized replays
+	// never have them.
+	Values bool
 }
 
 // ErrTooLarge is returned when a window doesn't fit in a replay that players
@@ -101,6 +104,9 @@ func Write(ctx context.Context, w io.Writer, msgs [][]byte, opts Options) error 
 		var m graph.Message
 		if err := json.Unmarshal(raw, &m); err != nil {
 			return fmt.Errorf("replay: decoding message %d: %w", i, err)
+		}
+		if !opts.Values || anon != nil {
+			graph.StripValues(&m)
 		}
 		if anon != nil {
 			anon.message(&m)
