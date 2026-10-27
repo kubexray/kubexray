@@ -294,6 +294,10 @@ func compare(old, n graph.Node, existed bool, at time.Time) []Entry {
 	written := n.Change != nil && (old.Change == nil || n.Change.At.After(old.Change.At))
 	switch {
 	case !written:
+	case n.Kind == "ConfigMap" && (old.Data != nil || n.Data != nil):
+		lines := dataDiff(old.Data, n.Data)
+		add("edited", "edited"+paren(describe(lines)), n.Change)
+		out[len(out)-1].Diff = lines
 	case n.Kind == "ConfigMap" || n.Kind == "Secret":
 		add("edited", "edited (contents not read)", n.Change)
 	case n.Kind == "Service" && !maps.Equal(old.Selector, n.Selector):

@@ -778,7 +778,8 @@ func (s *Server) changes(w http.ResponseWriter, _ *http.Request) {
 }
 
 // export downloads a replay of the recorded window from..to (ADR-0008).
-// Both default to the whole recording; anonymize=1 replaces names.
+// Both default to the whole recording; anonymize=1 replaces names, and
+// values=1 keeps recorded values (ADR-0017), never with anonymize.
 func (s *Server) export(w http.ResponseWriter, r *http.Request) {
 	first, _, ok := s.rec.Bounds()
 	if !ok {
@@ -819,8 +820,9 @@ func (s *Server) export(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	anonymize := q.Get("anonymize") == "1"
+	values := q.Get("values") == "1" && !anonymize
 	var buf bytes.Buffer
-	opts := replay.Options{From: from, To: to, Cluster: s.info.Cluster, Version: s.info.Version, Anonymize: anonymize}
+	opts := replay.Options{From: from, To: to, Cluster: s.info.Cluster, Version: s.info.Version, Anonymize: anonymize, Values: values}
 	switch err := replay.Write(r.Context(), &buf, msgs, opts); {
 	case errors.Is(err, replay.ErrTooLarge):
 		http.Error(w, err.Error(), http.StatusRequestEntityTooLarge)
@@ -833,7 +835,7 @@ func (s *Server) export(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if u, ok := user(r); ok {
-		s.log.Info("replay exported", "audit", true, "event", "export", "email", u.Email, "from", from, "to", to, "anonymized", anonymize)
+		s.log.Info("replay exported", "audit", true, "event", "export", "email", u.Email, "from", from, "to", to, "anonymized", anonymize, "values", values)
 	}
 	name := "kubexray-" + from.UTC().Format("20060102-150405") + replay.Ext
 	w.Header().Set("Content-Type", "application/gzip")

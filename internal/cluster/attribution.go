@@ -7,6 +7,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"maps"
+	"slices"
 	"strings"
 	"unicode/utf8"
 
@@ -14,6 +16,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/kubexray/kubexray/internal/graph"
+	"github.com/kubexray/kubexray/internal/redact"
 )
 
 // Annotations kept in memory (ADR-0005). Everything else, including
@@ -143,9 +146,10 @@ func originOf(m metav1.Object) *graph.Origin {
 
 // podSpec extracts the allow-listed desired state of a pod or pod template:
 // images, resources, probes, ports, what the pods read (environment
-// variable names and sources, volumes) and the service account. Never the
-// values of commands, args or environment variables: those are recorded
-// only as fingerprints, to show that they changed (ADR-0015).
+// variable names and sources, volumes) and the service account. Commands,
+// args and literal environment values are fingerprinted, to show that they
+// changed (ADR-0015), and kept as masked text for when values are on
+// (ADR-0017); the watcher drops the text otherwise.
 func podSpec(m metav1.Object, ps *corev1.PodSpec) *graph.Spec {
 	containers := make([]graph.Container, 0, len(ps.InitContainers)+len(ps.Containers)+len(ps.EphemeralContainers))
 	for _, c := range ps.InitContainers {
@@ -186,6 +190,7 @@ func container(c corev1.Container) graph.Container {
 		switch f := e.ValueFrom; {
 		case f == nil:
 			v.Value = fingerprint(e.Value)
+			v.Text, v.Masked = literal(e.Name, e.Value)
 		case f.ConfigMapKeyRef != nil:
 			v.From = "ConfigMap/" + capped(f.ConfigMapKeyRef.Name) + ":" + capped(f.ConfigMapKeyRef.Key)
 		case f.SecretKeyRef != nil:
@@ -210,6 +215,8 @@ func container(c corev1.Container) graph.Container {
 	}
 	if len(c.Command)+len(c.Args) > 0 {
 		gc.Command = fingerprint(strings.Join(c.Command, "\x00") + "\x01" + strings.Join(c.Args, "\x00"))
+		text, masked := literal("", strings.Join(slices.Concat(c.Command, c.Args), " "))
+		gc.Run = graph.Value{Text: text, Hash: gc.Command, Masked: masked}
 	}
 	for _, p := range c.Ports {
 		gc.Ports = append(gc.Ports, fmt.Sprintf("%d/%s", p.ContainerPort, cmp.Or(string(p.Protocol), "TCP")))
@@ -267,6 +274,69 @@ var fingerprintKey = func() []byte {
 	}
 	return k
 }()
+
+// maxValue caps one value's text; maxData caps a ConfigMap's (ADR-0017).
+const (
+	maxValue = 4 << 10
+	maxData  = 64 << 10
+)
+
+// literal is a value's text as a diff may show it: masked when its name
+// looks like a credential, redacted where it holds one, and cut when it's
+// long. Masked says why.
+func literal(name, value string) (text, masked string) {
+	switch {
+	case redact.SensitiveName(name):
+		return "", "name"
+	case len(value) > maxValue:
+		cut := value[:maxValue]
+		for len(cut) > 0 && !utf8.RuneStart(value[len(cut)]) {
+			cut = cut[:len(cut)-1]
+		}
+		t, _ := redact.Text(cut)
+		return t, "size"
+	}
+	if t, hid := redact.Text(value); hid {
+		return t, "value"
+	}
+	return value, ""
+}
+
+// systemNamespaces hold the cluster's own configuration: kubexray keeps no
+// values from them.
+var systemNamespaces = map[string]bool{"kube-system": true, "kube-public": true, "kube-node-lease": true}
+
+// configData is a ConfigMap's contents for diffs: each key's text (masked
+// and capped like any value) and fingerprint. Binary data and keys past the
+// size budget keep only a fingerprint.
+func configData(cm *corev1.ConfigMap) map[string]graph.Value {
+	if systemNamespaces[cm.Namespace] || len(cm.Data)+len(cm.BinaryData) == 0 {
+		return nil
+	}
+	out := make(map[string]graph.Value, len(cm.Data)+len(cm.BinaryData))
+	budget := maxData
+	keys := slices.Sorted(maps.Keys(cm.Data))
+	for _, k := range keys {
+		v := cm.Data[k]
+		val := graph.Value{Hash: fingerprint(v)}
+		if budget -= len(v); budget < 0 {
+			val.Masked = "size"
+		} else {
+			val.Text, val.Masked = literal(k, v)
+		}
+		out[capped(k)] = val
+		if len(out) == maxListed {
+			return out
+		}
+	}
+	for k, v := range cm.BinaryData {
+		out[capped(k)] = graph.Value{Hash: string(v), Masked: "binary"} // a fingerprint since stripObject
+		if len(out) == maxListed {
+			break
+		}
+	}
+	return out
+}
 
 func fingerprint(value string) string {
 	h := hmac.New(sha256.New, fingerprintKey)

@@ -14,6 +14,7 @@ interface Props {
 /** Exports the incident as a replay file to share. */
 export function ShareDialog({ entry, recordedFrom, onClose }: Props) {
   const [anonymize, setAnonymize] = useState(true);
+  const [values, setValues] = useState(false);
   const [whole, setWhole] = useState(false);
   const dialog = useRef<HTMLDialogElement>(null);
   useEffect(() => {
@@ -29,6 +30,7 @@ export function ShareDialog({ entry, recordedFrom, onClose }: Props) {
   const params = new URLSearchParams();
   if (!whole && from) params.set("from", from.toISOString());
   if (anonymize) params.set("anonymize", "1");
+  else if (values) params.set("values", "1");
   const href = `/api/export${params.size ? `?${params}` : ""}`;
 
   return (
@@ -47,7 +49,12 @@ export function ShareDialog({ entry, recordedFrom, onClose }: Props) {
         <input type="checkbox" checked={anonymize} onChange={(e) => setAnonymize(e.target.checked)} /> Anonymize names, labels and images
         <small>Kinds, statuses, image tags and the cause stay readable.</small>
       </label>
-      <p className="note">Replays never contain Secret or ConfigMap contents, environment values or annotations.</p>
+      <label className="check">
+        <input type="checkbox" checked={values && !anonymize} disabled={anonymize} onChange={(e) => setValues(e.target.checked)} /> Include
+        configuration values
+        <small>ConfigMap and environment values, with credential-looking ones still hidden. Not with anonymized names.</small>
+      </label>
+      <p className="note">Replays never contain Secrets or annotations{values && !anonymize ? "" : ", or configuration values"}.</p>
       <div className="share-actions">
         <a className="primary" href={href} download>
           Download replay

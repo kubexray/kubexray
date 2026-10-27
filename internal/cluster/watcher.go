@@ -1,9 +1,10 @@
 // Package cluster keeps a graph.Graph in sync with a Kubernetes cluster.
 //
 // It only reads: it lists and watches objects and never writes to the API.
-// ConfigMaps and Secrets are watched as metadata only, and objects are cut
-// down as they arrive (see stripObject), so neither Secret contents nor
-// last-applied-configuration ever stay in memory.
+// Secrets are watched as metadata only, and objects are cut down as they
+// arrive (see stripObject), so neither Secret contents nor
+// last-applied-configuration ever stay in memory. ConfigMaps are watched as
+// metadata only too, unless values are on (WithValues, ADR-0017).
 package cluster
 
 import (
@@ -40,6 +41,7 @@ type Watcher struct {
 	services corelisters.ServiceLister
 
 	noSecrets bool // see WithoutSecrets
+	values    bool // see WithValues
 
 	// Informer handlers run concurrently; mu serialises graph updates so the
 	// edge bookkeeping below stays consistent.
@@ -57,6 +59,15 @@ type Watcher struct {
 // one would look missing.
 func (w *Watcher) WithoutSecrets() *Watcher {
 	w.noSecrets = true
+	return w
+}
+
+// WithValues keeps the values diffs show (ADR-0017): environment variable
+// values, commands and ConfigMap contents, masked where they look like
+// credentials. Without it they're dropped before they reach the graph, and
+// ConfigMaps are watched as metadata only.
+func (w *Watcher) WithValues() *Watcher {
+	w.values = true
 	return w
 }
 
@@ -100,7 +111,11 @@ func (w *Watcher) Start(ctx context.Context) error {
 	track(register(w, KindDaemonSet, apps.DaemonSets().Informer(), mapDaemonSet))
 	track(register(w, KindJob, w.typed.Batch().V1().Jobs().Informer(), mapJob))
 	track(register(w, KindIngress, w.typed.Networking().V1().Ingresses().Informer(), mapIngress))
-	track(register(w, KindConfigMap, w.meta.ForResource(corev1.SchemeGroupVersion.WithResource("configmaps")).Informer(), mapMetadata(KindConfigMap)))
+	if w.values {
+		track(register(w, KindConfigMap, core.ConfigMaps().Informer(), mapConfigMap))
+	} else {
+		track(register(w, KindConfigMap, w.meta.ForResource(corev1.SchemeGroupVersion.WithResource("configmaps")).Informer(), mapMetadata(KindConfigMap)))
+	}
 	if !w.noSecrets {
 		track(register(w, KindSecret, w.meta.ForResource(corev1.SchemeGroupVersion.WithResource("secrets")).Informer(), mapMetadata(KindSecret)))
 	}
@@ -132,7 +147,7 @@ func register[T metav1.Object](w *Watcher, kind string, inf cache.SharedIndexInf
 			n, edges := mapFn(obj)
 			w.mu.Lock()
 			defer w.mu.Unlock()
-			w.graph.UpsertNode(n)
+			w.graph.UpsertNode(w.kept(n))
 			w.setEdges(n.ID, edges)
 		},
 		func(obj T) {
@@ -178,10 +193,25 @@ func handle[T metav1.Object](inf cache.SharedIndexInformer, upsert func(old, obj
 // are cached (ADR-0005): annotations are cut down to a small allow-list, which
 // drops last-applied-configuration with any Secrets embedded in it, and
 // managed fields keep who wrote the object and when, without the field sets.
+// kept is what of a node goes into the graph: without values unless values
+// are on.
+func (w *Watcher) kept(n graph.Node) graph.Node {
+	if w.values {
+		return n
+	}
+	return graph.WithoutValues(n)
+}
+
 func stripObject(obj any) (any, error) {
 	m, ok := obj.(metav1.Object)
 	if !ok {
 		return obj, nil
+	}
+	if cm, ok := obj.(*corev1.ConfigMap); ok {
+		// Binary contents are never shown: keep only a fingerprint of each.
+		for k, v := range cm.BinaryData {
+			cm.BinaryData[k] = []byte(fingerprint(string(v)))
+		}
 	}
 	var kept map[string]string
 	for _, k := range keptAnnotations {
@@ -275,7 +305,7 @@ func (w *Watcher) upsertPod(old, pod *corev1.Pod) {
 
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	w.graph.UpsertNode(n)
+	w.graph.UpsertNode(w.kept(n))
 	w.setEdges(n.ID, edges)
 
 	// Status updates are by far the most common pod event; selection only

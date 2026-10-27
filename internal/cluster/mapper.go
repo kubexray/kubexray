@@ -56,6 +56,14 @@ func baseNode(kind string, m metav1.Object) graph.Node {
 var clusterScoped = map[string]bool{KindNamespace: true, KindNode: true}
 
 // ownerEdges links an object to each of its owners.
+// mapConfigMap maps a ConfigMap with its contents, when values are on.
+func mapConfigMap(cm *corev1.ConfigMap) (graph.Node, []graph.Edge) {
+	n := baseNode(KindConfigMap, cm)
+	n.Status.Ready = true
+	n.Data = configData(cm)
+	return n, ownerEdges(n.ID, cm)
+}
+
 func ownerEdges(id string, m metav1.Object) []graph.Edge {
 	edges := make([]graph.Edge, 0, len(m.GetOwnerReferences()))
 	for _, ref := range m.GetOwnerReferences() {

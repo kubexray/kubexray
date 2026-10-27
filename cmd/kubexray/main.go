@@ -110,6 +110,7 @@ var (
 type connection struct {
 	kubeconfig, context, namespace string
 	noSecrets                      bool // don't watch Secrets (serve --no-secrets)
+	values                         bool // keep values for diffs (ADR-0017)
 
 	// Set by resolve.
 	cfg      *rest.Config
@@ -123,6 +124,7 @@ func (c *connection) flags(fs *flag.FlagSet, withNamespace bool) {
 		fs.StringVar(&c.namespace, "n", "", "namespace (default: the context's namespace)")
 		fs.StringVar(&c.namespace, "namespace", "", "namespace (default: the context's namespace)")
 	}
+	fs.BoolVar(&c.values, "values", true, "keep ConfigMap and environment values so diffs can show them; credential-looking ones are hidden, Secrets are never read")
 }
 
 // resolve reads the kubeconfig (no network): which cluster, namespace and
@@ -176,6 +178,9 @@ func (c *connection) sync(ctx context.Context, log *slog.Logger, stderr io.Write
 	w := cluster.New(client, metaClient, g, log)
 	if c.noSecrets {
 		w.WithoutSecrets()
+	}
+	if c.values {
+		w.WithValues()
 	}
 	if err := w.Start(ctx); err != nil {
 		return nil, "", err
