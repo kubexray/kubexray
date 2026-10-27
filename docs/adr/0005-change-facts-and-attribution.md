@@ -1,6 +1,6 @@
 # 0005. Change facts and attribution
 
-- Status: Accepted
+- Status: Accepted (amended by [0015](0015-diffs.md): names and fingerprints of environment variables and commands are now recorded, still never values)
 - Date: 2026-10-22
 - Extends: [0003](0003-graph-delta-schema.md) (additive fields, schema version stays 1)
 

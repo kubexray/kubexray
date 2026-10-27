@@ -157,3 +157,11 @@ test("the histogram shows and picks changes", async ({ page }) => {
   await expect(page.locator(".hist-window")).toBeVisible();
   await expect(cards).toHaveCount(14);
 });
+
+test("see diff shows what changed, and says what kubexray doesn't read", async ({ page }) => {
+  await page.goto("/play/?replay=demo.kxr&view=changes");
+  const edit = page.locator(".feed-card").filter({ hasText: "ConfigMap checkout-config edited" }).filter({ hasText: "Caused an incident" });
+  await edit.getByRole("button", { name: "See diff" }).click();
+  await expect(edit.locator(".diff-view")).toContainText("doesn't read ConfigMap contents");
+  await expect(edit.getByRole("button", { name: "Hide diff" })).toHaveAttribute("aria-expanded", "true");
+});

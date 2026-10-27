@@ -28,7 +28,18 @@ func recording(t *testing.T) [][]byte {
 		ID: "Deployment/payments-prod/checkout", Kind: "Deployment", Namespace: "payments-prod", Name: "checkout", Created: at(-60),
 		Labels: map[string]string{"team": "acme-payments"},
 		Status: graph.Status{Ready: true, Replicas: &graph.Replicas{Desired: 2, Ready: 2, Updated: 2}},
-		Spec:   &graph.Spec{Revision: "1", Containers: []graph.Container{{Name: "checkout", Image: "registry.acme.internal/payments/checkout:4.2.0"}}},
+		Spec: &graph.Spec{
+			Revision: "1", ServiceAccount: "checkout-sa", Volumes: []string{"Secret/payments-tls", "PVC/checkout-cache"},
+			Containers: []graph.Container{{
+				Name: "checkout", Image: "registry.acme.internal/payments/checkout:4.2.0",
+				Env: []graph.EnvVar{
+					{Name: "PAYMENTS_GATEWAY_URL", Value: "fp:0123456789ab"},
+					{Name: "ACME_DB_PASSWORD", From: "Secret/payments-db:acme-password"},
+				},
+				EnvFrom: []string{"ConfigMap/checkout-config"},
+				Probes:  graph.Probes{Readiness: true, ReadinessCheck: "http GET :8080/payments/healthz"},
+			}},
+		},
 		Change: &graph.Change{At: at(-60), By: "helm", Tool: "helm"},
 		Origin: &graph.Origin{Tool: "helm", Name: "acme-payments"},
 	}
@@ -124,13 +135,13 @@ func TestAnonymizeLeavesNothingIdentifying(t *testing.T) {
 		t.Fatal(err)
 	}
 	text, _ := io.ReadAll(zr)
-	for _, secret := range []string{"payments", "checkout", "acme", "ip-10-0-3-17", "registry", "7d9f", "team"} {
+	for _, secret := range []string{"payments", "checkout", "acme", "ip-10-0-3-17", "registry", "7d9f", "team", "GATEWAY", "PASSWORD", "healthz", "-sa", "cache"} {
 		if strings.Contains(string(text), secret) {
 			t.Errorf("anonymized replay still contains %q", secret)
 		}
 	}
 	// The story survives: kinds, the image tag, the tool, the cause.
-	for _, kept := range []string{`"kind":"Deployment"`, ":4.2.0", `"tool":"kubectl"`, "CrashLoopBackOff", "was edited"} {
+	for _, kept := range []string{`"kind":"Deployment"`, ":4.2.0", `"tool":"kubectl"`, "CrashLoopBackOff", "was edited", "fp:0123456789ab", "http GET :8080/…", `"Secret/secret-`} {
 		if !strings.Contains(string(text), kept) {
 			t.Errorf("anonymized replay lost %q", kept)
 		}

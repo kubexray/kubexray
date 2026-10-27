@@ -58,7 +58,7 @@ It is a living document: update it whenever a change adds a listener, an API end
 | Threat | Control |
 |---|---|
 | Script injection through names, labels, annotations, events or logs (relevant in multi-tenant clusters) | All cluster strings rendered as text; `dangerouslySetInnerHTML` and equivalent banned by lint; strict Content-Security-Policy with no inline scripts |
-| Sensitive fields shown in the UI | Server-side scrubbing before data leaves the backend: env values, `last-applied-configuration`, Secret data, ServiceAccount token projections |
+| Sensitive fields shown in the UI | Server-side scrubbing before data leaves the backend: env values, `last-applied-configuration`, Secret data, ServiceAccount token projections. Diffs (ADR-0015) carry environment variable names and sources, never values: literal values and commands are fingerprints keyed with a random per-run key that is never stored |
 | Logs exposing secrets | Log tails are opt-in per request and require `pods/log` permission via `SelfSubjectAccessReview` |
 
 ### D. Replay files

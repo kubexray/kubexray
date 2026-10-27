@@ -50,6 +50,11 @@ type Spec struct {
 	Generation int64       `json:"generation,omitempty"`
 	Revision   string      `json:"revision,omitempty"` // deployment.kubernetes.io/revision
 	Containers []Container `json:"containers,omitempty"`
+	// ServiceAccount the pods run as, and the objects their volumes come
+	// from ("ConfigMap/api-config", "Secret/tls", "PVC/data"), for diffs
+	// (ADR-0015).
+	ServiceAccount string   `json:"serviceAccount,omitempty"`
+	Volumes        []string `json:"volumes,omitempty"`
 	// Labels of the pods a workload creates, to match Services against it
 	// when it has no pods (scaled to zero).
 	Labels map[string]string `json:"labels,omitempty"`
@@ -63,7 +68,25 @@ type Container struct {
 	Ephemeral bool      `json:"ephemeral,omitempty"` // added by kubectl debug
 	Requests  Resources `json:"requests,omitzero"`
 	Limits    Resources `json:"limits,omitzero"`
-	Probes    Probes    `json:"probes,omitzero"` // which are defined, not what they run (ADR-0009)
+	Probes    Probes    `json:"probes,omitzero"` // which are defined, and what they check (ADR-0009, ADR-0015)
+	// Environment variables by name and source; a literal value only as a
+	// fingerprint, never the value (ADR-0015).
+	Env     []EnvVar `json:"env,omitempty"`
+	EnvFrom []string `json:"envFrom,omitempty"` // "ConfigMap/name", "Secret/name"
+	Command string   `json:"command,omitempty"` // a fingerprint of the command and args
+	Ports   []string `json:"ports,omitempty"`   // "80/TCP"
+}
+
+// EnvVar is an environment variable's name and where its value comes from.
+type EnvVar struct {
+	Name string `json:"name"`
+	// From is the value's source: "ConfigMap/checkout-config:LOG_LEVEL",
+	// "Secret/db-credentials:password", "field:metadata.name",
+	// "resource:limits.memory", or empty for a literal value.
+	From string `json:"from,omitempty"`
+	// Value is a fingerprint of a literal value ("fp:…"): it shows that a
+	// value changed without saying what it was.
+	Value string `json:"value,omitempty"`
 }
 
 // Probes records which health probes a container defines.
@@ -71,6 +94,11 @@ type Probes struct {
 	Liveness  bool `json:"liveness,omitempty"`
 	Readiness bool `json:"readiness,omitempty"`
 	Startup   bool `json:"startup,omitempty"`
+	// What each one checks: "http GET :80/healthz", "tcp :5432", "grpc
+	// :9000" or "a command" (whose contents aren't recorded).
+	LivenessCheck  string `json:"livenessCheck,omitempty"`
+	ReadinessCheck string `json:"readinessCheck,omitempty"`
+	StartupCheck   string `json:"startupCheck,omitempty"`
 }
 
 // Resources holds CPU and memory quantities in Kubernetes notation.
@@ -156,7 +184,15 @@ func (n Node) Equal(o Node) bool {
 
 // Equal reports whether two specs are identical.
 func (s Spec) Equal(o Spec) bool {
-	return s.Generation == o.Generation && s.Revision == o.Revision && slices.Equal(s.Containers, o.Containers) && maps.Equal(s.Labels, o.Labels)
+	return s.Generation == o.Generation && s.Revision == o.Revision && slices.EqualFunc(s.Containers, o.Containers, Container.Equal) &&
+		maps.Equal(s.Labels, o.Labels) && s.ServiceAccount == o.ServiceAccount && slices.Equal(s.Volumes, o.Volumes)
+}
+
+// Equal reports whether two containers are identical.
+func (c Container) Equal(o Container) bool {
+	return c.Name == o.Name && c.Image == o.Image && c.Init == o.Init && c.Ephemeral == o.Ephemeral &&
+		c.Requests == o.Requests && c.Limits == o.Limits && c.Probes == o.Probes &&
+		slices.Equal(c.Env, o.Env) && slices.Equal(c.EnvFrom, o.EnvFrom) && c.Command == o.Command && slices.Equal(c.Ports, o.Ports)
 }
 
 // Equal reports whether two changes are identical.

@@ -148,9 +148,16 @@ func (a *anonymizer) node(n *graph.Node) {
 		for i, c := range n.Spec.Containers {
 			c.Name = a.replace("container", c.Name, "container")
 			c.Image = a.image(c.Image)
+			c.Env = a.env(c.Env)
+			c.EnvFrom = a.refs(c.EnvFrom)
+			c.Probes.LivenessCheck = probeCheck(c.Probes.LivenessCheck)
+			c.Probes.ReadinessCheck = probeCheck(c.Probes.ReadinessCheck)
+			c.Probes.StartupCheck = probeCheck(c.Probes.StartupCheck)
 			spec.Containers[i] = c
 		}
 		spec.Labels = a.labels(spec.Labels)
+		spec.Volumes = a.refs(spec.Volumes)
+		spec.ServiceAccount = a.name("ServiceAccount", spec.ServiceAccount)
 		n.Spec = &spec
 	}
 	if n.Change != nil {
@@ -162,6 +169,55 @@ func (a *anonymizer) node(n *graph.Node) {
 		o.Name = a.replace("release", o.Name, "release")
 		n.Origin = &o
 	}
+}
+
+// env renames environment variables and the objects and keys their values
+// come from (ADR-0015). Fingerprints stay: they say nothing by themselves.
+func (a *anonymizer) env(in []graph.EnvVar) []graph.EnvVar {
+	if len(in) == 0 {
+		return in
+	}
+	out := make([]graph.EnvVar, len(in))
+	for i, e := range in {
+		e.Name = a.replace("env", e.Name, "VAR")
+		if obj, key, ok := strings.Cut(e.From, ":"); ok && strings.Contains(obj, "/") {
+			e.From = a.ref(obj) + ":" + a.replace("key", key, "key")
+		}
+		out[i] = e
+	}
+	return out
+}
+
+// refs renames references like "ConfigMap/api-config", as their objects are.
+func (a *anonymizer) refs(in []string) []string {
+	if len(in) == 0 {
+		return in
+	}
+	out := make([]string, len(in))
+	for i, r := range in {
+		out[i] = a.ref(r)
+	}
+	return out
+}
+
+func (a *anonymizer) ref(r string) string {
+	kind, name, ok := strings.Cut(r, "/")
+	if !ok {
+		return r
+	}
+	if kind == "PVC" {
+		return kind + "/" + a.name("PersistentVolumeClaim", name)
+	}
+	return kind + "/" + a.name(kind, name)
+}
+
+// probeCheck keeps what kind of check a probe makes and its port, not its
+// path, which can name things.
+func probeCheck(c string) string {
+	if before, _, ok := strings.Cut(c, "/"); ok && strings.HasPrefix(c, "http ") {
+		return before + "/…"
+	}
+	return c
 }
 
 func (a *anonymizer) labels(in map[string]string) map[string]string {
