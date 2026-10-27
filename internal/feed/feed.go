@@ -297,7 +297,12 @@ func compare(old, n graph.Node, existed bool, at time.Time) []Entry {
 	}
 
 	written := n.Change != nil && (old.Change == nil || n.Change.At.After(old.Change.At))
+	// Some objects carry no record of their writes (ServiceAccounts, often):
+	// a changed manifest still says something changed, by someone unknown.
+	unrecorded := n.Change == nil && old.Change == nil && old.Manifest != nil && len(manifestDiff(old, n)) > 0
 	switch {
+	case unrecorded:
+		add("changed", "changed", nil)
 	case !written:
 	case n.Kind == "ConfigMap" && (old.Data != nil || n.Data != nil):
 		lines := dataDiff(old.Data, n.Data)

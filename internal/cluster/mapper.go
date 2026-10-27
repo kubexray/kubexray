@@ -79,6 +79,7 @@ func ownerEdges(id string, m metav1.Object) []graph.Edge {
 func mapNamespace(ns *corev1.Namespace) (graph.Node, []graph.Edge) {
 	n := baseNode(KindNamespace, ns)
 	n.Status = graph.Status{Phase: string(ns.Status.Phase), Ready: ns.Status.Phase == corev1.NamespaceActive}
+	n.Manifest = manifestOf(ns) // its labels: pod security levels, mesh injection
 	return n, nil
 }
 
@@ -384,11 +385,12 @@ func mapService(svc *corev1.Service) (graph.Node, []graph.Edge) {
 	return n, ownerEdges(n.ID, svc)
 }
 
-// mapResourceQuota keeps only who changed a quota and when: refused pods
-// name the quota (ADR-0009), and an edit to it can be the cause.
+// mapResourceQuota keeps who changed a quota, when and its limits: refused
+// pods name the quota (ADR-0009), and an edit to it can be the cause.
 func mapResourceQuota(q *corev1.ResourceQuota) (graph.Node, []graph.Edge) {
 	n := baseNode(KindQuota, q)
 	n.Status.Ready = true
+	n.Manifest = manifestOf(q)
 	return n, ownerEdges(n.ID, q)
 }
 
@@ -424,6 +426,7 @@ func mapIngress(ing *networkingv1.Ingress) (graph.Node, []graph.Edge) {
 func mapPVC(pvc *corev1.PersistentVolumeClaim) (graph.Node, []graph.Edge) {
 	n := baseNode(KindPVC, pvc)
 	n.Status = graph.Status{Phase: string(pvc.Status.Phase), Ready: pvc.Status.Phase == corev1.ClaimBound}
+	n.Manifest = manifestOf(pvc)
 	return n, ownerEdges(n.ID, pvc)
 }
 
