@@ -38,6 +38,11 @@ var controllers = map[string]bool{
 	"kubelet":        true,
 	"k3s":            true,
 	"rke2":           true,
+	// Rewrite what they watch, now that kubexray diffs every kind (ADR-0018):
+	// aggregated ClusterRoles, and webhooks' CA bundles.
+	"clusterrole-aggregation-controller": true,
+	"cainjector":                         true,
+	"cert-manager-cainjector":            true,
 }
 
 func isController(manager string) bool {

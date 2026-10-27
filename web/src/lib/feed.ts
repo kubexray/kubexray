@@ -17,12 +17,11 @@ export const FILTERS: { id: Filter; label: string }[] = [
 
 /** Who made a set, as the UI says it. */
 export function author(s: ChangeSet): string {
-  return (
-    who(s.by) ||
-    (s.entries.some((e) => e.what === "replicas")
-      ? "an autoscaler or kubectl scale"
-      : "Kubernetes")
-  );
+  if (who(s.by)) return who(s.by);
+  if (s.entries.some((e) => e.what === "replicas")) return "an autoscaler or kubectl scale";
+  // An edit to an object Kubernetes keeps no record of writes for.
+  if (s.entries.some((e) => e.what === "changed")) return "someone (Kubernetes didn't record who)";
+  return "Kubernetes";
 }
 
 export const hasDrift = (s: ChangeSet) => s.entries.some((e) => !!e.drift);

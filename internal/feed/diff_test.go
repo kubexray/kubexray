@@ -175,3 +175,20 @@ func TestDiffOfARolloutStrategy(t *testing.T) {
 		t.Errorf("diff = %+v", e.Diff)
 	}
 }
+
+func TestDiffWithoutAWriteRecord(t *testing.T) {
+	t.Parallel()
+	st, tr := cluster(), New(MaxSets)
+	sa := graph.Node{
+		ID: "ServiceAccount/shop/api", Kind: "ServiceAccount", Namespace: "shop", Name: "api", Status: graph.Status{Ready: true},
+		Manifest: map[string]graph.Value{"secrets[0].name": {Text: "a", Hash: "fp:1"}},
+	}
+	st.Nodes[sa.ID] = sa
+	sa.Manifest = map[string]graph.Value{"automountServiceAccountToken": {Text: "false", Hash: "fp:2"}, "secrets[0].name": {Text: "a", Hash: "fp:1"}}
+	apply(t, tr, st, at(0), sa)
+
+	e := only(t, tr).Entries[0]
+	if e.Summary != "changed (automountServiceAccountToken added)" || e.By != nil {
+		t.Errorf("entry = %+v", e)
+	}
+}
