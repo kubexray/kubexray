@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Set as ChangeSet } from "../gen/feed";
-import { applyFilter, author, FILTERS, type Filter, filterCounts, fittingRange, hasDrift, justBefore, type Range, shortName, rangeWindow, summarize, verdictLabel, verdictNote, type Window } from "../lib/feed";
+import { applyFilter, author, FILTERS, type Filter, filterCounts, fittingRange, hasDrift, justBefore, type Range, shortName, rangeWindow, summarize, tone, verdictLabel, verdictNote, type Window } from "../lib/feed";
 import { clock, hm } from "../lib/format";
 import { ActivityHistogram } from "./ActivityHistogram";
 import { DiffView, hasDiff } from "./DiffView";
@@ -125,9 +125,9 @@ export function ChangesView({ sets, now, query, live, canRewindTo, onRewind, rec
           <div className="feed-stat-note">by {today.authors} {today.authors === 1 ? "person or tool" : "people and tools"}</div>
         </div>
         <div className="feed-stat">
-          <div className="feed-stat-label">Caused incidents</div>
+          <div className="feed-stat-label">Broke something</div>
           <div className={`feed-stat-value${today.broke ? " crit" : ""}`}>{today.broke}</div>
-          <div className="feed-stat-note">{today.broke ? "see the cards marked in red" : "nothing broke today"}</div>
+          <div className="feed-stat-note">{today.broke ? "filter by Broke something to see them" : "nothing broke today"}</div>
         </div>
         <div className="feed-stat">
           <div className="feed-stat-label">Settled healthy</div>
@@ -159,7 +159,7 @@ export function ChangesView({ sets, now, query, live, canRewindTo, onRewind, rec
           </div>
         )}
         {shown.map((s) => (
-          <article key={s.id} className={`feed-card ${s.verdict || "judging"}`}>
+          <article key={s.id} className={`feed-card ${tone(s)}`}>
             <time dateTime={s.at}>{hm(s.at)}</time>
             <div className="feed-main">
               <div className="feed-title">
@@ -186,7 +186,7 @@ export function ChangesView({ sets, now, query, live, canRewindTo, onRewind, rec
               {diffs.has(s.id) && <DiffView entries={s.entries} />}
             </div>
             <div className="feed-side">
-              <span className={`verdict ${s.verdict || "judging"}`}>{verdictLabel(s)}</span>
+              <span className={`verdict ${tone(s)}`}>{verdictLabel(s)}</span>
               <span className="feed-note">{verdictNote(s)}</span>
               <div className="feed-buttons">
                 {canRewindTo(justBefore(s)) && (
@@ -255,8 +255,8 @@ function ChangeDetail({
         </button>
       </div>
 
-      <div className={`feed-verdict-box ${s.verdict || "judging"}`}>
-        <span className={`verdict ${s.verdict || "judging"}`}>{verdictLabel(s)}</span>
+      <div className={`feed-verdict-box ${tone(s)}`}>
+        <span className={`verdict ${tone(s)}`}>{verdictLabel(s)}</span>
         <span>{verdictNote(s) || "kubexray is still watching what it does."}</span>
       </div>
 

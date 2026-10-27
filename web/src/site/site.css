@@ -127,7 +127,7 @@ p { margin: 0; }
 
 /* Verdict badges, as in the Changes view */
 .verdict { display: inline-flex; padding: 2px 10px; border-radius: 999px; font-size: 13px; font-weight: 600; white-space: nowrap; }
-.verdict.healthy, .verdict.fixed { background: color-mix(in srgb, var(--ok) 15%, var(--surface)); color: color-mix(in srgb, var(--ok) 80%, var(--text)); }
+.verdict.healthy, .verdict.fixed, .verdict.resolved { background: color-mix(in srgb, var(--ok) 15%, var(--surface)); color: color-mix(in srgb, var(--ok) 80%, var(--text)); }
 .verdict.broke { background: color-mix(in srgb, var(--crit) 14%, var(--surface)); color: color-mix(in srgb, var(--crit) 85%, var(--text)); }
 .verdict.drift { background: color-mix(in srgb, var(--warn) 15%, var(--surface)); color: color-mix(in srgb, var(--warn) 80%, var(--text)); }
 

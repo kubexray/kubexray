@@ -88,7 +88,7 @@
                 <time>T+10:14</time>
                 <span class="rail" aria-hidden="true"><i class="up"></i><i class="down red"></i><b class="red"></b></span>
                 <span class="what"><strong>ConfigMap checkout-config edited</strong><small>by kubectl patch</small></span>
-                <span class="verdict broke">Caused an incident</span>
+                <span class="verdict broke">Broke something</span>
               </a>
             </li>
             <li class="incident">
@@ -189,13 +189,14 @@
             <p>One line per Helm upgrade, Argo CD sync or kubectl edit, with a verdict once things settle.</p>
             <ul class="verdicts" aria-label="Verdicts">
               <li><span class="verdict healthy">Healthy</span> settled, and how long it took</li>
-              <li><span class="verdict broke">Caused an incident</span> which app, and when it was over</li>
+              <li><span class="verdict broke">Broke something</span> which app, while it's still broken</li>
+              <li><span class="verdict resolved">Resolved</span> what it broke, for how long, and when it was fixed</li>
               <li><span class="verdict fixed">Fixed an incident</span> brought an app back</li>
               <li><span class="verdict drift">Drift</span> hand edits to managed objects</li>
             </ul>
           </div>
           <div class="shot">
-            <img class="on-light" src="/src/site/img/changes-light.webp" width="1240" height="716" loading="lazy" alt="The Changes view: stat cards, a histogram of changes over time, and change cards marked Healthy, Caused an incident and Fixed an incident." />
+            <img class="on-light" src="/src/site/img/changes-light.webp" width="1240" height="716" loading="lazy" alt="The Changes view: stat cards, a histogram of changes over time, and change cards marked Healthy, Resolved and Fixed an incident." />
             <img class="on-dark" src="/src/site/img/changes-dark.webp" width="1240" height="716" loading="lazy" alt="" />
           </div>
         </article>

@@ -2,7 +2,7 @@
 // cards and the histogram. The engine (Go) builds and judges the sets;
 // this only arranges them.
 import type { Set as ChangeSet } from "../gen/feed";
-import { hm, who } from "./format";
+import { elapsed, hm, who } from "./format";
 import type { NamespaceView } from "./view";
 
 export type Filter = "all" | "people" | "broke" | "drift" | "settling";
@@ -10,7 +10,7 @@ export type Filter = "all" | "people" | "broke" | "drift" | "settling";
 export const FILTERS: { id: Filter; label: string }[] = [
   { id: "all", label: "All changes" },
   { id: "people", label: "People and tools" },
-  { id: "broke", label: "Caused incidents" },
+  { id: "broke", label: "Broke something" },
   { id: "drift", label: "Drift" },
   { id: "settling", label: "Still settling" },
 ];
@@ -34,14 +34,29 @@ const VERDICT: Record<string, string> = {
   "": "Judging…",
 };
 
+/** Whether a change broke something that has since been fixed. */
+export const resolved = (s: ChangeSet) => s.verdict === "broke" && !!s.ended;
+
+/** The look of a set's card and badge: a resolved breakage is green, like
+ * anything healthy, so only what's still broken is red. */
+export function tone(s: ChangeSet): string {
+  return resolved(s) ? "resolved" : s.verdict || "judging";
+}
+
 export function verdictLabel(s: ChangeSet): string {
-  if (s.verdict === "broke") return "Caused an incident"; // the note names the app
+  if (resolved(s)) return "Resolved";
+  if (s.verdict === "broke") return "Broke something"; // the note names the app
   return VERDICT[s.verdict] ?? s.verdict;
 }
 
-/** The verdict's note, with when an incident it caused ended. */
+/** The verdict's note; a resolved one says what broke, for how long and
+ * when it was fixed. */
 export function verdictNote(s: ChangeSet): string {
-  return [s.note, s.ended ? `over at ${hm(s.ended)}` : ""].filter(Boolean).join(" · ");
+  if (resolved(s) && s.ended) {
+    const app = s.incident ? shortName(s.incident) : "an app";
+    return `broke ${app} for ${elapsed(Date.parse(s.ended) - Date.parse(s.at))} · resolved at ${hm(s.ended)}`;
+  }
+  return s.note ?? "";
 }
 
 /** The moment just before a set, for rewinding to it. */
