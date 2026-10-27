@@ -35,6 +35,7 @@ func objectDiff(old, n graph.Node) []DiffLine {
 	if old.Spec != nil && n.Spec != nil {
 		d.template(*old.Spec, *n.Spec)
 	}
+	d.lines = append(d.lines, manifestDiff(old, n)...)
 	if r0, r1 := old.Status.Replicas, n.Status.Replicas; r0 != nil && r1 != nil && r0.Desired != r1.Desired {
 		d.changed("replicas", fmt.Sprint(r0.Desired), fmt.Sprint(r1.Desired))
 	}
@@ -42,6 +43,16 @@ func objectDiff(old, n graph.Node) []DiffLine {
 		d.value("release version", v.From, v.To)
 	}
 	return d.lines
+}
+
+// manifestDiff compares the rest of a workload's manifest: its strategy,
+// scheduling and the like (ADR-0018). Only when both sides have one, so a
+// recording from before manifests doesn't list every field as added.
+func manifestDiff(old, n graph.Node) []DiffLine {
+	if old.Manifest == nil || n.Manifest == nil {
+		return nil
+	}
+	return dataDiff(old.Manifest, n.Manifest)
 }
 
 type differ struct{ lines []DiffLine }
