@@ -62,6 +62,13 @@ export interface Spec {
   revision?: string; // deployment.kubernetes.io/revision
   containers?: Container[];
   /**
+   * ServiceAccount the pods run as, and the objects their volumes come
+   * from ("ConfigMap/api-config", "Secret/tls", "PVC/data"), for diffs
+   * (ADR-0015).
+   */
+  serviceAccount?: string;
+  volumes?: string[];
+  /**
    * Labels of the pods a workload creates, to match Services against it
    * when it has no pods (scaled to zero).
    */
@@ -77,7 +84,32 @@ export interface Container {
   ephemeral?: boolean; // added by kubectl debug
   requests?: Resources;
   limits?: Resources;
-  probes?: Probes; // which are defined, not what they run (ADR-0009)
+  probes?: Probes; // which are defined, and what they check (ADR-0009, ADR-0015)
+  /**
+   * Environment variables by name and source; a literal value only as a
+   * fingerprint, never the value (ADR-0015).
+   */
+  env?: EnvVar[];
+  envFrom?: string[]; // "ConfigMap/name", "Secret/name"
+  command?: string; // a fingerprint of the command and args
+  ports?: string[]; // "80/TCP"
+}
+/**
+ * EnvVar is an environment variable's name and where its value comes from.
+ */
+export interface EnvVar {
+  name: string;
+  /**
+   * From is the value's source: "ConfigMap/checkout-config:LOG_LEVEL",
+   * "Secret/db-credentials:password", "field:metadata.name",
+   * "resource:limits.memory", or empty for a literal value.
+   */
+  from?: string;
+  /**
+   * Value is a fingerprint of a literal value ("fp:…"): it shows that a
+   * value changed without saying what it was.
+   */
+  value?: string;
 }
 /**
  * Probes records which health probes a container defines.
@@ -86,6 +118,13 @@ export interface Probes {
   liveness?: boolean;
   readiness?: boolean;
   startup?: boolean;
+  /**
+   * What each one checks: "http GET :80/healthz", "tcp :5432", "grpc
+   * :9000" or "a command" (whose contents aren't recorded).
+   */
+  livenessCheck?: string;
+  readinessCheck?: string;
+  startupCheck?: string;
 }
 /**
  * Resources holds CPU and memory quantities in Kubernetes notation.

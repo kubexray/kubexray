@@ -42,6 +42,9 @@ type Entry struct {
 	Origin    *graph.Origin `json:"origin,omitempty"`
 	Drift     string        `json:"drift,omitempty"` // a hand edit on an object a GitOps tool or Helm manages
 	Version   *Versions     `json:"version,omitempty"`
+	// Diff is what changed in the object, before and after (ADR-0015); on
+	// the first of an object's entries in a change.
+	Diff []DiffLine `json:"diff,omitempty"`
 }
 
 // Versions is a Helm chart or app version change read from standard labels.
@@ -282,6 +285,9 @@ func compare(old, n graph.Node, existed bool, at time.Time) []Entry {
 		if r0, r1 := old.Status.Replicas, n.Status.Replicas; r0 != nil && r1 != nil && r0.Desired != r1.Desired {
 			add("replicas", fmt.Sprintf("scaled %d → %d replicas", r0.Desired, r1.Desired), by)
 		}
+		if len(out) > 0 {
+			out[0].Diff = objectDiff(old, n)
+		}
 		return withVersion(old, n, out)
 	}
 
@@ -373,7 +379,10 @@ func specEntries(old, n graph.Node, at time.Time, by *graph.Change) []Entry {
 		}
 	}
 	if old.Spec.Revision != "" && n.Spec.Revision != "" && old.Spec.Revision != n.Spec.Revision && !detailed {
-		add("template", fmt.Sprintf("pod template changed (revision %s → %s)", old.Spec.Revision, n.Spec.Revision))
+		var d differ
+		d.template(*old.Spec, *n.Spec)
+		what := cmp.Or(describe(d.lines), "pod template changed")
+		add("template", fmt.Sprintf("%s (revision %s → %s)", what, old.Spec.Revision, n.Spec.Revision))
 	}
 	if v := versionChange(old, n); v != nil && len(out) > 0 {
 		out[0].Version = v

@@ -2,6 +2,11 @@ package cluster
 
 import (
 	"cmp"
+	"crypto/hmac"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
 	"strings"
 	"unicode/utf8"
 
@@ -137,7 +142,10 @@ func originOf(m metav1.Object) *graph.Origin {
 }
 
 // podSpec extracts the allow-listed desired state of a pod or pod template:
-// images and resources, never commands, args or environment.
+// images, resources, probes, ports, what the pods read (environment
+// variable names and sources, volumes) and the service account. Never the
+// values of commands, args or environment variables: those are recorded
+// only as fingerprints, to show that they changed (ADR-0015).
 func podSpec(m metav1.Object, ps *corev1.PodSpec) *graph.Spec {
 	containers := make([]graph.Container, 0, len(ps.InitContainers)+len(ps.Containers)+len(ps.EphemeralContainers))
 	for _, c := range ps.InitContainers {
@@ -154,20 +162,116 @@ func podSpec(m metav1.Object, ps *corev1.PodSpec) *graph.Spec {
 		containers = append(containers, ec)
 	}
 	return &graph.Spec{
-		Generation: m.GetGeneration(),
-		Revision:   m.GetAnnotations()[annotationRevision],
-		Containers: containers,
+		Generation:     m.GetGeneration(),
+		Revision:       m.GetAnnotations()[annotationRevision],
+		Containers:     containers,
+		ServiceAccount: capped(ps.ServiceAccountName),
+		Volumes:        volumes(ps.Volumes),
 	}
 }
 
 func container(c corev1.Container) graph.Container {
-	return graph.Container{
+	gc := graph.Container{
 		Name:     c.Name,
 		Image:    c.Image,
 		Requests: resources(c.Resources.Requests),
 		Limits:   resources(c.Resources.Limits),
-		Probes:   graph.Probes{Liveness: c.LivenessProbe != nil, Readiness: c.ReadinessProbe != nil, Startup: c.StartupProbe != nil},
+		Probes: graph.Probes{
+			Liveness: c.LivenessProbe != nil, Readiness: c.ReadinessProbe != nil, Startup: c.StartupProbe != nil,
+			LivenessCheck: probeCheck(c.LivenessProbe), ReadinessCheck: probeCheck(c.ReadinessProbe), StartupCheck: probeCheck(c.StartupProbe),
+		},
 	}
+	for _, e := range c.Env {
+		v := graph.EnvVar{Name: capped(e.Name)}
+		switch f := e.ValueFrom; {
+		case f == nil:
+			v.Value = fingerprint(e.Value)
+		case f.ConfigMapKeyRef != nil:
+			v.From = "ConfigMap/" + capped(f.ConfigMapKeyRef.Name) + ":" + capped(f.ConfigMapKeyRef.Key)
+		case f.SecretKeyRef != nil:
+			v.From = "Secret/" + capped(f.SecretKeyRef.Name) + ":" + capped(f.SecretKeyRef.Key)
+		case f.FieldRef != nil:
+			v.From = "field:" + capped(f.FieldRef.FieldPath)
+		case f.ResourceFieldRef != nil:
+			v.From = "resource:" + capped(f.ResourceFieldRef.Resource)
+		}
+		gc.Env = append(gc.Env, v)
+		if len(gc.Env) == maxListed {
+			break
+		}
+	}
+	for _, e := range c.EnvFrom {
+		switch {
+		case e.ConfigMapRef != nil:
+			gc.EnvFrom = append(gc.EnvFrom, "ConfigMap/"+capped(e.ConfigMapRef.Name))
+		case e.SecretRef != nil:
+			gc.EnvFrom = append(gc.EnvFrom, "Secret/"+capped(e.SecretRef.Name))
+		}
+	}
+	if len(c.Command)+len(c.Args) > 0 {
+		gc.Command = fingerprint(strings.Join(c.Command, "\x00") + "\x01" + strings.Join(c.Args, "\x00"))
+	}
+	for _, p := range c.Ports {
+		gc.Ports = append(gc.Ports, fmt.Sprintf("%d/%s", p.ContainerPort, cmp.Or(string(p.Protocol), "TCP")))
+	}
+	return gc
+}
+
+// maxListed caps lists kept per container or pod, so a hostile object can't
+// bloat every update.
+const maxListed = 64
+
+// probeCheck says what a probe checks, without a command's contents.
+func probeCheck(p *corev1.Probe) string {
+	switch {
+	case p == nil:
+		return ""
+	case p.HTTPGet != nil:
+		return fmt.Sprintf("http GET :%s%s", p.HTTPGet.Port.String(), capped(p.HTTPGet.Path))
+	case p.TCPSocket != nil:
+		return "tcp :" + p.TCPSocket.Port.String()
+	case p.GRPC != nil:
+		return fmt.Sprintf("grpc :%d", p.GRPC.Port)
+	case p.Exec != nil:
+		return "a command"
+	}
+	return ""
+}
+
+// volumes lists the objects a pod's volumes come from.
+func volumes(vs []corev1.Volume) []string {
+	var out []string
+	for _, v := range vs {
+		switch {
+		case v.ConfigMap != nil:
+			out = append(out, "ConfigMap/"+capped(v.ConfigMap.Name))
+		case v.Secret != nil:
+			out = append(out, "Secret/"+capped(v.Secret.SecretName))
+		case v.PersistentVolumeClaim != nil:
+			out = append(out, "PVC/"+capped(v.PersistentVolumeClaim.ClaimName))
+		}
+		if len(out) == maxListed {
+			break
+		}
+	}
+	return out
+}
+
+// fingerprintKey keys value fingerprints. It's random for each run and
+// never stored, so a fingerprint in a recording or a shared replay can't
+// be matched against guesses: it only shows that a value changed.
+var fingerprintKey = func() []byte {
+	k := make([]byte, 32)
+	if _, err := rand.Read(k); err != nil {
+		panic(err) // crypto/rand doesn't fail on supported platforms
+	}
+	return k
+}()
+
+func fingerprint(value string) string {
+	h := hmac.New(sha256.New, fingerprintKey)
+	h.Write([]byte(value))
+	return "fp:" + hex.EncodeToString(h.Sum(nil))[:12]
 }
 
 func resources(rl corev1.ResourceList) graph.Resources {

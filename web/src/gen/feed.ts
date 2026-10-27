@@ -2,6 +2,33 @@
 import type * as graph from "./graph";
 
 //////////
+// source: diff.go
+
+/**
+ * DiffLine is one difference in an object, before and after a change
+ * (ADR-0015). Values kubexray doesn't record are described, not shown.
+ */
+export interface DiffLine {
+  path: string; // e.g. "env PROMO_BANNER", "image", "readiness probe"
+  op: string; // added, removed or changed
+  from?: string;
+  to?: string;
+  note?: string; // e.g. "values aren't recorded"
+}
+/**
+ * The ops a diff line can have.
+ */
+export const Added = "added";
+/**
+ * The ops a diff line can have.
+ */
+export const Removed = "removed";
+/**
+ * The ops a diff line can have.
+ */
+export const Changed = "changed";
+
+//////////
 // source: feed.go
 /*
 Package feed is the change feed (ADR-0012): every meaningful change to the
@@ -54,6 +81,11 @@ export interface Entry {
   origin?: graph.Origin;
   drift?: string; // a hand edit on an object a GitOps tool or Helm manages
   version?: Versions;
+  /**
+   * Diff is what changed in the object, before and after (ADR-0015); on
+   * the first of an object's entries in a change.
+   */
+  diff?: DiffLine[];
 }
 /**
  * Versions is a Helm chart or app version change read from standard labels.

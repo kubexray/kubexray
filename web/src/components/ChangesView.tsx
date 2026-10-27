@@ -3,6 +3,7 @@ import type { Set as ChangeSet } from "../gen/feed";
 import { applyFilter, author, FILTERS, type Filter, filterCounts, fittingRange, hasDrift, justBefore, type Range, shortName, rangeWindow, summarize, verdictLabel, verdictNote, type Window } from "../lib/feed";
 import { clock, hm } from "../lib/format";
 import { ActivityHistogram } from "./ActivityHistogram";
+import { DiffView, hasDiff } from "./DiffView";
 import { SafetyRecommendation } from "./SafetyRecommendation";
 
 interface Props {
@@ -54,6 +55,14 @@ function touches(s: ChangeSet): string {
 /** The change feed (ADR-0012): every change, and what it did. */
 export function ChangesView({ sets, now, query, live, canRewindTo, onRewind, recommend }: Props) {
   const [filter, setFilter] = useState<Filter>("all");
+  // Changes whose diff is open, by set ID.
+  const [diffs, setDiffs] = useState<Set<string>>(() => new Set());
+  const toggleDiff = (id: string) =>
+    setDiffs((d) => {
+      const next = new Set(d);
+      if (!next.delete(id)) next.add(id);
+      return next;
+    });
   const [range, setRange] = useState<Range>(() => fittingRange(sets, now));
   const [picked, setPicked] = useState<Window | null>(null);
   const [openId, setOpenId] = useState<string | null>(null);
@@ -174,6 +183,7 @@ export function ChangesView({ sets, now, query, live, canRewindTo, onRewind, rec
                   <strong>Drift:</strong> {s.entries.find((e) => e.drift)?.drift}
                 </div>
               )}
+              {diffs.has(s.id) && <DiffView entries={s.entries} />}
             </div>
             <div className="feed-side">
               <span className={`verdict ${s.verdict || "judging"}`}>{verdictLabel(s)}</span>
@@ -182,6 +192,11 @@ export function ChangesView({ sets, now, query, live, canRewindTo, onRewind, rec
                 {canRewindTo(justBefore(s)) && (
                   <button type="button" onClick={() => rewind(s)}>
                     Rewind
+                  </button>
+                )}
+                {hasDiff(s.entries) && (
+                  <button type="button" aria-expanded={diffs.has(s.id)} onClick={() => toggleDiff(s.id)}>
+                    {diffs.has(s.id) ? "Hide diff" : "See diff"}
                   </button>
                 )}
                 <button type="button" onClick={() => setOpenId(s.id)}>
@@ -259,6 +274,7 @@ function ChangeDetail({
             <li key={`${e.object}-${i}`}>
               <span className="feed-ns">{e.kind}</span> <strong>{e.name}</strong> {e.summary}
               {e.drift && <div className="feed-drift">{e.drift}</div>}
+              {hasDiff([e]) && <DiffView entries={[e]} />}
             </li>
           ))}
         </ul>

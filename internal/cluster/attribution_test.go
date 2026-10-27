@@ -1,6 +1,7 @@
 package cluster
 
 import (
+	"encoding/json"
 	"slices"
 	"strings"
 	"testing"
@@ -11,6 +12,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/intstr"
 
 	"github.com/kubexray/kubexray/internal/graph"
 )
@@ -191,6 +193,16 @@ func TestDeploymentSpec(t *testing.T) {
 		}}},
 	}
 	n, _ := mapDeployment(d)
+	api := n.Spec.Containers[1]
+	// Names and fingerprints only: the values never reach the graph.
+	if len(api.Env) != 1 || api.Env[0].Name != "DB_PASSWORD" || !strings.HasPrefix(api.Env[0].Value, "fp:") || !strings.HasPrefix(api.Command, "fp:") {
+		t.Errorf("env %+v, command %q", api.Env, api.Command)
+	}
+	if raw, _ := json.Marshal(n.Spec); strings.Contains(string(raw), "hunter2") || strings.Contains(string(raw), "secret-token") {
+		t.Errorf("the recorded spec contains a value: %s", raw)
+	}
+	api.Env, api.Command = nil, ""
+	n.Spec.Containers[1] = api
 	want := graph.Spec{Generation: 7, Revision: "14", Containers: []graph.Container{
 		{Name: "migrate", Image: "shop/migrate:3", Init: true},
 		{Name: "api", Image: "nginx:1.27-alpine", Requests: graph.Resources{CPU: "100m", Memory: "128Mi"}, Limits: graph.Resources{Memory: "256Mi"}},
@@ -207,7 +219,7 @@ func TestEphemeralContainersAreIncluded(t *testing.T) {
 		EphemeralContainers: []corev1.EphemeralContainer{{EphemeralContainerCommon: corev1.EphemeralContainerCommon{Name: "debugger", Image: "busybox"}}},
 	}})
 	want := []graph.Container{{Name: "api", Image: "nginx"}, {Name: "debugger", Image: "busybox", Ephemeral: true}}
-	if !slices.Equal(n.Spec.Containers, want) {
+	if !slices.EqualFunc(n.Spec.Containers, want, graph.Container.Equal) {
 		t.Errorf("containers = %+v, want %+v", n.Spec.Containers, want)
 	}
 }
@@ -239,6 +251,52 @@ func TestChangeAndOriginOnEveryNode(t *testing.T) {
 	for _, n := range []graph.Node{svc, cm} {
 		if n.Change == nil || n.Change.Tool != "helm" || n.Origin == nil || n.Origin.Name != "shop" {
 			t.Errorf("%s: change = %+v, origin = %+v", n.Kind, n.Change, n.Origin)
+		}
+	}
+}
+
+// What a diff can show, and what it must never contain (ADR-0015).
+func TestPodTemplatesKeepNamesNotValues(t *testing.T) {
+	t.Parallel()
+	pod := func(level string) graph.Spec {
+		n, _ := mapPod(&corev1.Pod{Spec: corev1.PodSpec{
+			ServiceAccountName: "checkout",
+			Volumes:            []corev1.Volume{{Name: "tls", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{SecretName: "checkout-tls"}}}},
+			Containers: []corev1.Container{{
+				Name: "checkout", Image: "busybox", Command: []string{"sh", "-c", "run --token=s3cret"},
+				Env: []corev1.EnvVar{
+					{Name: "LOG_LEVEL", Value: level},
+					{Name: "DB_PASSWORD", ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: "db"}, Key: "password"}}},
+				},
+				EnvFrom:        []corev1.EnvFromSource{{ConfigMapRef: &corev1.ConfigMapEnvSource{LocalObjectReference: corev1.LocalObjectReference{Name: "checkout-config"}}}},
+				Ports:          []corev1.ContainerPort{{ContainerPort: 8080}},
+				ReadinessProbe: &corev1.Probe{ProbeHandler: corev1.ProbeHandler{HTTPGet: &corev1.HTTPGetAction{Path: "/healthz", Port: intstr.FromInt32(8080)}}},
+				LivenessProbe:  &corev1.Probe{ProbeHandler: corev1.ProbeHandler{Exec: &corev1.ExecAction{Command: []string{"check", "--password=hunter2"}}}},
+			}},
+		}})
+		return *n.Spec
+	}
+	info, debug := pod("info"), pod("debug")
+	c := info.Containers[0]
+	if info.ServiceAccount != "checkout" || !slices.Equal(info.Volumes, []string{"Secret/checkout-tls"}) {
+		t.Errorf("spec = %+v", info)
+	}
+	if c.Env[0].Name != "LOG_LEVEL" || !strings.HasPrefix(c.Env[0].Value, "fp:") || c.Env[1].From != "Secret/db:password" || c.Env[1].Value != "" {
+		t.Errorf("env = %+v", c.Env)
+	}
+	if !slices.Equal(c.EnvFrom, []string{"ConfigMap/checkout-config"}) || !slices.Equal(c.Ports, []string{"8080/TCP"}) {
+		t.Errorf("envFrom %v, ports %v", c.EnvFrom, c.Ports)
+	}
+	if c.Probes.ReadinessCheck != "http GET :8080/healthz" || c.Probes.LivenessCheck != "a command" {
+		t.Errorf("probes = %+v", c.Probes)
+	}
+	if debug.Containers[0].Env[0].Value == c.Env[0].Value {
+		t.Error("a changed value has the same fingerprint")
+	}
+	raw, _ := json.Marshal(info)
+	for _, secret := range []string{"info", "s3cret", "hunter2"} {
+		if strings.Contains(string(raw), secret) {
+			t.Errorf("the recorded spec contains %q: %s", secret, raw)
 		}
 	}
 }
