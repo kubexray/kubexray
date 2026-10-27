@@ -9,14 +9,7 @@ import { Timeline } from "./components/Timeline";
 import { Workspace } from "./components/Workspace";
 import { changeEvents, mergeEvents } from "./lib/events";
 import { clock } from "./lib/format";
-import {
-  firstIncident,
-  incidentsAt,
-  loadReplay,
-  recoveredAt,
-  type Replay,
-  stateAt,
-} from "./lib/replay";
+import { firstIncident, incidentsAt, loadReplay, recoveredAt, type Replay, stateAt } from "./lib/replay";
 import { Wordmark } from "./components/Wordmark";
 
 /** Playback speed: a few minutes of incident in under a minute. */
@@ -28,8 +21,7 @@ const TICK = 100;
 export function safeReplayURL(raw: string, base = location.href): URL | null {
   try {
     const url = new URL(raw, base);
-    const sameOrigin =
-      url.origin !== "null" && url.origin === new URL(base).origin;
+    const sameOrigin = url.origin !== "null" && url.origin === new URL(base).origin;
     return url.protocol === "https:" || sameOrigin ? url : null;
   } catch {
     return null;
@@ -40,17 +32,10 @@ export function safeReplayURL(raw: string, base = location.href): URL | null {
 export function Player() {
   const params = useMemo(() => new URLSearchParams(location.search), []);
   const linked = params.get("replay");
-  const linkedURL = useMemo(
-    () => (linked ? safeReplayURL(linked) : null),
-    [linked],
-  );
+  const linkedURL = useMemo(() => (linked ? safeReplayURL(linked) : null), [linked]);
   const [replay, setReplay] = useState<Replay | null>(null);
   const [source, setSource] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(
-    linked && !linkedURL
-      ? "Replay links must use https, or be on this site."
-      : null,
-  );
+  const [error, setError] = useState<string | null>(linked && !linkedURL ? "Replay links must use https, or be on this site." : null);
   const [busy, setBusy] = useState(!!linkedURL);
   const [t, setT] = useState(0);
   const [playing, setPlaying] = useState(false);
@@ -58,11 +43,7 @@ export function Player() {
   const [copied, setCopied] = useState(false);
   const [drafting, setDrafting] = useState<Entry | null>(null);
   // ?view=changes or ?view=incidents opens on that view (kubexray.com links to it).
-  const [view, setView] = useState<View>(() =>
-    ["changes", "incidents"].includes(params.get("view") ?? "")
-      ? (params.get("view") as View)
-      : "map",
-  );
+  const [view, setView] = useState<View>(() => (["changes", "incidents"].includes(params.get("view") ?? "") ? (params.get("view") as View) : "map"));
   const [query, setQuery] = useState("");
   const [focus, setFocus] = useState(0); // remounts the map with the selection
 
@@ -78,13 +59,7 @@ export function Player() {
         const fromLink = from !== null && from === linked;
         const asked = fromLink ? Date.parse(params.get("t") ?? "") : NaN;
         const incident = firstIncident(r);
-        setT(
-          asked >= start && asked <= end
-            ? asked
-            : incident !== null
-              ? Math.min(end, incident)
-              : end,
-        );
+        setT(asked >= start && asked <= end ? asked : incident !== null ? Math.min(end, incident) : end);
         setReplay(r);
         setSource(from);
         setSelected(fromLink ? params.get("app") : null);
@@ -107,8 +82,7 @@ export function Player() {
       setBusy(true);
       try {
         const resp = await fetch(url, { credentials: "same-origin" });
-        if (!resp.ok)
-          throw new Error(`Couldn't download the replay (${resp.status}).`);
+        if (!resp.ok) throw new Error(`Couldn't download the replay (${resp.status}).`);
         await open(await resp.blob(), raw);
       } catch (err) {
         setError(err instanceof Error ? err.message : String(err));
@@ -124,8 +98,7 @@ export function Player() {
     let cancelled = false;
     fetch(linkedURL, { credentials: "same-origin" })
       .then((resp) => {
-        if (!resp.ok)
-          throw new Error(`Couldn't download the replay (${resp.status}).`);
+        if (!resp.ok) throw new Error(`Couldn't download the replay (${resp.status}).`);
         return resp.blob();
       })
       .then((blob) => (cancelled ? undefined : open(blob, linked)))
@@ -144,26 +117,13 @@ export function Player() {
   const running = playing && t < end;
   useEffect(() => {
     if (!running) return;
-    const timer = setInterval(
-      () => setT((now) => Math.min(now + TICK * SPEED, end)),
-      TICK,
-    );
+    const timer = setInterval(() => setT((now) => Math.min(now + TICK * SPEED, end)), TICK);
     return () => clearInterval(timer);
   }, [running, end]);
 
-  const state = useMemo(
-    () => (replay ? stateAt(replay, t) : null),
-    [replay, t],
-  );
-  const incidents = useMemo(
-    () => (replay ? incidentsAt(replay, t) : null),
-    [replay, t],
-  );
-  const events = useMemo(
-    () =>
-      replay ? mergeEvents(replay.events, changeEvents(replay.changes)) : [],
-    [replay],
-  );
+  const state = useMemo(() => (replay ? stateAt(replay, t) : null), [replay, t]);
+  const incidents = useMemo(() => (replay ? incidentsAt(replay, t) : null), [replay, t]);
+  const events = useMemo(() => (replay ? mergeEvents(replay.events, changeEvents(replay.changes)) : []), [replay]);
   const at = new Date(t).toISOString();
 
   if (!replay || !state) {
@@ -178,30 +138,15 @@ export function Player() {
         }}
       >
         <Wordmark />
-        <p className="tagline">
-          The flight recorder for your Kubernetes cluster. Watch an incident as
-          it happened: what changed, what broke, and why.
-        </p>
+        <p className="tagline">The flight recorder for your Kubernetes cluster. Watch an incident as it happened: what changed, what broke, and why.</p>
         <div className="drop">
           <p>Drop a replay (.kxr) here, or</p>
           <label className="pick">
             Choose a file
-            <input
-              type="file"
-              accept=".kxr,application/gzip"
-              onChange={(e) =>
-                e.target.files?.[0] && void open(e.target.files[0], null)
-              }
-            />
+            <input type="file" accept=".kxr,application/gzip" onChange={(e) => e.target.files?.[0] && void open(e.target.files[0], null)} />
           </label>
           {import.meta.env.VITE_DEMO === "1" && (
-            <button
-              type="button"
-              className="pick"
-              onClick={() =>
-                void fetchAndOpen(new URL("demo.kxr", location.href).href)
-              }
-            >
+            <button type="button" className="pick" onClick={() => void fetchAndOpen(new URL("demo.kxr", location.href).href)}>
               Watch a demo incident
             </button>
           )}
@@ -209,9 +154,7 @@ export function Player() {
         {busy && <p>Loading the replay…</p>}
         {error && <p className="error">{error}</p>}
         <p className="small">
-          Replays are made with{" "}
-          <a href="https://github.com/kubexray/kubexray">kubexray</a>. They play
-          entirely in your browser; nothing is uploaded.
+          Replays are made with <a href="https://github.com/kubexray/kubexray">kubexray</a>. They play entirely in your browser; nothing is uploaded.
         </p>
       </main>
     );
@@ -240,35 +183,18 @@ export function Player() {
   // play's link is on localhost), opening just before the change or the
   // first symptom, wherever the author paused.
   const draft = (entry: Entry) => {
-    const back = recoveredAt(
-      replay,
-      entry.incidents.map((i) => i.app),
-      t,
-    );
-    const shareable =
-      location.protocol === "https:" && !!source?.startsWith("https://");
-    const starts = [
-      entry.group?.cause.at ?? entry.incidents[0]?.causes?.[0]?.at,
-      ...entry.incidents.map((i) => i.since),
-    ]
-      .map((s) => Date.parse(s ?? ""))
-      .filter(Number.isFinite);
-    const opens = starts.length
-      ? Math.max(Date.parse(h.from), Math.min(...starts) - 10_000)
-      : t;
+    const back = recoveredAt(replay, entry.incidents.map((i) => i.app), t);
+    const shareable = location.protocol === "https:" && !!source?.startsWith("https://");
+    const starts = [entry.group?.cause.at ?? entry.incidents[0]?.causes?.[0]?.at, ...entry.incidents.map((i) => i.since)].map((s) => Date.parse(s ?? "")).filter(Number.isFinite);
+    const opens = starts.length ? Math.max(Date.parse(h.from), Math.min(...starts) - 10_000) : t;
     return {
       entry,
       cluster: h.cluster,
       at,
-      recovered:
-        back === null
-          ? null
-          : { at: new Date(back).toISOString(), exact: true },
+      recovered: back === null ? null : { at: new Date(back).toISOString(), exact: true },
       events,
       eventsFrom: null,
-      link: shareable
-        ? linkTo(entry.incidents[0]?.app ?? null, new Date(opens).toISOString())
-        : null,
+      link: shareable ? linkTo(entry.incidents[0]?.app ?? null, new Date(opens).toISOString()) : null,
     };
   };
   return (
@@ -311,20 +237,13 @@ export function Player() {
             view={v}
             status="replay"
             label={`${h.cluster}${h.anonymized ? " (anonymized)" : ""} · ${clock(h.from)} to ${clock(h.to)}`}
-            nav={{
-              active: view,
-              onChange: setView,
-              incidents: incidents?.incidents.length ?? 0,
-            }}
+            nav={{ active: view, onChange: setView, incidents: incidents?.incidents.length ?? 0 }}
             search={{ value: query, onChange: setQuery }}
           />
         )}
         notice={
           <div className="replay-bar">
-            <span>
-              You're watching a recording. Use the timeline or press Play; links
-              keep the moment and the selected app.
-            </span>
+            <span>You're watching a recording. Use the timeline or press Play; links keep the moment and the selected app.</span>
             {source && (
               <button type="button" onClick={permalink}>
                 {copied ? "Link copied" : "Copy link to this moment"}
@@ -378,12 +297,7 @@ export function Player() {
           />
         )}
       />
-      {drafting && (
-        <PostmortemDialog
-          draft={() => draft(drafting)}
-          onClose={() => setDrafting(null)}
-        />
-      )}
+      {drafting && <PostmortemDialog draft={() => draft(drafting)} onClose={() => setDrafting(null)} />}
     </FeedSets.Provider>
   );
 }
