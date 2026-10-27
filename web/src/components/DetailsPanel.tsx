@@ -4,6 +4,7 @@ import type { Incident } from "../gen/cause";
 import type { Node } from "../gen/graph";
 import { ago, who } from "../lib/format";
 import { nodeSummary, podHealth, podText } from "../lib/health";
+import { hasText, toYaml } from "../lib/manifest";
 import type { ClusterState } from "../lib/state";
 import { allWorkloads, type NamespaceView, workloadHealth, workloadProblem } from "../lib/view";
 import { CauseLine, DiagnosisLine } from "./IncidentCard";
@@ -93,6 +94,13 @@ export function DetailsPanel({ id, state, view, incident, onSelect }: Props) {
           </div>
         ))}
       </dl>
+      {hasText(n.manifest ?? n.data) && (
+        <details className="manifest">
+          <summary>{n.manifest ? "Manifest" : "Contents"}</summary>
+          <pre>{toYaml(n.manifest ?? n.data)}</pre>
+          <p className="note">{n.manifest ? "Status and most metadata left out. " : ""}Values that look like credentials are hidden.</p>
+        </details>
+      )}
       {isApp && wl && wl.w.pods.length > 0 && (
         <ul className="podlist">
           {wl.w.pods.map((p) => (

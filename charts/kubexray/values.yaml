@@ -61,6 +61,12 @@ diffs:
   # alerts leave values out unless someone chooses to include them. Off:
   # names and fingerprints only, "LOG_LEVEL changed".
   values: true
+  # Custom resources to keep a history of, besides the built-in kinds
+  # (ADR-0018), as group/version/resource. The chart grants read access to
+  # each. For example:
+  #   - argoproj.io/v1alpha1/applications
+  #   - gateway.networking.k8s.io/v1/httproutes
+  extraResources: []
 
 persistence:
   # History on a volume, so it survives restarts. Without it, history lives in

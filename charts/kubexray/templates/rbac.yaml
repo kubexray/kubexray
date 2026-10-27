@@ -12,11 +12,39 @@ rules:
     resources: [deployments, replicasets, statefulsets, daemonsets]
     verbs: [get, list, watch]
   - apiGroups: [batch]
-    resources: [jobs]
+    resources: [jobs, cronjobs]
     verbs: [get, list, watch]
   - apiGroups: [networking.k8s.io]
-    resources: [ingresses]
+    resources: [ingresses, networkpolicies]
     verbs: [get, list, watch]
+  # Kinds kept as a manifest history (ADR-0018).
+  - apiGroups: [""]
+    resources: [limitranges]
+    verbs: [get, list, watch]
+  - apiGroups: [autoscaling]
+    resources: [horizontalpodautoscalers]
+    verbs: [get, list, watch]
+  - apiGroups: [policy]
+    resources: [poddisruptionbudgets]
+    verbs: [get, list, watch]
+  - apiGroups: [rbac.authorization.k8s.io]
+    resources: [roles, rolebindings, clusterroles, clusterrolebindings]
+    verbs: [get, list, watch]
+  - apiGroups: [storage.k8s.io]
+    resources: [storageclasses]
+    verbs: [get, list, watch]
+  {{- range .Values.diffs.extraResources }}
+  {{- $parts := splitList "/" . }}
+  {{- if or (lt (len $parts) 2) (gt (len $parts) 3) }}
+  {{- fail (printf "diffs.extraResources: %q isn't group/version/resource" .) }}
+  {{- end }}
+  {{- if and (eq (len $parts) 2) (eq (last $parts) "secrets") }}
+  {{- fail "diffs.extraResources: kubexray never reads Secrets" }}
+  {{- end }}
+  - apiGroups: [{{ if eq (len $parts) 3 }}{{ first $parts | quote }}{{ else }}""{{ end }}]
+    resources: [{{ last $parts | quote }}]
+    verbs: [get, list, watch]
+  {{- end }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding

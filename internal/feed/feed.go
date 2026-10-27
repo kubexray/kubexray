@@ -195,7 +195,8 @@ func tracked(n graph.Node) bool {
 		"PersistentVolumeClaim", "ResourceQuota", "Namespace", "Node":
 		return n.Name != "kube-root-ca.crt" // copied into every namespace by Kubernetes
 	}
-	return false
+	// Any other kind kubexray keeps a manifest history of (ADR-0018).
+	return n.Manifest != nil
 }
 
 func removedWord(n graph.Node) string {
@@ -300,10 +301,19 @@ func compare(old, n graph.Node, existed bool, at time.Time) []Entry {
 		out[len(out)-1].Diff = lines
 	case n.Kind == "ConfigMap" || n.Kind == "Secret":
 		add("edited", "edited (contents not read)", n.Change)
+	case n.Change.Tool == "controller":
 	case n.Kind == "Service" && !maps.Equal(old.Selector, n.Selector):
 		add("changed", "selector changed", n.Change)
-	case n.Change.Tool != "controller":
+	default:
 		add("changed", "changed", n.Change)
+	}
+	// Kinds with a manifest history say what changed (ADR-0018).
+	if len(out) > 0 && out[len(out)-1].Diff == nil && (old.Manifest != nil || n.Manifest != nil) {
+		e := &out[len(out)-1]
+		e.Diff = dataDiff(old.Manifest, n.Manifest)
+		if e.Summary == "changed" {
+			e.Summary += paren(describe(e.Diff))
+		}
 	}
 	return withVersion(old, n, out)
 }

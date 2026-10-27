@@ -19,7 +19,11 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/dynamic"
+	"k8s.io/client-go/dynamic/dynamicinformer"
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
 	corelisters "k8s.io/client-go/listers/core/v1"
@@ -36,6 +40,11 @@ type Watcher struct {
 	log   *slog.Logger
 	typed informers.SharedInformerFactory
 	meta  metadatainformer.SharedInformerFactory
+
+	// Manifest history (WithManifests).
+	dyn       dynamic.Interface
+	resources []schema.GroupVersionResource
+	dynamic   dynamicinformer.DynamicSharedInformerFactory
 
 	pods     corelisters.PodLister
 	services corelisters.ServiceLister
@@ -119,6 +128,7 @@ func (w *Watcher) Start(ctx context.Context) error {
 	if !w.noSecrets {
 		track(register(w, KindSecret, w.meta.ForResource(corev1.SchemeGroupVersion.WithResource("secrets")).Informer(), mapMetadata(KindSecret)))
 	}
+	w.watchManifests(ctx, track)
 	track(handle(podInformer.Informer(), w.upsertPod, w.removePod))
 	track(handle(serviceInformer.Informer(), w.upsertService, w.removeService))
 	if err := errors.Join(errs...); err != nil {
@@ -127,6 +137,9 @@ func (w *Watcher) Start(ctx context.Context) error {
 
 	w.typed.Start(ctx.Done())
 	w.meta.Start(ctx.Done())
+	if w.dynamic != nil {
+		w.dynamic.Start(ctx.Done())
+	}
 	// Wait for every handler to process the initial list, not just for the
 	// caches to fill, so the first snapshot is complete.
 	if !cache.WaitForCacheSync(ctx.Done(), syncs...) {
@@ -228,6 +241,12 @@ func stripObject(obj any) (any, error) {
 	fields := m.GetManagedFields()
 	for i, e := range fields {
 		fields[i] = metav1.ManagedFieldsEntry{Manager: capped(e.Manager), Operation: e.Operation, Subresource: e.Subresource, Time: e.Time}
+	}
+	if u, ok := obj.(*unstructured.Unstructured); ok {
+		// An unstructured object's getter returns a copy; and its status is
+		// never kept (ADR-0018), so it needn't stay in memory either.
+		u.SetManagedFields(fields)
+		delete(u.Object, "status")
 	}
 	return obj, nil
 }
@@ -348,7 +367,7 @@ func (w *Watcher) upsertService(_, svc *corev1.Service) {
 
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	w.graph.UpsertNode(n)
+	w.graph.UpsertNode(w.kept(n))
 	w.setEdges(n.ID, edges)
 
 	var selects []graph.Edge

@@ -57,6 +57,13 @@ export interface Node {
    * Secrets are never read.
    */
   data?: { [key: string]: Value};
+  /**
+   * Manifest is the object's desired state for kinds kubexray keeps a
+   * history of (ADR-0018): each field by its path, such as
+   * "spec.maxReplicas" or "spec.rules[0].host", as a Value. Status and
+   * metadata other than labels are left out.
+   */
+  manifest?: { [key: string]: Value};
 }
 /**
  * Value is a value kubexray may show in a diff (ADR-0017): its text when

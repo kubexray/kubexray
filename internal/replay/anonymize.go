@@ -138,6 +138,7 @@ func (a *anonymizer) node(n *graph.Node) {
 		n.Parent = a.id(n.Parent)
 	}
 	*n = graph.WithoutValues(*n) // never values (ADR-0017); keys are names
+	n.Manifest = nil             // its paths hold names too (ADR-0018)
 	if n.Data != nil {
 		data := make(map[string]graph.Value, len(n.Data))
 		for k, v := range n.Data {

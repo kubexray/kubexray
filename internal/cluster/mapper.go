@@ -376,6 +376,7 @@ func mapService(svc *corev1.Service) (graph.Node, []graph.Edge) {
 	n := baseNode(KindService, svc)
 	n.Status = graph.Status{Phase: string(svc.Spec.Type), Ready: true}
 	n.Selector = maps.Clone(svc.Spec.Selector)
+	n.Manifest = manifestOf(svc)
 	return n, ownerEdges(n.ID, svc)
 }
 
@@ -390,6 +391,7 @@ func mapResourceQuota(q *corev1.ResourceQuota) (graph.Node, []graph.Edge) {
 func mapIngress(ing *networkingv1.Ingress) (graph.Node, []graph.Edge) {
 	n := baseNode(KindIngress, ing)
 	n.Status = graph.Status{Ready: len(ing.Status.LoadBalancer.Ingress) > 0}
+	n.Manifest = manifestOf(ing)
 
 	edges := ownerEdges(n.ID, ing)
 	seen := map[string]bool{}

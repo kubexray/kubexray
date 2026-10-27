@@ -21,6 +21,7 @@ Short documents capturing significant decisions, their context and consequences.
 | [0015](0015-diffs.md) | Diffs: what changed, without the values | Accepted |
 | [0016](0016-incidents-from-signals.md) | Incidents from signals: errors, latency, restarts and saturation | Accepted |
 | [0017](0017-values-in-diffs.md) | Values in diffs, kept inside the cluster | Accepted |
+| [0018](0018-manifest-history.md) | A manifest history for every kind | Accepted |
 
 ## Template
 
