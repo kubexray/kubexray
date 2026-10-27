@@ -98,12 +98,15 @@ test("the change feed says what each change did", async ({ page }) => {
   await expect(cards.filter({ hasText: "api scaled 3 → 4 replicas" }).locator(".verdict")).toHaveText("Healthy");
   await expect(cards.filter({ hasText: "Helm upgrade storefront 1.0.0 → 1.1.0" }).locator(".verdict")).toHaveText("Healthy");
   const configEdits = cards.filter({ hasText: "ConfigMap checkout-config edited" });
-  await expect(configEdits.filter({ hasText: "Caused an incident" })).toContainText("checkout is degraded");
+  // The edit that broke checkout, fixed since: green, and says so.
+  const resolved = configEdits.filter({ hasText: "Resolved" });
+  await expect(resolved).toContainText(/broke checkout for .* · resolved at /);
+  await expect(resolved).toHaveClass(/resolved/);
   await expect(configEdits.filter({ hasText: "Fixed an incident" })).toContainText("checkout healthy");
   await expect(cards.filter({ hasText: "pod template changed" })).toContainText("managed by Helm"); // the hand edit: drift
   await shot(page, "changes");
 
-  await page.getByRole("button", { name: /^Caused incidents/ }).click();
+  await page.getByRole("button", { name: /^Broke something/ }).click();
   await expect(cards).toHaveCount(2);
   await page.getByRole("button", { name: /^All changes/ }).click();
   await page.getByPlaceholder("Search apps, people, images…").fill("checkout-config");
@@ -111,7 +114,7 @@ test("the change feed says what each change did", async ({ page }) => {
   await page.getByPlaceholder("Search apps, people, images…").fill("");
 
   // The change that broke checkout, opened, then rewound to on the map.
-  await configEdits.filter({ hasText: "Caused an incident" }).getByRole("button", { name: "Details" }).click();
+  await resolved.getByRole("button", { name: "Details" }).click();
   await expect(page.locator("dialog.feed-drawer")).toContainText("What changed");
   await shot(page, "change-detail");
   await page.getByRole("button", { name: "Rewind to just before" }).click();
@@ -160,7 +163,7 @@ test("the histogram shows and picks changes", async ({ page }) => {
 
 test("see diff shows what changed, and says what kubexray doesn't read", async ({ page }) => {
   await page.goto("/play/?replay=demo.kxr&view=changes");
-  const edit = page.locator(".feed-card").filter({ hasText: "ConfigMap checkout-config edited" }).filter({ hasText: "Caused an incident" });
+  const edit = page.locator(".feed-card").filter({ hasText: "ConfigMap checkout-config edited" }).filter({ hasText: "Resolved" });
   await edit.getByRole("button", { name: "See diff" }).click();
   await expect(edit.locator(".diff-view")).toContainText("doesn't read ConfigMap contents");
   await expect(edit.getByRole("button", { name: "Hide diff" })).toHaveAttribute("aria-expanded", "true");

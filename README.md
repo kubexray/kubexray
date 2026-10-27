@@ -170,7 +170,7 @@ The **Changes** view lists every change to the cluster, newest first, and what e
 
 ```text
 5:17 PM  ConfigMap checkout-config edited     by kubectl patch       Fixed an incident    checkout healthy 12s later
-5:15 PM  ConfigMap checkout-config edited     by kubectl patch       Caused an incident   checkout degraded 45s later · over at 5:18 PM
+5:15 PM  ConfigMap checkout-config edited     by kubectl patch       Resolved             broke checkout for 3m 0s · resolved at 5:18 PM
 5:15 PM  api scaled 3 → 4 replicas            by kubectl scale       Healthy              settled in 1m 0s
 ```
 
