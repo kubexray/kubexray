@@ -314,6 +314,7 @@ func mapDeployment(d *appsv1.Deployment) (graph.Node, []graph.Edge) {
 	n.Status = replicas(d.Spec.Replicas, d.Status.ReadyReplicas, d.Status.UpdatedReplicas)
 	n.Spec = podSpec(d, &d.Spec.Template.Spec)
 	n.Spec.Labels = maps.Clone(d.Spec.Template.Labels)
+	n.Manifest = workloadManifest(d)
 	for _, c := range d.Status.Conditions {
 		switch {
 		case c.Type == appsv1.DeploymentProgressing && c.Reason == "ProgressDeadlineExceeded":
@@ -343,6 +344,7 @@ func mapStatefulSet(ss *appsv1.StatefulSet) (graph.Node, []graph.Edge) {
 	n.Status = replicas(ss.Spec.Replicas, ss.Status.ReadyReplicas, ss.Status.UpdatedReplicas)
 	n.Spec = podSpec(ss, &ss.Spec.Template.Spec)
 	n.Spec.Labels = maps.Clone(ss.Spec.Template.Labels)
+	n.Manifest = workloadManifest(ss)
 	return n, ownerEdges(n.ID, ss)
 }
 
@@ -351,12 +353,14 @@ func mapDaemonSet(ds *appsv1.DaemonSet) (graph.Node, []graph.Edge) {
 	desired := ds.Status.DesiredNumberScheduled
 	n.Status = replicas(&desired, ds.Status.NumberReady, ds.Status.UpdatedNumberScheduled)
 	n.Spec = podSpec(ds, &ds.Spec.Template.Spec)
+	n.Manifest = workloadManifest(ds)
 	return n, ownerEdges(n.ID, ds)
 }
 
 func mapJob(job *batchv1.Job) (graph.Node, []graph.Edge) {
 	n := baseNode(KindJob, job)
 	n.Spec = podSpec(job, &job.Spec.Template.Spec)
+	n.Manifest = workloadManifest(job)
 	n.Status.Phase = "Running"
 	for _, c := range job.Status.Conditions {
 		if c.Status != corev1.ConditionTrue {

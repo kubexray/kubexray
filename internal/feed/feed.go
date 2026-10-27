@@ -286,6 +286,10 @@ func compare(old, n graph.Node, existed bool, at time.Time) []Entry {
 		if r0, r1 := old.Status.Replicas, n.Status.Replicas; r0 != nil && r1 != nil && r0.Desired != r1.Desired {
 			add("replicas", fmt.Sprintf("scaled %d → %d replicas", r0.Desired, r1.Desired), by)
 		}
+		// A change outside the pod template, such as the rollout strategy.
+		if lines := manifestDiff(old, n); len(out) == 0 && len(lines) > 0 && by != nil && by.Tool != "controller" {
+			add("changed", "changed"+paren(describe(lines)), by)
+		}
 		if len(out) > 0 {
 			out[0].Diff = objectDiff(old, n)
 		}
@@ -395,7 +399,7 @@ func specEntries(old, n graph.Node, at time.Time, by *graph.Change) []Entry {
 	if old.Spec.Revision != "" && n.Spec.Revision != "" && old.Spec.Revision != n.Spec.Revision && !detailed {
 		var d differ
 		d.template(*old.Spec, *n.Spec)
-		what := cmp.Or(describe(d.lines), "pod template changed")
+		what := cmp.Or(describe(append(d.lines, manifestDiff(old, n)...)), "pod template changed")
 		add("template", fmt.Sprintf("%s (revision %s → %s)", what, old.Spec.Revision, n.Spec.Revision))
 	}
 	if v := versionChange(old, n); v != nil && len(out) > 0 {

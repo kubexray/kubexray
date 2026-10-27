@@ -28,7 +28,7 @@ metadata.labels["app.kubernetes.io/name"]: checkout
 - Lists whose items all have a distinct `name` (containers, env, ports) are keyed by it, so inserting an item changes one line, not every line after it.
 - Each field is a value like any other (ADR-0017): a fingerprint, plus its text when values are on. It is masked when the field name, or the name of any key or item on its path, looks like a credential (`env[DB_PASSWORD].value`), or when its contents do. The caps are the same: 4 KiB a value, 64 KiB an object, and at most 512 fields.
 
-Ingresses and Services, which kubexray maps itself, get a manifest too.
+Ingresses and Services, which kubexray maps itself, get a manifest too. So do Deployments, StatefulSets, DaemonSets and Jobs, without the parts their pod template diff already covers (containers, volumes, the service account) and without replicas, which have their own entry. A rollout strategy, a node selector, tolerations or a template annotation then reads like any other field: "Deployment api changed (spec.strategy.rollingUpdate.maxSurge 25% → 50%)".
 
 ### 2. Which kinds
 

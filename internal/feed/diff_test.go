@@ -156,3 +156,22 @@ func TestDiffOfAManifest(t *testing.T) {
 		t.Errorf("diff = %+v", e.Diff)
 	}
 }
+
+func TestDiffOfARolloutStrategy(t *testing.T) {
+	t.Parallel()
+	st, tr := cluster(), New(MaxSets)
+	api := st.Nodes["Deployment/shop/api"]
+	api.Manifest = map[string]graph.Value{"spec.strategy.rollingUpdate.maxSurge": {Text: "25%", Hash: "fp:1"}}
+	st.Nodes[api.ID] = api
+	api.Manifest = map[string]graph.Value{"spec.strategy.rollingUpdate.maxSurge": {Text: "50%", Hash: "fp:2"}}
+	api.Change = by("kubectl-edit", "kubectl", "edit", at(0))
+	apply(t, tr, st, at(0), api)
+
+	e := only(t, tr).Entries[0]
+	if e.Summary != "changed (spec.strategy.rollingUpdate.maxSurge 25% → 50%)" {
+		t.Errorf("summary = %q", e.Summary)
+	}
+	if want := []DiffLine{{Path: "spec.strategy.rollingUpdate.maxSurge", Op: Changed, From: "25%", To: "50%"}}; !slices.Equal(e.Diff, want) {
+		t.Errorf("diff = %+v", e.Diff)
+	}
+}

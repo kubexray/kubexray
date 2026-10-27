@@ -122,6 +122,36 @@ func manifestOf(obj runtime.Object) map[string]graph.Value {
 	return manifest(m)
 }
 
+// covered are the parts of a workload its Spec already records (ADR-0015),
+// with their own diff lines, or that have their own entry (replicas).
+var covered = []string{
+	"spec.replicas",
+	"spec.template.spec.containers",
+	"spec.template.spec.initContainers",
+	"spec.template.spec.volumes",
+	"spec.template.spec.serviceAccount",
+	"spec.template.spec.serviceAccountName",
+}
+
+// workloadManifest is a workload's manifest without what its Spec covers:
+// the rollout strategy, scheduling, security context, template annotations
+// and the rest.
+func workloadManifest(obj runtime.Object) map[string]graph.Value {
+	m := manifestOf(obj)
+	for path := range m {
+		for _, c := range covered {
+			if rest, ok := strings.CutPrefix(path, c); ok && (rest == "" || rest[0] == '.' || rest[0] == '[') {
+				delete(m, path)
+				break
+			}
+		}
+	}
+	if len(m) == 0 {
+		return nil
+	}
+	return m
+}
+
 // manifest flattens an object's desired state into fields by path, each
 // masked and capped like any value (ADR-0017). Status, and metadata other
 // than labels, are left out: they change without anyone changing the

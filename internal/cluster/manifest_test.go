@@ -6,11 +6,14 @@ import (
 	"strings"
 	"testing"
 
+	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
 	kubefake "k8s.io/client-go/kubernetes/fake"
 	metadatafake "k8s.io/client-go/metadata/fake"
@@ -154,4 +157,37 @@ func TestWatcherKeepsManifests(t *testing.T) {
 	c.eventually(t, "the HPA's new maxReplicas", func(nodes map[string]graph.Node, _ []string) bool {
 		return nodes[id].Manifest["spec.maxReplicas"].Text == "20"
 	})
+}
+
+func TestWorkloadManifestLeavesOutWhatSpecCovers(t *testing.T) {
+	t.Parallel()
+	surge := intstr.FromString("50%")
+	replicas := int32(3)
+	d := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "api"},
+		Spec: appsv1.DeploymentSpec{
+			Replicas: &replicas,
+			Strategy: appsv1.DeploymentStrategy{Type: appsv1.RollingUpdateDeploymentStrategyType, RollingUpdate: &appsv1.RollingUpdateDeployment{MaxSurge: &surge}},
+			Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{
+				NodeSelector:       map[string]string{"pool": "spot"},
+				ServiceAccountName: "api",
+				Containers:         []corev1.Container{{Name: "api", Image: "nginx", Env: []corev1.EnvVar{{Name: "X", Value: "y"}}}},
+			}},
+		},
+		Status: appsv1.DeploymentStatus{ReadyReplicas: 3},
+	}
+	n, _ := mapDeployment(d)
+	if n.Manifest["spec.strategy.rollingUpdate.maxSurge"].Text != "50%" || n.Manifest["spec.template.spec.nodeSelector.pool"].Text != "spot" {
+		t.Errorf("manifest = %v", n.Manifest)
+	}
+	for path := range n.Manifest {
+		for _, c := range covered {
+			if strings.HasPrefix(path, c) {
+				t.Errorf("kept %s, which the spec covers", path)
+			}
+		}
+		if strings.HasPrefix(path, "status") {
+			t.Errorf("kept %s", path)
+		}
+	}
 }
