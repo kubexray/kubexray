@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Entry, Set as ChangeSet } from "../gen/feed";
-import { applyFilter, author, buckets, filterCounts, fittingRange, matches, searchView, summarize } from "./feed";
+import { applyFilter, author, buckets, causeDiff, filterCounts, fittingRange, matches, searchView, summarize } from "./feed";
 import type { NamespaceView } from "./view";
 
 const T = (m: number) => new Date(Date.UTC(2026, 9, 24, 10, m)).toISOString();
@@ -84,5 +84,23 @@ describe("fittingRange", () => {
   });
   it("defaults to a day with nothing to show", () => {
     expect(fittingRange([], now)).toBe("24h");
+  });
+});
+
+describe("causeDiff", () => {
+  const edit = set({
+    entries: [entry({ at: T(30), diff: [{ path: "LOG_LEVEL", op: "changed", from: "info", to: "verbose" }] })],
+  });
+  const cause = { object: "ConfigMap/shop/checkout-config" };
+
+  it("finds the diff of the change a cause names", () => {
+    expect(causeDiff([edit], { ...cause, at: new Date(Date.parse(T(30)) - 2000).toISOString() })).toEqual([
+      { path: "LOG_LEVEL", op: "changed", from: "info", to: "verbose" },
+    ]);
+  });
+
+  it("finds nothing for another change of the same object, or without a time", () => {
+    expect(causeDiff([edit], { ...cause, at: T(20) })).toEqual([]);
+    expect(causeDiff([edit], cause)).toEqual([]);
   });
 });

@@ -2,6 +2,7 @@ package cluster
 
 import (
 	"maps"
+	"strings"
 	"unicode/utf8"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -118,6 +119,9 @@ func mapPod(pod *corev1.Pod) (graph.Node, []graph.Edge) {
 const maxMessage = 300
 
 func message(m string) string {
+	// Container runtimes quote names inside their errors with escaped
+	// quotes: "pulling image \"nginx\"". Shown as written, they read as noise.
+	m = strings.ReplaceAll(m, `\"`, `"`)
 	if len(m) <= maxMessage {
 		return m
 	}

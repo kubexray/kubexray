@@ -38,7 +38,7 @@ Each masked value says why, and the diff shows it: "hidden: the name looks like 
 
 | Where | Values |
 |---|---|
-| The UI, behind the login | yes |
+| The UI, behind the login | yes, in diffs and on incident cards: a cause shows the values its change set ("LOG_LEVEL info → verbose") |
 | The recording, in the cluster | yes |
 | Replays | only when the person exporting ticks "Include configuration values" |
 | Anonymized replays | never, and ConfigMap keys are renamed like other names |

@@ -554,3 +554,11 @@ func TestContainerProbes(t *testing.T) {
 		t.Errorf("sidecar probes = %+v", got)
 	}
 }
+
+func TestMessagesLoseEscapedQuotes(t *testing.T) {
+	t.Parallel()
+	got := message(`Back-off pulling image \"ginx:1.27-alpine\": ErrImagePull`)
+	if want := `Back-off pulling image "ginx:1.27-alpine": ErrImagePull`; got != want {
+		t.Errorf("message = %q, want %q", got, want)
+	}
+}
