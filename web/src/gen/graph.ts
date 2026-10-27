@@ -177,6 +177,13 @@ export interface Change {
 export interface Origin {
   tool: string; // helm, argocd or flux
   name?: string;
+  /**
+   * Kind and Namespace of what applies it, where known, for the command
+   * that puts a drifted object back: a Flux "Kustomization" or
+   * "HelmRelease", a Helm release's namespace.
+   */
+  kind?: string;
+  namespace?: string;
 }
 /**
  * Status is a kind-specific summary; fields that don't apply stay empty.

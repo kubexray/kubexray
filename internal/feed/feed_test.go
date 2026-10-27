@@ -154,7 +154,7 @@ func TestScaleAndDrift(t *testing.T) {
 	api.Change = by("kubectl-edit", "kubectl", "edit", at(0))
 	apply(t, tr, st, at(0), api)
 	s := only(t, tr)
-	if e := s.Entries[0]; e.Summary != "memory limit 64Mi → 128Mi" || !strings.Contains(e.Drift, "managed by Helm release shop; the next helm upgrade puts it back") {
+	if e := s.Entries[0]; e.Summary != "memory limit 64Mi → 128Mi" || !strings.Contains(e.Drift, "managed by Helm release shop, but this edit was made by hand and isn't in the chart") {
 		t.Errorf("hand edit = %+v", e)
 	}
 

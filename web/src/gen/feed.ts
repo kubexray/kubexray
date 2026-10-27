@@ -30,6 +30,10 @@ export const Removed = "removed";
 export const Changed = "changed";
 
 //////////
+// source: drift.go
+
+
+//////////
 // source: feed.go
 /*
 Package feed is the change feed (ADR-0012): every meaningful change to the
@@ -81,6 +85,12 @@ export interface Entry {
   by?: graph.Change;
   origin?: graph.Origin;
   drift?: string; // a hand edit on an object a GitOps tool or Helm manages
+  /**
+   * DriftDiff is how the object differs from what its tool last applied,
+   * and Restore the command that puts it back (ADR-0019).
+   */
+  driftDiff?: DiffLine[];
+  restore?: string;
   version?: Versions;
   /**
    * Diff is what changed in the object, before and after (ADR-0015); on

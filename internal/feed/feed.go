@@ -41,7 +41,11 @@ type Entry struct {
 	By        *graph.Change `json:"by,omitempty"`
 	Origin    *graph.Origin `json:"origin,omitempty"`
 	Drift     string        `json:"drift,omitempty"` // a hand edit on an object a GitOps tool or Helm manages
-	Version   *Versions     `json:"version,omitempty"`
+	// DriftDiff is how the object differs from what its tool last applied,
+	// and Restore the command that puts it back (ADR-0019).
+	DriftDiff []DiffLine `json:"driftDiff,omitempty"`
+	Restore   string     `json:"restore,omitempty"`
+	Version   *Versions  `json:"version,omitempty"`
 	// Diff is what changed in the object, before and after (ADR-0015); on
 	// the first of an object's entries in a change.
 	Diff []DiffLine `json:"diff,omitempty"`
@@ -82,23 +86,42 @@ func (t *Tracker) Observe(prev *graph.State, m graph.Message) {
 	if m.Type != graph.MessageDelta || prev == nil {
 		return
 	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
 	var entries []Entry
 	for _, op := range m.Ops {
 		switch {
 		case op.Op == graph.OpUpsertNode && op.Node != nil:
-			old, existed := prev.Nodes[op.Node.ID]
-			entries = append(entries, compare(old, *op.Node, existed, m.TS)...)
+			n := *op.Node
+			old, existed := prev.Nodes[n.ID]
+			// What the tool applied, as first seen: kubexray may start after it.
+			if _, known := t.applied[n.ID]; !known && existed && applies(old) {
+				t.applied[n.ID] = old
+			}
+			es := compare(old, n, existed, m.TS)
+			for i := range es {
+				if es[i].Drift == "" {
+					continue
+				}
+				if applied, ok := t.applied[n.ID]; ok {
+					es[i].DriftDiff = driftDiff(applied, n)
+				} else {
+					es[i].Drift += fmt.Sprintf(" kubexray started after %s last applied it, so it can't show what differs.", toolName(n.Origin.Tool))
+				}
+				es[i].Restore = restore(prev, n)
+				break // the object's first entry carries it, like its diff
+			}
+			entries = append(entries, es...)
+			if applies(n) {
+				t.applied[n.ID] = n
+			}
 		case op.Op == graph.OpRemoveNode:
+			delete(t.applied, op.ID)
 			if old, ok := prev.Nodes[op.ID]; ok && tracked(old) {
 				entries = append(entries, entry(old, m.TS, "deleted", removedWord(old), nil))
 			}
 		}
 	}
-	if len(entries) == 0 {
-		return
-	}
-	t.mu.Lock()
-	defer t.mu.Unlock()
 	for _, e := range entries {
 		t.add(prev, e)
 	}
@@ -208,8 +231,8 @@ func removedWord(n graph.Node) string {
 
 func entry(n graph.Node, at time.Time, what, summary string, by *graph.Change) Entry {
 	e := Entry{At: at, Object: n.ID, Kind: n.Kind, Name: n.Name, Namespace: n.Namespace, What: what, Summary: summary, By: by, Origin: n.Origin}
-	if by != nil && by.Tool == "kubectl" && n.Origin != nil && what != "created" && what != "deleted" {
-		e.Drift = fmt.Sprintf("%s %s is managed by %s; the next %s puts it back, or this hand edit is the only copy of the fix", n.Kind, n.Name, originName(n.Origin), originAction(n.Origin))
+	if drifts(n, by) && what != "created" && what != "deleted" {
+		e.Drift = fmt.Sprintf("%s %s is managed by %s, but this edit was made by hand and isn't in %s. The next %s won't fully undo it: put it back, or make the same change there.", n.Kind, n.Name, originName(n.Origin), originSource(n.Origin), originAction(n.Origin))
 	}
 	return e
 }
@@ -223,6 +246,22 @@ func originName(o *graph.Origin) string {
 		return tool
 	}
 	return tool + " " + o.Name
+}
+
+// originSource is where a managed object's desired state lives.
+func originSource(o *graph.Origin) string {
+	if o.Tool == "helm" {
+		return "the chart"
+	}
+	return "Git"
+}
+
+// toolName is a tool as people write it.
+func toolName(tool string) string {
+	if t := map[string]string{"helm": "Helm", "argocd": "Argo CD", "flux": "Flux"}[tool]; t != "" {
+		return t
+	}
+	return tool
 }
 
 func originAction(o *graph.Origin) string {

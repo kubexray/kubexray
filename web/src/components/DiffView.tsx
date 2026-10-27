@@ -1,3 +1,4 @@
+import { useState } from "react";
 import type { DiffLine, Entry } from "../gen/feed";
 
 /** Whether a change has anything to show under "See diff": a diff, or an
@@ -34,6 +35,46 @@ export function DiffView({ entries }: { entries: Entry[] }) {
           {e.diff?.map((l, j) => <Lines key={`${l.path}-${j}`} l={l} />)}
         </div>
       ))}
+    </div>
+  );
+}
+
+const TOOL: Record<string, string> = { helm: "Helm", argocd: "Argo CD", flux: "Flux" };
+
+/** A hand edit to a managed object (ADR-0019): what it says, how the object
+ * differs from what its tool last applied, and the command that puts it
+ * back. */
+export function DriftView({ entry: e, label }: { entry: Entry; label?: boolean }) {
+  const [copied, setCopied] = useState(false);
+  const tool = TOOL[e.origin?.tool ?? ""] ?? e.origin?.tool ?? "its tool";
+  const copy = () => {
+    if (!e.restore) return;
+    navigator.clipboard.writeText(e.restore).then(
+      () => setCopied(true),
+      () => setCopied(false),
+    );
+  };
+  return (
+    <div className="feed-drift">
+      <div>
+        {label && <strong>Drift: </strong>}
+        {e.drift}
+      </div>
+      {(e.driftDiff?.length ?? 0) > 0 && (
+        <div className="diff-view" role="group" aria-label={`How it differs from what ${tool} applied`}>
+          <div className="diff-head">against what {tool} applied</div>
+          {e.driftDiff?.map((l, i) => <Lines key={`${l.path}-${i}`} l={l} />)}
+        </div>
+      )}
+      {e.restore && (
+        <div className="drift-restore">
+          <span>{e.origin?.tool === "helm" ? "Put it back as Helm applied it:" : `Re-apply from Git (${tool} may keep fields added by hand):`}</span>
+          <code>{e.restore}</code>
+          <button type="button" onClick={copy}>
+            {copied ? "Copied" : "Copy"}
+          </button>
+        </div>
+      )}
     </div>
   );
 }

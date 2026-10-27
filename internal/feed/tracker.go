@@ -3,6 +3,8 @@ package feed
 import (
 	"sync"
 	"time"
+
+	"github.com/kubexray/kubexray/internal/graph"
 )
 
 // Window is how far apart entries of one set may be.
@@ -22,9 +24,11 @@ type Tracker struct {
 	limit   int
 	nextID  int
 	ongoing map[string]bool // apps with an incident at the last assessment
+	// applied is each managed object as its tool last applied it (ADR-0019).
+	applied map[string]graph.Node
 }
 
 // New returns a tracker that keeps up to limit sets.
 func New(limit int) *Tracker {
-	return &Tracker{limit: limit, ongoing: map[string]bool{}}
+	return &Tracker{limit: limit, ongoing: map[string]bool{}, applied: map[string]graph.Node{}}
 }

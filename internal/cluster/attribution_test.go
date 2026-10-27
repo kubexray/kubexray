@@ -156,12 +156,12 @@ func TestOriginOf(t *testing.T) {
 		{"helm label", map[string]string{"app.kubernetes.io/managed-by": "Helm", "app.kubernetes.io/instance": "shop"}, nil, &graph.Origin{Tool: "helm", Name: "shop"}},
 		{"argo tracking id", nil, map[string]string{annotationArgoTrack: "shop-prod:apps/Deployment:shop/api"}, &graph.Origin{Tool: "argocd", Name: "shop-prod"}},
 		{"argo label", map[string]string{"argocd.argoproj.io/instance": "shop-prod"}, nil, &graph.Origin{Tool: "argocd", Name: "shop-prod"}},
-		{"flux kustomization", map[string]string{"kustomize.toolkit.fluxcd.io/name": "apps"}, nil, &graph.Origin{Tool: "flux", Name: "apps"}},
+		{"flux kustomization", map[string]string{"kustomize.toolkit.fluxcd.io/name": "apps", "kustomize.toolkit.fluxcd.io/namespace": "flux-system"}, nil, &graph.Origin{Tool: "flux", Name: "apps", Kind: "Kustomization", Namespace: "flux-system"}},
 		{
 			name:        "flux helm release beats helm annotations",
 			labels:      map[string]string{"helm.toolkit.fluxcd.io/name": "shop"},
 			annotations: map[string]string{annotationHelmRelease: "shop"},
-			want:        &graph.Origin{Tool: "flux", Name: "shop"},
+			want:        &graph.Origin{Tool: "flux", Name: "shop", Kind: "HelmRelease"},
 		},
 	}
 	for _, tt := range tests {

@@ -24,10 +24,11 @@ import (
 const (
 	annotationRevision    = "deployment.kubernetes.io/revision"
 	annotationHelmRelease = "meta.helm.sh/release-name"
+	annotationHelmNS      = "meta.helm.sh/release-namespace"
 	annotationArgoTrack   = "argocd.argoproj.io/tracking-id"
 )
 
-var keptAnnotations = []string{annotationRevision, annotationHelmRelease, annotationArgoTrack}
+var keptAnnotations = []string{annotationRevision, annotationHelmRelease, annotationHelmNS, annotationArgoTrack}
 
 // controllers are field managers whose writes are follow-ups to someone
 // else's change; they're only blamed when nobody else has written the object.
@@ -131,9 +132,9 @@ func originOf(m metav1.Object) *graph.Origin {
 	a, l := m.GetAnnotations(), m.GetLabels()
 	switch {
 	case l["kustomize.toolkit.fluxcd.io/name"] != "":
-		return &graph.Origin{Tool: "flux", Name: l["kustomize.toolkit.fluxcd.io/name"]}
+		return &graph.Origin{Tool: "flux", Name: l["kustomize.toolkit.fluxcd.io/name"], Kind: "Kustomization", Namespace: l["kustomize.toolkit.fluxcd.io/namespace"]}
 	case l["helm.toolkit.fluxcd.io/name"] != "":
-		return &graph.Origin{Tool: "flux", Name: l["helm.toolkit.fluxcd.io/name"]}
+		return &graph.Origin{Tool: "flux", Name: l["helm.toolkit.fluxcd.io/name"], Kind: "HelmRelease", Namespace: l["helm.toolkit.fluxcd.io/namespace"]}
 	case a[annotationArgoTrack] != "":
 		// Format: <app>:<group>/<kind>:<namespace>/<name>
 		app, _, _ := strings.Cut(a[annotationArgoTrack], ":")
@@ -141,7 +142,7 @@ func originOf(m metav1.Object) *graph.Origin {
 	case l["argocd.argoproj.io/instance"] != "":
 		return &graph.Origin{Tool: "argocd", Name: l["argocd.argoproj.io/instance"]}
 	case a[annotationHelmRelease] != "":
-		return &graph.Origin{Tool: "helm", Name: a[annotationHelmRelease]}
+		return &graph.Origin{Tool: "helm", Name: a[annotationHelmRelease], Namespace: a[annotationHelmNS]}
 	case l["app.kubernetes.io/managed-by"] == "Helm":
 		return &graph.Origin{Tool: "helm", Name: l["app.kubernetes.io/instance"]}
 	default:

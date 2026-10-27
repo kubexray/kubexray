@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Set as ChangeSet } from "../gen/feed";
-import { applyFilter, author, FILTERS, type Filter, filterCounts, fittingRange, hasDrift, justBefore, type Range, shortName, rangeWindow, summarize, tone, verdictLabel, verdictNote, type Window } from "../lib/feed";
+import { applyFilter, author, FILTERS, type Filter, filterCounts, fittingRange, justBefore, type Range, shortName, rangeWindow, summarize, tone, verdictLabel, verdictNote, type Window } from "../lib/feed";
 import { clock, hm } from "../lib/format";
 import { ActivityHistogram } from "./ActivityHistogram";
-import { DiffView, hasDiff } from "./DiffView";
+import { DiffView, DriftView, hasDiff } from "./DiffView";
 import { SafetyRecommendation } from "./SafetyRecommendation";
 
 interface Props {
@@ -178,11 +178,12 @@ export function ChangesView({ sets, now, query, live, canRewindTo, onRewind, rec
                   ))}
                 </ul>
               )}
-              {hasDrift(s) && (
-                <div className="feed-drift">
-                  <strong>Drift:</strong> {s.entries.find((e) => e.drift)?.drift}
-                </div>
-              )}
+              {s.entries
+                .filter((e) => e.drift)
+                .slice(0, 1)
+                .map((e) => (
+                  <DriftView key={e.object} entry={e} label />
+                ))}
               {diffs.has(s.id) && <DiffView entries={s.entries} />}
             </div>
             <div className="feed-side">
@@ -273,7 +274,7 @@ function ChangeDetail({
           {s.entries.map((e, i) => (
             <li key={`${e.object}-${i}`}>
               <span className="feed-ns">{e.kind}</span> <strong>{e.name}</strong> {e.summary}
-              {e.drift && <div className="feed-drift">{e.drift}</div>}
+              {e.drift && <DriftView entry={e} />}
               {hasDiff([e]) && <DiffView entries={[e]} />}
             </li>
           ))}
