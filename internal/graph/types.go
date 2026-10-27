@@ -193,6 +193,11 @@ type Change struct {
 type Origin struct {
 	Tool string `json:"tool"` // helm, argocd or flux
 	Name string `json:"name,omitempty"`
+	// Kind and Namespace of what applies it, where known, for the command
+	// that puts a drifted object back: a Flux "Kustomization" or
+	// "HelmRelease", a Helm release's namespace.
+	Kind      string `json:"kind,omitempty"`
+	Namespace string `json:"namespace,omitempty"`
 }
 
 // ID returns the node ID for an object (ADR-0004). Cluster-scoped objects

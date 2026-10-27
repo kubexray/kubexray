@@ -356,6 +356,10 @@ dialog.postmortem textarea { display: block; width: 100%; box-sizing: border-box
 .feed-by strong { color: var(--text); font-weight: 600; }
 .feed-details { margin: 8px 0 0; padding: 0; list-style: none; display: grid; gap: 2px; font: 12.5px/1.5 var(--font-data); overflow-wrap: anywhere; }
 .feed-drift { margin-top: 8px; padding: 7px 11px; border-radius: 8px; background: color-mix(in srgb, var(--warn) 14%, var(--surface)); color: color-mix(in srgb, var(--warn) 70%, var(--text)); font-size: 13px; }
+.feed-drift .diff-view { margin-top: 8px; background: var(--surface); color: var(--text); }
+.drift-restore { margin-top: 8px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; color: var(--text); }
+.drift-restore code { font: 12.5px var(--font-data); background: var(--surface); border: 1px solid var(--border); border-radius: 5px; padding: 2px 7px; overflow-wrap: anywhere; }
+.drift-restore button { border: 1px solid var(--border-strong); background: var(--surface); border-radius: 5px; font-size: 12px; padding: 2px 10px; cursor: pointer; color: var(--text); }
 .feed-side { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; min-width: 190px; text-align: right; }
 .feed-note { font-size: 12px; color: var(--muted); }
 .feed-buttons { display: flex; gap: 6px; }

@@ -22,6 +22,7 @@ Short documents capturing significant decisions, their context and consequences.
 | [0016](0016-incidents-from-signals.md) | Incidents from signals: errors, latency, restarts and saturation | Accepted |
 | [0017](0017-values-in-diffs.md) | Values in diffs, kept inside the cluster | Accepted |
 | [0018](0018-manifest-history.md) | A manifest history for every kind | Accepted |
+| [0019](0019-drift.md) | Drift: against what the tool applied, with a way back | Accepted |
 
 ## Template
 
