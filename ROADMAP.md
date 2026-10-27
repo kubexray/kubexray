@@ -165,6 +165,36 @@ After an incident, kubexray drafts the admission policy that would have stopped 
 
 ---
 
+## v0.7: See what changed, exactly
+
+Diffs on every change, like Argo CD shows them, with values kept inside the cluster (ADR-0015).
+
+- [x] See diff: names, sources and fingerprints for pod templates; ConfigMap and Secret edits say what isn't read.
+- [ ] Values: env values, commands and ConfigMap contents in the UI; Secrets never read; credential-looking names and values masked; values stripped from replays, alerts and post-mortems unless included; `--values` and `diffs.values`.
+- [ ] Every resource kind: a cleaned manifest history for Ingress, HPA, PodDisruptionBudget, NetworkPolicy, RBAC, CronJob, StorageClass, LimitRange and custom resources the chart is given; diffs in lines or YAML.
+- [ ] Incidents and recommendations name the exact value that changed.
+- [ ] Drift against what Helm or Argo CD last applied, with the command to put it back.
+- [ ] Values follow Kubernetes permissions for signed-in people (SubjectAccessReview).
+
+**Done when:** the demo's incident card reads "LOG_LEVEL info → verbose", and a hand edit shows its diff against what Helm applied.
+
+---
+
+## v0.8: Incidents from signals
+
+kubexray notices what users feel, not only what crashes (ADR-0016).
+
+- [ ] Restarts and saturation from Kubernetes and metrics-server, with no setup.
+- [ ] Prometheus found automatically; adapters for Traefik, ingress-nginx, Envoy (Gateway API, Istio) and OpenTelemetry.
+- [ ] EKS Application Load Balancers through CloudWatch, mapped with TargetGroupBindings.
+- [ ] Baselines, breaks and sensitivity; signal incidents through the cause engine; charts with changes marked.
+- [ ] Alertmanager alerts as incidents on the map; a sources page.
+- [ ] The demo cluster gets Traefik and Prometheus; the public demo shows a "failing requests" incident.
+
+**Done when:** a deploy that makes checkout fail requests, with every pod green, is an incident naming the deploy.
+
+---
+
 ## Later
 
 - **Blast radius:** select a ConfigMap, Secret, Service or node and see everything that depends on it.
