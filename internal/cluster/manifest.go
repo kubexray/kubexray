@@ -36,6 +36,18 @@ var DefaultResources = []schema.GroupVersionResource{
 	{Group: "rbac.authorization.k8s.io", Version: "v1", Resource: "clusterrolebindings"},
 	{Group: "storage.k8s.io", Version: "v1", Resource: "storageclasses"},
 	{Group: "", Version: "v1", Resource: "limitranges"},
+	{Group: "", Version: "v1", Resource: "serviceaccounts"},
+	{Group: "networking.k8s.io", Version: "v1", Resource: "ingressclasses"},
+	{Group: "scheduling.k8s.io", Version: "v1", Resource: "priorityclasses"},
+	// Admission: a webhook or policy that starts refusing pods.
+	{Group: "admissionregistration.k8s.io", Version: "v1", Resource: "validatingwebhookconfigurations"},
+	{Group: "admissionregistration.k8s.io", Version: "v1", Resource: "mutatingwebhookconfigurations"},
+	{Group: "admissionregistration.k8s.io", Version: "v1", Resource: "validatingadmissionpolicies"},
+	{Group: "admissionregistration.k8s.io", Version: "v1", Resource: "validatingadmissionpolicybindings"},
+	// Gateway API, where it's installed.
+	{Group: "gateway.networking.k8s.io", Version: "v1", Resource: "gateways"},
+	{Group: "gateway.networking.k8s.io", Version: "v1", Resource: "httproutes"},
+	{Group: "gateway.networking.k8s.io", Version: "v1", Resource: "grpcroutes"},
 }
 
 // ParseResource reads a resource as "group/version/resource", or
@@ -168,7 +180,7 @@ func manifest(obj map[string]any) map[string]graph.Value {
 				}
 			}
 		default:
-			f.walk(k, obj[k], false)
+			f.walk(k, obj[k], redact.SensitiveName(k))
 		}
 	}
 	if len(f.out) == 0 {
@@ -197,7 +209,7 @@ func (f *flattener) walk(path string, v any, sensitive bool) {
 	switch v := v.(type) {
 	case map[string]any:
 		if len(v) == 0 {
-			f.leaf(path, "{}", sensitive)
+			f.leaf(path, "{}", false)
 		}
 		for _, k := range slices.Sorted(maps.Keys(v)) {
 			p := path + "." + k
@@ -208,7 +220,7 @@ func (f *flattener) walk(path string, v any, sensitive bool) {
 		}
 	case []any:
 		if len(v) == 0 {
-			f.leaf(path, "[]", sensitive)
+			f.leaf(path, "[]", false)
 		}
 		names := itemNames(v)
 		for i, x := range v {
@@ -219,11 +231,13 @@ func (f *flattener) walk(path string, v any, sensitive bool) {
 			}
 		}
 	case nil:
-		f.leaf(path, "null", sensitive)
+		f.leaf(path, "null", false)
 	case string:
 		f.leaf(path, v, sensitive)
 	default:
-		f.leaf(path, fmt.Sprint(v), sensitive)
+		// Numbers and booleans are never credentials, whatever their name:
+		// automountServiceAccountToken: false.
+		f.leaf(path, fmt.Sprint(v), false)
 	}
 }
 

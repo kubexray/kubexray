@@ -28,7 +28,7 @@ metadata.labels["app.kubernetes.io/name"]: checkout
 - Lists whose items all have a distinct `name` (containers, env, ports) are keyed by it, so inserting an item changes one line, not every line after it.
 - Each field is a value like any other (ADR-0017): a fingerprint, plus its text when values are on. It is masked when the field name, or the name of any key or item on its path, looks like a credential (`env[DB_PASSWORD].value`), or when its contents do. The caps are the same: 4 KiB a value, 64 KiB an object, and at most 512 fields.
 
-Ingresses and Services, which kubexray maps itself, get a manifest too. So do Deployments, StatefulSets, DaemonSets and Jobs, without the parts their pod template diff already covers (containers, volumes, the service account) and without replicas, which have their own entry. A rollout strategy, a node selector, tolerations or a template annotation then reads like any other field: "Deployment api changed (spec.strategy.rollingUpdate.maxSurge 25% → 50%)".
+Namespaces (their labels: pod security levels, mesh injection), Ingresses, Services, PersistentVolumeClaims and ResourceQuotas, which kubexray maps itself, get a manifest too. So do Deployments, StatefulSets, DaemonSets and Jobs, without the parts their pod template diff already covers (containers, volumes, the service account) and without replicas, which have their own entry. A rollout strategy, a node selector, tolerations or a template annotation then reads like any other field: "Deployment api changed (spec.strategy.rollingUpdate.maxSurge 25% → 50%)".
 
 ### 2. Which kinds
 
@@ -39,6 +39,9 @@ By default:
 - CronJobs
 - Roles, RoleBindings, ClusterRoles and ClusterRoleBindings
 - StorageClasses and LimitRanges
+- ServiceAccounts, IngressClasses and PriorityClasses
+- Admission webhooks and ValidatingAdmissionPolicies, which can start refusing pods
+- Gateway API Gateways, HTTPRoutes and GRPCRoutes, where installed
 
 More through `--resource group/version/resource`, or `diffs.extraResources` in the Helm chart, which also grants read access to each. Secrets are refused.
 
@@ -50,7 +53,9 @@ Objects in system namespaces, and the cluster's own RBAC (names starting `system
 
 A change to a kind with a manifest reads as what changed, like any other diff: "HorizontalPodAutoscaler checkout changed (spec.maxReplicas 10 → 3)". **See diff** shows each field. The Compare panel lists field changes too, and the details panel shows the manifest, and ConfigMap contents, as YAML rebuilt from the fields.
 
-Writes by controllers are left out of the feed, as before (ADR-0012).
+Writes by controllers are left out of the feed, as before (ADR-0012). Some objects carry no record of their writes at all (ServiceAccounts often don't); a change to their manifest is still listed, by "someone (Kubernetes didn't record who)".
+
+Numbers and booleans are never masked: `automountServiceAccountToken: false` names a token but isn't one.
 
 ### 4. Replays
 
