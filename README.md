@@ -55,7 +55,7 @@ CI enforces budgets for the browser numbers.
 ## Design goals
 
 - **Free, open source, local.** A single binary that uses your kubeconfig. Nothing to install in the cluster to get started.
-- **Read-only and private.** kubexray only lists and watches. Secret and ConfigMap contents are never read, and replays are scrubbed.
+- **Read-only and private.** kubexray only lists and watches. Secrets are never read; ConfigMap and environment values are shown behind your login, with anything that looks like a credential hidden, and left out of replays unless you include them.
 - **Explains, doesn't just display.** Problems come with a plain-English explanation and the command to run next.
 
 ## Try the demo
@@ -178,11 +178,11 @@ A Helm upgrade or Argo CD sync is one line with its version ("Helm upgrade shop 
 
 ## Compare two moments
 
-Press **Compare** on the timeline, then move to another moment: the side panel lists what changed in between. You see what was added or removed, new images, resources and probes, revisions, replicas and readiness, pods replaced or failing, and who edited a ConfigMap or Secret (never its contents). It works live, rewound and in replays.
+Press **Compare** on the timeline, then move to another moment: the side panel lists what changed in between. You see what was added or removed, new images, resources and probes, revisions, replicas and readiness, pods replaced or failing, what changed in ConfigMaps and other kinds, field by field, and who edited a Secret (never its contents). It works live, rewound and in replays.
 
 ## Share an incident
 
-On the incident card, **Share replay** downloads the incident as a `.kxr` file: a few minutes of what kubexray recorded, with the incidents and causes it found. Names, labels and images are anonymized by default; Secret and ConfigMap contents, environment values and annotations are never in a replay ([ADR-0008](docs/adr/0008-replays-and-sharing.md)).
+On the incident card, **Share replay** downloads the incident as a `.kxr` file: a few minutes of what kubexray recorded, with the incidents and causes it found. Names, labels and images are anonymized by default; Secrets and annotations are never in a replay, and configuration values only when you tick "Include configuration values" ([ADR-0008](docs/adr/0008-replays-and-sharing.md)).
 
 Anyone can play it:
 

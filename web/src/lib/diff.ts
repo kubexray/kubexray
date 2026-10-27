@@ -5,6 +5,7 @@
 import type { Container, Node } from "../gen/graph";
 import { who } from "./format";
 import { podHealth } from "./health";
+import { fieldChanges } from "./manifest";
 import type { ClusterState } from "./state";
 import { allWorkloads, buildView, SYSTEM_NAMESPACES } from "./view";
 
@@ -117,7 +118,7 @@ function podDetails(a: Node[] | undefined, b: Node[] | undefined): string[] {
 export function diffStates(a: ClusterState, b: ClusterState): ObjectDiff[] {
   const podsA = podsByApp(a);
   const podsB = podsByApp(b);
-  const shown = (n: Node) => LISTED.has(n.kind) && !(n.ns && SYSTEM_NAMESPACES.has(n.ns)) && !(n.kind === "Namespace" && SYSTEM_NAMESPACES.has(n.name)) && n.name !== "kube-root-ca.crt";
+  const shown = (n: Node) => (LISTED.has(n.kind) || !!n.manifest) && !(n.ns && SYSTEM_NAMESPACES.has(n.ns)) && !(n.kind === "Namespace" && SYSTEM_NAMESPACES.has(n.name)) && n.name !== "kube-root-ca.crt";
   const out: ObjectDiff[] = [];
   const entry = (n: Node, change: ObjectDiff["change"], details: string[]) => out.push({ id: n.id, kind: n.kind, ns: n.ns, name: n.name, change, details });
 
@@ -128,13 +129,13 @@ export function diffStates(a: ClusterState, b: ClusterState): ObjectDiff[] {
       entry(nb, "added", nb.change ? [`by ${who(nb.change)}`] : []);
       continue;
     }
-    const details = [...specDetails(na, nb), ...statusDetails(na, nb), ...(APP_KINDS.has(nb.kind) ? podDetails(podsA.get(nb.id), podsB.get(nb.id)) : [])];
-    // A new write the model can't see into (ConfigMap and Secret contents
-    // are never read): say who made it.
+    const details = [...specDetails(na, nb), ...fieldChanges(na.data, nb.data), ...fieldChanges(na.manifest, nb.manifest), ...statusDetails(na, nb), ...(APP_KINDS.has(nb.kind) ? podDetails(podsA.get(nb.id), podsB.get(nb.id)) : [])];
+    // A new write the model can't see into (Secret contents are never read,
+    // nor ConfigMap contents with values off): say who made it.
     const written = nb.change && (!na.change || Date.parse(nb.change.at) > Date.parse(na.change.at));
     if (written && nb.change) {
       const by = who(nb.change) || "someone";
-      details.push(details.length ? `changed by ${by}` : nb.kind === "ConfigMap" || nb.kind === "Secret" ? `edited by ${by} (contents not read)` : `changed by ${by}`);
+      details.push(details.length ? `changed by ${by}` : (nb.kind === "ConfigMap" && !nb.data) || nb.kind === "Secret" ? `edited by ${by} (contents not read)` : `changed by ${by}`);
     }
     if (!sameLabels(na.labels, nb.labels) && !written) details.push("labels changed");
     if (details.length) entry(nb, "changed", details);

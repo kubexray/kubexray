@@ -48,7 +48,7 @@ It is a living document: update it whenever a change adds a listener, an API end
 
 | Threat | Control |
 |---|---|
-| Over-privileged access | Default ClusterRole is `get/list/watch` only; Secrets watched via the **metadata-only** client so values are never fetched |
+| Over-privileged access | Default ClusterRole is `get/list/watch` only; Secrets watched via the **metadata-only** client so values are never fetched. Kinds kept as a manifest history (ADR-0018) are read in full but cut to their desired state as they arrive; Secrets can't be added to them, and anonymized replays drop manifests |
 | Unintended writes | All mutations disabled unless `--allow-actions`; every action checked with `SelfSubjectAccessReview`, confirmed in the UI, and audit-logged |
 | Credential leakage | Credentials never sent to the UI or logged; error messages from client-go sanitised before display |
 | API server overload on large clusters | Shared informers, single watch per resource type, pagination on initial list |

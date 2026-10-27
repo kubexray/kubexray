@@ -21,6 +21,7 @@ import (
 	"syscall"
 	"time"
 
+	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/metadata"
 	"k8s.io/client-go/rest"
@@ -109,8 +110,9 @@ var (
 // connection holds the flags every command that reads a cluster shares.
 type connection struct {
 	kubeconfig, context, namespace string
-	noSecrets                      bool // don't watch Secrets (serve --no-secrets)
-	values                         bool // keep values for diffs (ADR-0017)
+	noSecrets                      bool     // don't watch Secrets (serve --no-secrets)
+	values                         bool     // keep values for diffs (ADR-0017)
+	resources                      hostList // more kinds to keep a manifest history of (ADR-0018)
 
 	// Set by resolve.
 	cfg      *rest.Config
@@ -124,6 +126,7 @@ func (c *connection) flags(fs *flag.FlagSet, withNamespace bool) {
 		fs.StringVar(&c.namespace, "n", "", "namespace (default: the context's namespace)")
 		fs.StringVar(&c.namespace, "namespace", "", "namespace (default: the context's namespace)")
 	}
+	fs.Var(&c.resources, "resource", "also keep a history of this resource, as group/version/resource, e.g. argoproj.io/v1alpha1/applications (repeatable)")
 	fs.BoolVar(&c.values, "values", true, "keep ConfigMap and environment values so diffs can show them; credential-looking ones are hidden, Secrets are never read")
 }
 
@@ -174,8 +177,20 @@ func (c *connection) sync(ctx context.Context, log *slog.Logger, stderr io.Write
 	if err != nil {
 		return nil, "", fmt.Errorf("creating metadata client: %w", err)
 	}
+	resources := slices.Clone(cluster.DefaultResources)
+	for _, r := range c.resources {
+		gvr, err := cluster.ParseResource(r)
+		if err != nil {
+			return nil, "", err
+		}
+		resources = append(resources, gvr)
+	}
+	dyn, err := dynamic.NewForConfig(c.cfg)
+	if err != nil {
+		return nil, "", fmt.Errorf("creating dynamic client: %w", err)
+	}
 	g := graph.New()
-	w := cluster.New(client, metaClient, g, log)
+	w := cluster.New(client, metaClient, g, log).WithManifests(dyn, resources)
 	if c.noSecrets {
 		w.WithoutSecrets()
 	}

@@ -67,6 +67,9 @@ spec:
             - --no-secrets
             {{- end }}
             - --values={{ .Values.diffs.values }}
+            {{- range .Values.diffs.extraResources }}
+            - {{ printf "--resource=%s" . | quote }}
+            {{- end }}
             {{- with .Values.clusterName }}
             - --cluster-name={{ . }}
             {{- end }}

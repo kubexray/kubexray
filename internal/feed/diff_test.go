@@ -133,3 +133,26 @@ func TestEnvDiffWithValues(t *testing.T) {
 		t.Errorf("diff = %+v", d.lines)
 	}
 }
+
+func TestDiffOfAManifest(t *testing.T) {
+	t.Parallel()
+	st, tr := cluster(), New(MaxSets)
+	h := graph.Node{
+		ID: "HorizontalPodAutoscaler/shop/api", Kind: "HorizontalPodAutoscaler", Namespace: "shop", Name: "api",
+		Status:   graph.Status{Ready: true},
+		Manifest: map[string]graph.Value{"spec.maxReplicas": {Text: "10", Hash: "fp:1"}, "spec.minReplicas": {Text: "2", Hash: "fp:2"}},
+		Change:   by("helm", "helm", "", at(-60)),
+	}
+	st.Nodes[h.ID] = h
+	h.Manifest = map[string]graph.Value{"spec.maxReplicas": {Text: "3", Hash: "fp:3"}, "spec.minReplicas": {Text: "2", Hash: "fp:2"}}
+	h.Change = by("kubectl-edit", "kubectl", "edit", at(0))
+	apply(t, tr, st, at(0), h)
+
+	e := only(t, tr).Entries[0]
+	if e.Summary != "changed (spec.maxReplicas 10 → 3)" {
+		t.Errorf("summary = %q", e.Summary)
+	}
+	if want := []DiffLine{{Path: "spec.maxReplicas", Op: Changed, From: "10", To: "3"}}; !slices.Equal(e.Diff, want) {
+		t.Errorf("diff = %+v", e.Diff)
+	}
+}

@@ -45,6 +45,11 @@ type Node struct {
 	// Data is a ConfigMap's contents, only when values are on (ADR-0017).
 	// Secrets are never read.
 	Data map[string]Value `json:"data,omitempty"`
+	// Manifest is the object's desired state for kinds kubexray keeps a
+	// history of (ADR-0018): each field by its path, such as
+	// "spec.maxReplicas" or "spec.rules[0].host", as a Value. Status and
+	// metadata other than labels are left out.
+	Manifest map[string]Value `json:"manifest,omitempty"`
 }
 
 // Value is a value kubexray may show in a diff (ADR-0017): its text when
@@ -110,13 +115,7 @@ type EnvVar struct {
 // cluster unless someone chooses to include values (ADR-0017). Names,
 // sources and fingerprints stay.
 func WithoutValues(n Node) Node {
-	if len(n.Data) > 0 {
-		data := make(map[string]Value, len(n.Data))
-		for k, v := range n.Data {
-			data[k] = Value{Hash: v.Hash}
-		}
-		n.Data = data
-	}
+	n.Data, n.Manifest = hashes(n.Data), hashes(n.Manifest)
 	if n.Spec != nil && slices.ContainsFunc(n.Spec.Containers, hasValues) {
 		spec := *n.Spec
 		spec.Containers = slices.Clone(spec.Containers)
@@ -134,6 +133,17 @@ func WithoutValues(n Node) Node {
 		n.Spec = &spec
 	}
 	return n
+}
+
+func hashes(m map[string]Value) map[string]Value {
+	if len(m) == 0 {
+		return m
+	}
+	out := make(map[string]Value, len(m))
+	for k, v := range m {
+		out[k] = Value{Hash: v.Hash}
+	}
+	return out
 }
 
 // StripValues applies WithoutValues to every node in a message.
@@ -244,7 +254,8 @@ func (n Node) Equal(o Node) bool {
 		equalPtr(n.Change, o.Change, Change.Equal) &&
 		equalPtr(n.Origin, o.Origin, func(a, b Origin) bool { return a == b }) &&
 		maps.Equal(n.Selector, o.Selector) &&
-		maps.Equal(n.Data, o.Data)
+		maps.Equal(n.Data, o.Data) &&
+		maps.Equal(n.Manifest, o.Manifest)
 }
 
 // Equal reports whether two specs are identical.
