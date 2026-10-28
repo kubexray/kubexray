@@ -43,6 +43,8 @@ interface Props {
 
 /** The side panel's width until it's resized. */
 const ASIDE_W = 420;
+/** The least height the log keeps under the details, with its handle. */
+const LOG_MIN = 152;
 
 /** Diff mode's controls for the timeline: the moment compared from, if any. */
 export interface Compare {
@@ -126,6 +128,18 @@ export function Workspace(props: Props) {
   const [asideW, setAsideW] = useStoredSize("kubexray.aside.width", ASIDE_W);
   const [detailsH, setDetailsH] = useStoredSize("kubexray.aside.details", 0);
   const [logFull, setLogFull] = useState(false);
+  // The side panel's height, so the details never leave the log less than
+  // its minimum.
+  const asideRef = useRef<HTMLElement>(null);
+  const [asideH, setAsideH] = useState(700);
+  useEffect(() => {
+    const el = asideRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(([e]) => e && setAsideH(e.contentRect.height));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  const detailsMax = Math.max(60, asideH - LOG_MIN);
   const [ghost, setGhost] = useState<string | null>(null);
   const scope = useMemo(() => (selectedApp ? { app: selectedApp, related: chainOf(view, selectedApp) } : null), [view, selectedApp]);
   // An event clicked in the log: its object, just after it happened.
@@ -187,9 +201,9 @@ export function Workspace(props: Props) {
       <main className={`main${props.loading ? " loading" : ""}${logFull ? " log-full" : ""}`} style={{ "--aside": `${asideW}px` } as CSSProperties}>
         <MapView view={mapView} open={open} highlight={highlight} causeOf={causeOf} onToggle={toggle} onSelect={setSelected} onHover={setHovered} />
         <Splitter axis="col" label="Resize the side panel" value={asideW} min={300} max={900} pane="after" onChange={setAsideW} onReset={() => setAsideW(ASIDE_W)} />
-        <aside>
-          <DetailsPanel id={selected} state={state} view={view} incident={listed ?? props.why ?? null} onSelect={show} height={detailsH || undefined} />
-          <Splitter axis="row" label="Resize the details and the log" value={detailsH || 260} min={60} max={900} pane="before" onChange={setDetailsH} onReset={() => setDetailsH(0)} />
+        <aside ref={asideRef}>
+          <DetailsPanel id={selected} state={state} view={view} incident={listed ?? props.why ?? null} onSelect={show} height={detailsH ? Math.min(detailsH, detailsMax) : undefined} />
+          <Splitter axis="row" label="Resize the details and the log" value={Math.min(detailsH || 260, detailsMax)} min={60} max={detailsMax} pane="before" onChange={setDetailsH} onReset={() => setDetailsH(0)} />
           {base ? (
             <DiffPanel from={base} to={{ at: shownAt, state }} onSelect={show} onClose={() => setBase(null)} />
           ) : (
