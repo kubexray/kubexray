@@ -50,6 +50,9 @@ type Node struct {
 	// "spec.maxReplicas" or "spec.rules[0].host", as a Value. Status and
 	// metadata other than labels are left out.
 	Manifest map[string]Value `json:"manifest,omitempty"`
+	// Traffic is an app's requests, errors and latency (ADR-0016), on a node
+	// of kind Traffic whose Parent is the app.
+	Traffic *Traffic `json:"traffic,omitempty"`
 }
 
 // Value is a value kubexray may show in a diff (ADR-0017): its text when
@@ -272,7 +275,35 @@ func (n Node) Equal(o Node) bool {
 		equalPtr(n.Origin, o.Origin, func(a, b Origin) bool { return a == b }) &&
 		maps.Equal(n.Selector, o.Selector) &&
 		maps.Equal(n.Data, o.Data) &&
-		maps.Equal(n.Manifest, o.Manifest)
+		maps.Equal(n.Manifest, o.Manifest) &&
+		equalPtr(n.Traffic, o.Traffic, func(a, b Traffic) bool { return a.Equal(b) })
+}
+
+// KindTraffic is the kind of the node that holds an app's traffic.
+const KindTraffic = "Traffic"
+
+// TrafficID is the ID of an app's traffic node: "Traffic/shop/deployment.api".
+// Node IDs never contain ':', which separates an edge ID's parts.
+func TrafficID(app Node) string {
+	return ID(KindTraffic, app.Namespace, strings.ToLower(app.Kind)+"."+app.Name)
+}
+
+// Traffic is an app's requests over the last few minutes, from an ingress
+// controller, a service mesh or the app's own metrics in Prometheus.
+type Traffic struct {
+	Source   string  `json:"source"`        // Traefik, ingress-nginx, Istio, OpenTelemetry
+	RPS      float64 `json:"rps"`           // requests per second
+	ErrorPct float64 `json:"errorPct"`      // share answered with 5xx, 0–100
+	P99      float64 `json:"p99,omitempty"` // seconds
+	// When errors and latency started being too high, while they are.
+	ErrorsSince time.Time `json:"errorsSince,omitzero"`
+	SlowSince   time.Time `json:"slowSince,omitzero"`
+}
+
+// Equal reports whether two readings are the same.
+func (t Traffic) Equal(o Traffic) bool {
+	return t.Source == o.Source && t.RPS == o.RPS && t.ErrorPct == o.ErrorPct && t.P99 == o.P99 &&
+		t.ErrorsSince.Equal(o.ErrorsSince) && t.SlowSince.Equal(o.SlowSince)
 }
 
 // Equal reports whether two specs are identical.

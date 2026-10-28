@@ -113,6 +113,7 @@ type connection struct {
 	noSecrets                      bool     // don't watch Secrets (serve --no-secrets)
 	values                         bool     // keep values for diffs (ADR-0017)
 	resources                      hostList // more kinds to keep a manifest history of (ADR-0018)
+	prometheus                     string   // where to read traffic (ADR-0016); found when empty
 
 	// Set by resolve.
 	cfg      *rest.Config
@@ -126,6 +127,7 @@ func (c *connection) flags(fs *flag.FlagSet, withNamespace bool) {
 		fs.StringVar(&c.namespace, "n", "", "namespace (default: the context's namespace)")
 		fs.StringVar(&c.namespace, "namespace", "", "namespace (default: the context's namespace)")
 	}
+	fs.StringVar(&c.prometheus, "prometheus-url", "", "read request errors and latency from this Prometheus, e.g. http://prometheus.monitoring.svc:9090 (default: look for it in the cluster)")
 	fs.Var(&c.resources, "resource", "also keep a history of this resource, as group/version/resource, e.g. argoproj.io/v1alpha1/applications (repeatable)")
 	fs.BoolVar(&c.values, "values", true, "keep ConfigMap and environment values so diffs can show them; credential-looking ones are hidden, Secrets are never read")
 }
@@ -190,7 +192,10 @@ func (c *connection) sync(ctx context.Context, log *slog.Logger, stderr io.Write
 		return nil, "", fmt.Errorf("creating dynamic client: %w", err)
 	}
 	g := graph.New()
-	w := cluster.New(client, metaClient, g, log).WithManifests(dyn, resources)
+	// In the cluster (no kubeconfig, a service account): reach Prometheus
+	// directly, not through the API's service proxy.
+	inCluster := c.kubeconfig == "" && os.Getenv("KUBERNETES_SERVICE_HOST") != "" && os.Getenv("KUBECONFIG") == ""
+	w := cluster.New(client, metaClient, g, log).WithManifests(dyn, resources).WithPrometheus(c.prometheus, inCluster)
 	if c.noSecrets {
 		w.WithoutSecrets()
 	}

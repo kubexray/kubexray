@@ -146,6 +146,11 @@ func (a *anonymizer) node(n *graph.Node) {
 		}
 		n.Data = data
 	}
+	if n.Kind == graph.KindTraffic && n.Parent != "" {
+		// Named after its app, so it still lines up with it.
+		kind, ns, name := graph.ParseID(n.Parent)
+		n.ID, n.Name = graph.TrafficID(graph.Node{Kind: kind, Namespace: ns, Name: name}), name
+	}
 	n.Labels = a.labels(n.Labels)
 	n.Selector = a.labels(n.Selector) // the same replacements, so it still matches
 	// Kubernetes messages name nodes, volumes and keys: dropped (ADR-0009).

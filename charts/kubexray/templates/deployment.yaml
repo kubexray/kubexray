@@ -67,6 +67,9 @@ spec:
             - --no-secrets
             {{- end }}
             - --values={{ .Values.diffs.values }}
+            {{- with .Values.signals.prometheusURL }}
+            - {{ printf "--prometheus-url=%s" . | quote }}
+            {{- end }}
             {{- range .Values.diffs.extraResources }}
             - {{ printf "--resource=%s" . | quote }}
             {{- end }}
