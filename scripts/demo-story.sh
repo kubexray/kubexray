@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # A half hour in the life of the demo shop, for recording kubexray's public
-# demo replay: scaling, deploys, Helm upgrades, a hand edit (drift), and two
-# incidents with their fixes. Runs on the demo cluster (make demo) with its
-# own kubeconfig; it never touches your usual kubectl configuration.
+# demo replay: scaling, deploys, Helm upgrades, a hand edit (drift) put back
+# as Helm applied it, and three incidents with their fixes: a ConfigMap
+# edit, a bad image, and requests failing while every pod looks healthy.
+# Runs on the demo cluster (make demo, with its signal sources) with its own
+# kubeconfig; it never touches your usual kubectl configuration.
 #
 #   scripts/demo-story.sh prepare      put the shop back as it starts, and
 #                                      load the story's images into the nodes
@@ -19,6 +21,10 @@ CLUSTER="${DEMO_CLUSTER:-kubexray-demo}"
 MINUTE="${STORY_MINUTE:-60}" # seconds in one story minute
 
 if [ "${1:-}" = "prepare" ]; then
+  if ! kubectl -n shoppers get deploy shoppers >/dev/null 2>&1; then
+    echo "The story needs the demo's traffic and Prometheus: run make demo (without DEMO_SIGNALS=0) first" >&2
+    exit 1
+  fi
   # Images already on the nodes: rollouts in the recording take seconds,
   # not however long a pull takes on a fresh node.
   for node in $(kind get nodes --name "$CLUSTER"); do
@@ -32,6 +38,7 @@ if [ "${1:-}" = "prepare" ]; then
   kubectl -n shop scale deploy/api --replicas=3 >/dev/null
   kubectl -n shop set image deploy/reports reports=busybox:1.36 >/dev/null
   kubectl -n shop scale deploy/reports --replicas=1 >/dev/null
+  kubectl -n shop patch svc api --type=json -p '[{"op":"replace","path":"/spec/ports/0/targetPort","value":80}]' >/dev/null
   for d in api checkout reports; do kubectl -n shop rollout status "deploy/$d" --timeout=3m >/dev/null; done
   echo "The shop is ready for the story."
   exit 0
@@ -57,6 +64,15 @@ helm_storefront() { # release version, image, replicas
     --set release="$1" --set image="$2" --set replicas="$3" --wait --timeout 3m >/dev/null
 }
 
+# restore puts a Helm-managed object back exactly as Helm last applied it:
+# the command kubexray shows on a drift (ADR-0019).
+restore() { # kind, name
+  helm get manifest storefront -n shop |
+    kubectl create -n shop --dry-run=client -o json -f - |
+    jq "select(.kind == \"$1\" and .metadata.name == \"$2\") | .metadata.annotations += {\"meta.helm.sh/release-name\": \"storefront\", \"meta.helm.sh/release-namespace\": \"shop\"}" |
+    kubectl replace -n shop -f - >/dev/null
+}
+
 checkout_pod() {
   kubectl -n shop get pods -l app=checkout --field-selector=status.phase=Running \
     -o jsonpath='{.items[0].metadata.name}'
@@ -77,6 +93,9 @@ helm_storefront 1.1.0 nginx:1.28-alpine 2
 at 8 "Someone hand-edits the Helm-managed storefront (drift)"
 kubectl -n shop set env deploy/storefront PROMO_BANNER=on >/dev/null
 
+at 9.5 "The storefront is put back as Helm applied it, with the command kubexray shows"
+restore Deployment storefront
+
 at 10 "checkout-config is edited: LOG_LEVEL=verbose (checkout accepts debug, info, warn, error)"
 kubectl -n shop patch configmap checkout-config --type=merge -p '{"data":{"LOG_LEVEL":"verbose"}}' >/dev/null
 
@@ -95,16 +114,22 @@ kubectl -n shop set image deploy/api api=nginx:1.72-alpine >/dev/null
 at 19.5 "The rollout is undone"
 kubectl -n shop rollout undo deploy/api >/dev/null
 
-at 21 "Helm upgrade storefront 1.1.0 → 1.2.0 (puts the hand edit back to what Helm says)"
+at 21 "Helm upgrade storefront 1.1.0 → 1.2.0"
 helm_storefront 1.2.0 nginx:1.28-alpine 2
 
-at 23 "reports scaled 1 → 2 for the month-end run"
+at 22 "reports scaled 1 → 2 for the month-end run"
 kubectl -n shop scale deploy/reports --replicas=2 >/dev/null
 
-at 25 "Traffic is back: api scaled 2 → 3"
+at 23 "Traffic is back: api scaled 2 → 3"
 kubectl -n shop scale deploy/api --replicas=3 >/dev/null
 
-at 27 "Helm upgrade storefront 1.2.0 → 1.2.1, three replicas"
+at 24 "Someone points the api Service at port 8080 (api listens on 80): pods stay healthy, requests fail"
+kubectl -n shop patch svc api --type=json -p '[{"op":"replace","path":"/spec/ports/0/targetPort","value":8080}]' >/dev/null
+
+at 28 "The Service is put back on port 80"
+kubectl -n shop patch svc api --type=json -p '[{"op":"replace","path":"/spec/ports/0/targetPort","value":80}]' >/dev/null
+
+at 30 "Helm upgrade storefront 1.2.0 → 1.2.1, three replicas"
 helm_storefront 1.2.1 nginx:1.28-alpine 3
 
-at 30 "Done: everything settles. Export the replay now."
+at 33 "Done: everything settles. Export the replay now."

@@ -43,7 +43,7 @@ test("compare shows what changed between two moments", async ({ page }) => {
   await seek(page, "max");
   const panel = page.locator(".compare-panel");
   await expect(panel).toContainText("ConfigMap checkout-config");
-  await expect(panel).toContainText("edited by kubectl patch (contents not read)");
+  await expect(panel).toContainText("changed by kubectl patch"); // edited, then put back: no net change
   await expect(panel).toContainText("Deployment checkout");
   await shot(page, "compare");
   await page.getByRole("button", { name: "Stop comparing" }).click();
@@ -94,7 +94,7 @@ test("the change feed says what each change did", async ({ page }) => {
   await openDemo(page);
   await page.getByRole("button", { name: "Changes", exact: true }).click();
   const cards = page.locator(".feed-card");
-  await expect(cards).toHaveCount(14); // the demo's half hour
+  await expect(cards).toHaveCount(17); // the demo's 37 minutes
   await expect(cards.filter({ hasText: "api scaled 3 → 4 replicas" }).locator(".verdict")).toHaveText("Healthy");
   await expect(cards.filter({ hasText: "Helm upgrade storefront 1.0.0 → 1.1.0" }).locator(".verdict")).toHaveText("Healthy");
   const configEdits = cards.filter({ hasText: "ConfigMap checkout-config edited" });
@@ -103,11 +103,16 @@ test("the change feed says what each change did", async ({ page }) => {
   await expect(resolved).toContainText(/broke checkout for .* · resolved at /);
   await expect(resolved).toHaveClass(/resolved/);
   await expect(configEdits.filter({ hasText: "Fixed an incident" })).toContainText("checkout healthy");
-  await expect(cards.filter({ hasText: "pod template changed" })).toContainText("managed by Helm"); // the hand edit: drift
+  const drift = cards.filter({ hasText: "env PROMO_BANNER added" });
+  await expect(drift).toContainText("managed by Helm release storefront"); // the hand edit: drift
+  await expect(drift.locator(".drift-restore code")).toContainText("helm get manifest storefront -n shop");
+  await expect(cards.filter({ hasText: "env PROMO_BANNER removed" })).toBeVisible(); // put back with that command
+  // Requests failing while every pod looks healthy: the Service edit.
+  await expect(cards.filter({ hasText: "spec.ports[0].targetPort 80 → 8080" })).toContainText(/broke api for .* · resolved at /);
   await shot(page, "changes");
 
   await page.getByRole("button", { name: /^Broke something/ }).click();
-  await expect(cards).toHaveCount(2);
+  await expect(cards).toHaveCount(3);
   await page.getByRole("button", { name: /^All changes/ }).click();
   await page.getByPlaceholder("Search apps, people, images…").fill("checkout-config");
   await expect(cards).toHaveCount(2);
@@ -145,9 +150,9 @@ test("the histogram shows and picks changes", async ({ page }) => {
   await expect(page.locator(".hist-window")).toContainText("Showing");
   const cards = page.locator(".feed-card");
   const picked = await cards.count();
-  expect(picked).toBeLessThan(14);
+  expect(picked).toBeLessThan(17);
   await page.locator(".hist-window").getByRole("button", { name: "Clear" }).click();
-  await expect(cards).toHaveCount(14);
+  await expect(cards).toHaveCount(17);
 
   // Drag across every bar with changes: all of them again, in a window.
   const first = await full.first().boundingBox();
@@ -158,13 +163,14 @@ test("the histogram shows and picks changes", async ({ page }) => {
   await page.mouse.move(last.x + last.width - 2, last.y + last.height - 4, { steps: 8 });
   await page.mouse.up();
   await expect(page.locator(".hist-window")).toBeVisible();
-  await expect(cards).toHaveCount(14);
+  await expect(cards).toHaveCount(17);
 });
 
-test("see diff shows what changed, and says what kubexray doesn't read", async ({ page }) => {
+test("see diff shows what changed, value by value", async ({ page }) => {
   await page.goto("/play/?replay=demo.kxr&view=changes");
   const edit = page.locator(".feed-card").filter({ hasText: "ConfigMap checkout-config edited" }).filter({ hasText: "Resolved" });
   await edit.getByRole("button", { name: "See diff" }).click();
-  await expect(edit.locator(".diff-view")).toContainText("doesn't read ConfigMap contents");
+  await expect(edit.locator(".diff-line.del")).toContainText("info");
+  await expect(edit.locator(".diff-line.add")).toContainText("verbose");
   await expect(edit.getByRole("button", { name: "Hide diff" })).toHaveAttribute("aria-expanded", "true");
 });
