@@ -89,6 +89,11 @@ signals:
   # app.kubernetes.io/name=prometheus, and calls it directly. If Prometheus
   # has a NetworkPolicy, let kubexray's pods reach its port.
   prometheusURL: ""   # e.g. http://prometheus.monitoring.svc:9090
+  # How readily errors and latency are an incident. Each app is judged
+  # against its own normal range, learned from the last week (ADR-0016).
+  # calm: a big jump, held 5 minutes. normal: 2 minutes. strict: a smaller
+  # jump, 1 minute.
+  sensitivity: normal
 
 persistence:
   # History on a volume, so it survives restarts. Without it, history lives in

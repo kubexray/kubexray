@@ -46,19 +46,25 @@ Every source names a Service, a target group or a pod. kubexray's map already kn
 
 ### 4. Normal, and a break
 
-For each app and signal, kubexray keeps a baseline from the last 24 hours at 1-minute resolution: the usual range, built from robust statistics (median and spread). The range for a given time of day comes from the same hour in the window when there's enough history, and from the whole window otherwise.
+For each app, kubexray keeps a week of its error rate and p99 at 1-minute resolution. Minutes that were part of a break are marked and never count as normal, so an outage doesn't teach kubexray that failing is normal. On start it relearns the history from its own recording. Each app is judged only against itself:
 
-A **break** is when a signal is clearly outside its range, and also above an absolute floor (no incident for 0.01% → 0.05% errors, or for an app with almost no traffic), for a sustained time. The sustained time comes from the sensitivity setting: Calm 5 minutes, Normal 2, Strict 1. The incident starts when the break began, not when it was confirmed.
+- **Normal** is the median and the typical spread (the median absolute deviation, scaled like a standard deviation, and never less than 5% of the median). It comes from the same hour on other days once that hour has three days of history, and from the last 24 hours until then.
+- A **break** is a value above the median by more than K spreads, where K is 6 on Calm, 4 on Normal and 3 on Strict. It must also be above floors that hold for every app: 1% errors; for latency 200 ms, and 1.5 times the usual p99. And the app must have at least 0.2 requests a second.
+- It must last the **hold**: 5 minutes on Calm, 2 on Normal, 1 on Strict (`--sensitivity`, `signals.sensitivity`). The incident starts when the break began, not when it was confirmed.
+
+Cards show the normal range as the middle 90% of the app's minutes: "8.1% of requests fail (12 a second, normal 0.1%–0.6%)".
 
 Restarts break on a rate (3 or more an hour), not on a baseline. Memory breaks at 90% of the limit held for 5 minutes; once baselines exist, a rising trend that reaches the limit within the hour will too.
 
 Kubernetes keeps only a restart count and the latest restart's time, so the watcher notes when each restart happens and keeps the last ten per pod. A pod first seen after restarting has one known time. Memory comes from metrics-server every 30 seconds, as a pod's highest container use against its limit, in steps of 5%, so the recording only grows when the step changes. Containers without a memory limit don't count.
 
-With less than an hour of history, only the floors and the fixed rules apply, so a fresh install doesn't fire on noise.
+With less than an hour of history there's no baseline, and fixed thresholds apply: 5% errors or a 1-second p99. A fresh install neither guesses nor fires on noise.
+
+A baseline can't tell a long-standing problem from normal. An app that has always failed 4% of requests is flagged when it gets worse, not for the 4%. kubexray reports what changed.
 
 ### 5. An incident like any other
 
-Until baselines exist, errors break at 5% or more and latency at a p99 of 1 second or more, both above 0.2 requests a second and held for 2 minutes (Normal). The numbers are recorded per app on a small node of kind Traffic, once a minute, so rewinds and replays show them.
+Errors and latency break against each app's baseline (section 4). The numbers are recorded per app on a small node of kind Traffic, once a minute, so rewinds and replays show them.
 
 A signal incident goes through the cause engine (ADR-0006) like a pod incident. When requests fail or slow down, changes to what routes them also count: the Services that select the app's pods, the Ingresses that route to those Services, and NetworkPolicies that select the pods (by `matchLabels`). A routing change made shortly before errors began is the likely cause, and the card shows its diff, for example `spec.ports[0].targetPort 80 → 9998`. An HPA that targets the app counts for any signal. That needs values on, since what it targets is a value. the changes to the app and what it uses in the 30 minutes before, with evidence. "Errors started 40 seconds after the new pods became ready" is the signal's version of "only pods started after the change fail". Every incident says what detected it (source and numbers), and its card shows the signal's chart with the changes marked. An app whose pods are failing and whose errors are up is one incident with two signals.
 

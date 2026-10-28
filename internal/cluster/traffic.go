@@ -2,6 +2,7 @@ package cluster
 
 import (
 	"context"
+	"encoding/json"
 	"math"
 	"net/http"
 	"slices"
@@ -22,10 +23,47 @@ const (
 
 	// Floors: below them, nothing is a break. A handful of failed requests
 	// to an app with almost no traffic isn't an incident.
-	minRPS       = 0.2
+	minRPS = 0.2
+	// Without a baseline (less than an hour of history), fixed thresholds.
 	errorPctHigh = 5.0
-	p99High      = 1.0 // seconds; until baselines (ADR-0016)
+	p99High      = 1.0 // seconds
 )
+
+// WithSensitivity sets how readily traffic breaks (ADR-0016): Calm,
+// Normal (the default) or Strict.
+func (w *Watcher) WithSensitivity(s Sensitivity) *Watcher {
+	w.sensitivity = s
+	return w
+}
+
+// SeedTraffic learns apps' traffic history from a recording, so a restart
+// doesn't start every baseline over. Call it before Start.
+func (w *Watcher) SeedTraffic(walk func(fn func(raw []byte) error) error) error {
+	return walk(func(raw []byte) error {
+		var m graph.Message
+		if err := json.Unmarshal(raw, &m); err != nil {
+			return err
+		}
+		nodes := m.Nodes
+		for _, op := range m.Ops {
+			if op.Node != nil {
+				nodes = append(nodes, *op.Node)
+			}
+		}
+		for _, n := range nodes {
+			t := n.Traffic
+			if n.Kind != graph.KindTraffic || t == nil {
+				continue
+			}
+			h := w.history[n.ID]
+			if len(h) > 0 && m.TS.Sub(h[len(h)-1].at) < trafficEvery/2 {
+				continue // the same minute, seen again in a snapshot
+			}
+			w.history[n.ID] = h.add(sample{at: m.TS, rps: t.RPS, errorPct: t.ErrorPct, p99: t.P99, broken: !t.ErrorsSince.IsZero() || !t.SlowSince.IsZero()})
+		}
+		return nil
+	})
+}
 
 // WithPrometheus reads traffic from Prometheus at url. Without it, kubexray
 // looks for Prometheus among the cluster's Services. In the cluster
@@ -177,13 +215,24 @@ func (w *Watcher) readTraffic(ctx context.Context, q prom.Querier, adapters []pr
 			RPS:      round(r.n.RPS, 10),
 			ErrorPct: round(100*r.n.Errors/max(r.n.RPS, 1e-9), 10),
 			P99:      round(r.n.P99, 100),
+			Hold:     int(w.sensitivity.Hold.Seconds()),
 		}
-		if t.RPS >= minRPS && t.ErrorPct >= errorPctHigh {
+		cur := sample{at: now, rps: t.RPS, errorPct: t.ErrorPct, p99: t.P99}
+		errorsBreak, slowBreak, errNormal, p99Normal := w.history[id].judge(now, cur, w.sensitivity)
+		if errorsBreak {
 			t.ErrorsSince = cmpTime(prev.ErrorsSince, now)
 		}
-		if t.RPS >= minRPS && t.P99 >= p99High {
+		if slowBreak {
 			t.SlowSince = cmpTime(prev.SlowSince, now)
 		}
+		if errNormal != nil {
+			t.ErrorsNormal = &graph.Range{Low: round(errNormal.low5, 10), High: round(errNormal.high95, 10)}
+		}
+		if p99Normal != nil {
+			t.P99Normal = &graph.Range{Low: round(p99Normal.low5, 100), High: round(p99Normal.high95, 100)}
+		}
+		cur.broken = errorsBreak || slowBreak
+		w.history[id] = w.history[id].add(cur)
 		w.traffic[id] = t
 		w.graph.UpsertNode(graph.Node{
 			ID: id, Kind: graph.KindTraffic, Namespace: app.Namespace, Name: app.Name, Parent: app.ID,
