@@ -283,8 +283,13 @@ export function Player() {
             bounds={h}
             at={at}
             mode="replay"
-            events={events}
             incidents={incidents?.incidents ?? []}
+            onFocus={(app, ts) => {
+              setPlaying(false);
+              setT(Date.parse(ts));
+              setSelected(app);
+              setFocus((f) => f + 1);
+            }}
             playing={running}
             onPlay={() => {
               if (t >= end) setT(Date.parse(h.from));

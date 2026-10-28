@@ -235,18 +235,70 @@ aside { display: flex; flex-direction: column; gap: 12px; min-height: 0; min-wid
 .diff-details { margin: 2px 0 0 66px; padding: 0; list-style: none; font-size: 12px; color: var(--muted); display: grid; gap: 1px; overflow-wrap: anywhere; }
 
 /* Timeline */
-.timeline { display: flex; align-items: center; gap: 14px; border: 1px solid var(--border); border-radius: 10px; padding: 10px 14px; background: var(--surface); }
-.timeline .hint { color: var(--muted); font-size: 13px; }
-.live { border: 1px solid var(--border-strong); background: transparent; border-radius: 6px; padding: 5px 12px; cursor: pointer; font-weight: 500; font-size: 13px; white-space: nowrap; }
-.live.on { color: var(--ok); cursor: default; }
-.track { position: relative; flex: 1; min-width: 0; height: 28px; }
-.ticks { position: absolute; left: 8px; right: 8px; top: 0; bottom: 0; pointer-events: none; }
-.ticks i { position: absolute; top: 3px; width: 2px; height: 7px; margin-left: -1px; border-radius: 1px; background: var(--border-strong); }
-.ticks i.crit { background: var(--crit); height: 9px; top: 1px; }
-.ticks i.change { background: var(--accent); width: 8px; height: 8px; top: 1px; margin-left: -4px; border-radius: 2px; transform: rotate(45deg); }
-.ticks .band { position: absolute; top: 4px; height: 4px; border-radius: 2px; background: color-mix(in srgb, var(--crit) 35%, transparent); }
-.track input { position: absolute; left: 0; right: 0; bottom: 0; width: 100%; margin: 0; accent-color: var(--accent); }
-.ticks .mark { position: absolute; top: -2px; bottom: 6px; width: 2px; margin-left: -1px; background: var(--text); border-radius: 1px; }
+.timeline { display: flex; flex-direction: column; gap: 6px; border: 1px solid var(--border); border-radius: 12px; padding: 10px 16px 6px; background: var(--surface); }
+.timeline .hint { color: var(--muted); font-size: 13px; padding: 4px 0; }
+.tl-bar { display: flex; align-items: center; gap: 12px; min-width: 0; flex-wrap: wrap; }
+.tl-transport { display: flex; border: 1px solid var(--border-strong); border-radius: 8px; overflow: hidden; flex: none; }
+.tl-transport button { height: 30px; border: 0; background: transparent; color: var(--text); cursor: pointer; font-size: 13px; }
+.tl-transport button[aria-label] { width: 32px; font-size: 15px; color: var(--muted); }
+.tl-transport button:first-child { border-right: 1px solid var(--border); }
+.tl-transport button:last-child { border-left: 1px solid var(--border); }
+.tl-transport button:hover:not(:disabled) { background: var(--sunken); }
+.tl-play, .tl-live { padding: 0 14px; font-weight: 600; white-space: nowrap; }
+.tl-live.on { color: var(--ok); cursor: default; }
+.tl-time { font: 600 14px var(--font-data); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.tl-now { display: inline-flex; align-items: center; gap: 8px; min-width: 0; max-width: 520px; padding: 3px 10px; border-radius: 999px; font-size: 12.5px; font-weight: 500; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.tl-now i { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+.tl-now.bad { background: color-mix(in srgb, var(--crit) 11%, var(--surface)); color: color-mix(in srgb, var(--crit) 80%, var(--text)); }
+.tl-now.bad i { background: var(--crit); }
+.tl-now.ok { background: color-mix(in srgb, var(--ok) 11%, var(--surface)); color: color-mix(in srgb, var(--ok) 80%, var(--text)); }
+.tl-now.ok i { background: var(--ok); }
+.tl-spacer { flex: 1; }
+.tl-range { display: flex; gap: 2px; padding: 2px; border-radius: 7px; background: var(--sunken); }
+.tl-range button { border: 0; background: transparent; border-radius: 5px; padding: 3px 10px; font-size: 12.5px; color: var(--muted); cursor: pointer; }
+.tl-range button.on { background: var(--surface); color: var(--text); font-weight: 600; box-shadow: 0 1px 2px rgb(0 0 0 / 0.08); }
+
+.tl-plot { position: relative; height: 126px; margin: 0 4px; cursor: ew-resize; touch-action: none; user-select: none; }
+.tl-unrecorded { position: absolute; left: 0; top: 30px; height: 60px; background: repeating-linear-gradient(135deg, var(--sunken) 0 6px, transparent 6px 12px); pointer-events: none; }
+.tl-unrecorded span { position: absolute; left: 8px; top: 22px; font-size: 11.5px; color: var(--muted); white-space: nowrap; }
+.tl-mark.start span { transform: none; left: 0; }
+.tl-mark.end span { transform: translateX(-100%); left: 14px; }
+.tl-compare { position: absolute; top: 20px; height: 70px; background: color-mix(in srgb, var(--accent) 8%, transparent); border-left: 2px dashed var(--accent); pointer-events: none; }
+.tl-compare span { position: absolute; left: 6px; top: -18px; font: 600 10.5px var(--font-body); letter-spacing: 0.04em; text-transform: uppercase; color: var(--accent); white-space: nowrap; }
+.tl-broken { position: absolute; top: 30px; height: 60px; padding: 0; border: 0; background: color-mix(in srgb, var(--crit) 24%, var(--surface)); cursor: pointer; }
+.tl-broken:hover, .tl-broken:focus-visible { background: color-mix(in srgb, var(--crit) 32%, var(--surface)); }
+.tl-recovering { position: absolute; top: 30px; height: 60px; pointer-events: none; background: repeating-linear-gradient(135deg, color-mix(in srgb, var(--crit) 12%, var(--surface)) 0 5px, var(--surface) 5px 9px); }
+.ongoing { animation: tl-pulse 1.6s ease-in-out infinite; }
+@keyframes tl-pulse { 50% { opacity: 0.55; } }
+@media (prefers-reduced-motion: reduce) { .ongoing { animation: none; } }
+.tl-span-label { position: absolute; top: 74px; padding-left: 5px; font: 600 11px var(--font-body); color: color-mix(in srgb, var(--crit) 75%, var(--text)); white-space: nowrap; pointer-events: none; }
+.tl-bars { position: absolute; left: 0; right: 0; top: 30px; height: 42px; display: flex; align-items: flex-end; gap: 2px; pointer-events: none; }
+.tl-bars i.off { visibility: hidden; }
+.tl-span-label.end { padding: 0 5px 0 0; }
+.tl-bars i { flex: 1; min-width: 1px; border-radius: 2px 2px 0 0; background: color-mix(in srgb, var(--muted) 45%, var(--surface)); }
+.tl-mark { position: absolute; width: 14px; margin-left: -7px; padding: 0; border: 0; background: transparent; cursor: pointer; }
+.tl-mark::before { content: ""; position: absolute; left: 6px; width: 2px; top: 0; bottom: 0; }
+.tl-mark span { position: absolute; left: 7px; transform: translateX(-50%); padding: 1px 6px; border-radius: 4px; color: #fff; font: 500 10.5px var(--font-data); white-space: nowrap; }
+.tl-mark.cause { top: 4px; height: 86px; }
+.tl-mark.cause::before { background: var(--text); top: 14px; }
+.tl-mark.cause span { top: 0; background: var(--text); color: var(--surface); }
+.tl-mark.fix { top: 30px; height: 78px; }
+.tl-mark.fix::before { background: var(--ok); bottom: 18px; }
+.tl-mark.fix span { bottom: 0; background: var(--ok); }
+.tl-mark:focus-visible, .tl-broken:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.tl-head { position: absolute; top: 24px; height: 72px; width: 2px; margin-left: -1px; background: var(--accent); pointer-events: none; }
+.tl-head::after { content: ""; position: absolute; left: -4px; bottom: -6px; width: 10px; height: 10px; border-radius: 50%; background: var(--accent); }
+.tl-axis { position: absolute; left: 0; right: 0; top: 108px; height: 14px; pointer-events: none; }
+.tl-axis span { position: absolute; transform: translateX(-50%); font: 500 11px var(--font-data); color: var(--muted); white-space: nowrap; }
+.tl-card { position: absolute; bottom: 118px; z-index: 5; width: 300px; display: flex; flex-direction: column; gap: 4px; padding: 10px 12px; border-radius: 10px; background: var(--text); color: var(--surface); font-size: 12.5px; box-shadow: 0 12px 28px -12px rgb(16 24 32 / 0.55); pointer-events: none; }
+.tl-card strong { font-size: 13px; }
+.tl-card .meta, .tl-card .muted { color: color-mix(in srgb, var(--surface) 65%, var(--text)); font-family: var(--font-data); font-size: 11.5px; }
+.tl-card .value { font-family: var(--font-data); }
+.tl-card s { color: color-mix(in srgb, var(--surface) 65%, var(--text)); }
+.tl-card .verdict-line.cause { color: color-mix(in srgb, var(--crit) 50%, var(--surface)); font-weight: 600; }
+.tl-card .verdict-line.fix { color: color-mix(in srgb, var(--ok) 45%, var(--surface)); font-weight: 600; }
+/* The range input: there for the keyboard and screen readers, out of sight. */
+.track { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
 .compare { border: 1px solid var(--border-strong); background: transparent; border-radius: 6px; padding: 5px 12px; cursor: pointer; font-size: 13px; white-space: nowrap; }
 .compare.on { background: var(--text); color: var(--bg); border-color: var(--text); }
 .compare:disabled { opacity: 0.5; cursor: default; }
