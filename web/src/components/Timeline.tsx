@@ -103,9 +103,12 @@ export function Timeline({ bounds, at, mode, incidents, onSeek, onFocus, playing
   }
 
   const seek = (t: number) => onSeek(live && t >= last - 1000 ? null : iso(Math.min(last, Math.max(first, t))));
+  // A point on the plot: its moment, or now within a few pixels of the
+  // live edge, where a pixel is seconds wide.
   const fromX = (clientX: number) => {
     const r = plot.current?.getBoundingClientRect();
-    return r ? from + ((clientX - r.left) / r.width) * span : value;
+    if (!r) return value;
+    return live && r.right - clientX < 12 ? last : from + ((clientX - r.left) / r.width) * span;
   };
   const go = (dir: -1 | 1) => {
     const t = step(all, value, dir);
@@ -181,6 +184,7 @@ export function Timeline({ bounds, at, mode, incidents, onSeek, onFocus, playing
         }}
         onPointerMove={(e) => dragging.current && seek(fromX(e.clientX))}
         onPointerUp={() => (dragging.current = false)}
+        onLostPointerCapture={() => (dragging.current = false)}
         onPointerLeave={() => setHover(null)}
       >
         {first > from && (

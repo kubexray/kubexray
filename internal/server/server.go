@@ -655,6 +655,11 @@ func (s *Server) history(w http.ResponseWriter, _ *http.Request) {
 		http.Error(w, "nothing recorded yet", http.StatusNotFound)
 		return
 	}
+	// Browsers keep times to the millisecond: rounded down, the first
+	// recorded moment would fall just before the recording began.
+	if ms := from.Truncate(time.Millisecond); ms.Before(from) {
+		from = ms.Add(time.Millisecond)
+	}
 	resp := HistoryResponse{From: from, To: to}
 	if s.recommender != nil {
 		resp.Recommend = s.recommender.ModelName()

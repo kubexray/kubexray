@@ -426,6 +426,12 @@ func TestHistoryAndRewind(t *testing.T) {
 		t.Errorf("at = %d nodes, %d incidents, %v", len(snap.Nodes), len(at.Incidents), err)
 	}
 
+	// The first moment, as a browser keeps it (to the millisecond), is history.
+	first := url.QueryEscape(hist.From.Truncate(time.Millisecond).Format(time.RFC3339Nano))
+	if got := f.status(req{path: "/api/at?t=" + first, cookie: true}); got != http.StatusOK {
+		t.Errorf("the first moment = %d, want 200", got)
+	}
+
 	before := url.QueryEscape(hist.From.Add(-time.Hour).Format(time.RFC3339Nano))
 	if got := f.status(req{path: "/api/at?t=" + before, cookie: true}); got != http.StatusNotFound {
 		t.Errorf("before history = %d, want 404", got)
