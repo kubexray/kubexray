@@ -215,3 +215,16 @@ test("the namespace bar jumps to any namespace, Kubernetes' own in a menu", asyn
   await expect(page.locator(`details#ns-${name}`)).toHaveAttribute("open", "");
   await expect(page.locator(`details#ns-${name} > summary`)).toBeInViewport();
 });
+
+test("helm on the map: who manages an app, and the release's history", async ({ page }) => {
+  await openDemo(page);
+  const badge = page.getByRole("button", { name: /^Helm release / }).first();
+  await expect(badge).toBeVisible();
+  await badge.click();
+  const history = page.getByRole("dialog", { name: /^Helm release / });
+  await expect(history).toBeVisible();
+  await expect(history.locator("li").first()).toContainText(/#\d/);
+  await page.keyboard.press("Escape");
+  await expect(history).toHaveCount(0);
+  await expect(page.locator(".release").first()).toContainText("helm ·");
+});

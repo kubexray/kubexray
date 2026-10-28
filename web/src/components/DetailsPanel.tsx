@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useContext, useState } from "react";
 import { useNow } from "../lib/useNow";
 import type { Incident } from "../gen/cause";
 import type { Node } from "../gen/graph";
@@ -7,6 +7,9 @@ import { nodeSummary, podHealth, podText } from "../lib/health";
 import { hasText, toYaml } from "../lib/manifest";
 import type { ClusterState } from "../lib/state";
 import { allWorkloads, type NamespaceView, workloadHealth, workloadProblem } from "../lib/view";
+import { FeedSets } from "../lib/feedContext";
+import { driftOf, ownerOf, TOOL_NAME } from "../lib/helm";
+import { DriftView } from "./DiffView";
 import { CauseLine, DiagnosisLine } from "./IncidentCard";
 
 interface Props {
@@ -22,6 +25,7 @@ interface Props {
 
 export function DetailsPanel({ id, state, view, incident, onSelect, height }: Props) {
   const sized = height ? { height, maxHeight: "none", flex: "none" } : undefined;
+  const sets = useContext(FeedSets);
   const now = useNow();
   const n = id ? state?.nodes.get(id) : undefined;
   if (!n || !state) {
@@ -45,6 +49,7 @@ export function DetailsPanel({ id, state, view, incident, onSelect, height }: Pr
       <span key={target}>{target.split("/").pop()} (missing)</span>
     );
   };
+  const drift = driftOf(sets, n.id);
   const facts: [string, React.ReactNode][] = [];
   const wl = allWorkloads(view).find(({ w }) => w.node.id === n.id || w.pods.some((p) => p.id === n.id));
   const isApp = wl?.w.node.id === n.id;
@@ -75,8 +80,10 @@ export function DetailsPanel({ id, state, view, incident, onSelect, height }: Pr
   }
   const images = (n.spec?.containers ?? []).filter((c) => !c.init);
   if (images.length) facts.push(["Image", join(images.map((c) => <code key={c.name}>{c.image}</code>))]);
+  const owner = ownerOf(n);
+  if (owner) facts.push(["Managed by", `${TOOL_NAME[owner.tool]} · ${owner.tool === "helm" ? "release " : ""}${owner.name}${owner.chart ? ` · chart ${owner.chart}` : ""}`]);
   if (n.change) facts.push(["Last change", `${who(n.change)}, ${ago(n.change.at, now)}`]);
-  if (n.origin) facts.push(["Managed by", `${n.origin.tool}${n.origin.name ? ` (${n.origin.name})` : ""}`]);
+  if (!owner && n.origin) facts.push(["Managed by", `${n.origin.tool}${n.origin.name ? ` (${n.origin.name})` : ""}`]);
   if (n.ns) facts.push(["Namespace", n.ns]);
   if (n.labels && Object.keys(n.labels).length) {
     facts.push(["Labels", Object.entries(n.labels).map(([k, v]) => `${k}=${v}`).join(", ")]);
@@ -89,6 +96,7 @@ export function DetailsPanel({ id, state, view, incident, onSelect, height }: Pr
       <div className="name">{n.name}</div>
       <div className={`state ${health}`}>{stateText}</div>
       {incident && !incident.healthy && <Explanation incident={incident} pod={n.kind === "Pod" ? n : null} />}
+      {drift && <DriftView entry={drift} label />}
       <dl className="facts">
         {facts.map(([k, v]) => (
           <div key={k} className="fact">
