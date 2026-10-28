@@ -40,6 +40,19 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
+          cache: false # the build cache below holds every platform's
+      # Six platforms rebuild the Kubernetes libraries each time without it.
+      # Saved every run, restored from the newest: compiled packages are
+      # keyed by their inputs, so a stale entry is never used wrongly.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: snapshot-${{ hashFiles('go.sum') }}-${{ github.sha }}
+          restore-keys: |
+            snapshot-${{ hashFiles('go.sum') }}-
+            snapshot-
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: web/.nvmrc
