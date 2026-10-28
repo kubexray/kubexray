@@ -68,7 +68,9 @@ Errors and latency break against each app's baseline (section 4). The numbers ar
 
 A signal incident goes through the cause engine (ADR-0006) like a pod incident. When requests fail or slow down, changes to what routes them also count: the Services that select the app's pods, the Ingresses that route to those Services, and NetworkPolicies that select the pods (by `matchLabels`). A routing change made shortly before errors began is the likely cause, and the card shows its diff, for example `spec.ports[0].targetPort 80 → 9998`. An HPA that targets the app counts for any signal. That needs values on, since what it targets is a value. the changes to the app and what it uses in the 30 minutes before, with evidence. "Errors started 40 seconds after the new pods became ready" is the signal's version of "only pods started after the change fail". Every incident says what detected it (source and numbers), and its card shows the signal's chart with the changes marked. An app whose pods are failing and whose errors are up is one incident with two signals.
 
-Firing Alertmanager alerts (ADR-0011) also become incidents on the map, tagged as the user's own alert.
+Firing Alertmanager alerts (ADR-0011) also become incidents, tagged *Your alert · Alertmanager*: "reports has a firing alert · ReportsQueueBacklog (warning) is firing". In serve mode kubexray receives them even without Slack or a webhook. Each firing alert about an app kubexray knows is a node of kind Alert under the app, so it's recorded and replayed. Only its name and severity are kept, because an alert's other labels and annotations are written by people and can say anything. A resolved notification removes it.
+
+A **Sources** page lists where incidents come from: Kubernetes, metrics-server, Prometheus and each exporter, and Alertmanager with its last notification. It also shows the sensitivity, and says how to add what's missing.
 
 ### 6. Recorded with everything else
 

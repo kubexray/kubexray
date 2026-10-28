@@ -233,6 +233,13 @@ export interface Replicas {
   updated: number /* int32 */;
 }
 /**
+ * KindAlert is the kind of a firing Alertmanager alert about an app
+ * (ADR-0016). Its Name is the alert's name, its Parent the app, its
+ * Status.Since when it started firing and its "severity" label the alert's.
+ * Nothing else about the alert is kept: its text is written by people.
+ */
+export const KindAlert = "Alert";
+/**
  * KindTraffic is the kind of the node that holds an app's traffic.
  */
 export const KindTraffic = "Traffic";

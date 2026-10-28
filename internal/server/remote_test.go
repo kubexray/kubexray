@@ -388,3 +388,63 @@ func TestServeModeStreamEndsWithTheSignIn(t *testing.T) {
 		}
 	}
 }
+
+func TestAlertsBecomeIncidents(t *testing.T) {
+	t.Parallel()
+	g := graph.New()
+	brokenApp(g)
+	hub := NewHub(MaxClients, 4)
+	rec := recorder.New(recorder.DefaultOptions)
+	_, _, snap := g.FlushAndSnapshot()
+	f := &fixture{t: t, hub: hub, g: g, rec: rec}
+	f.emit(snap, true)
+	srv, err := New(hub, rec, web.Assets(), slog.New(slog.DiscardHandler), Info{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	type write struct {
+		n      graph.Node
+		remove bool
+	}
+	writes := make(chan write, 4)
+	// No Slack: the receiver is on for incidents alone.
+	srv.SetSignals(func(n graph.Node, remove bool) { writes <- write{n, remove} }, func() Sources { return Sources{Sensitivity: "normal"} })
+	ln, err := srv.ListenRemote(t.Context(), Remote{Addr: "127.0.0.1:0", Token: testToken})
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() { _ = srv.Serve(t.Context(), ln) }()
+
+	call := func(method, path, body string) (int, string) {
+		req, _ := http.NewRequestWithContext(t.Context(), method, "http://"+ln.Addr().String()+path, strings.NewReader(body))
+		req.Host = "kx-kubexray.kubexray.svc"
+		req.Header.Set("Authorization", "Bearer "+testToken)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = resp.Body.Close() }()
+		b, _ := io.ReadAll(resp.Body)
+		return resp.StatusCode, string(b)
+	}
+	alert := func(status string) string {
+		return `{"version":"4","alerts":[{"status":"` + status + `","labels":{"alertname":"PaymentsQueueBacklog","severity":"warning","namespace":"shop","deployment":"api","team":"payments"},"annotations":{"summary":"backlog over 10k"},"startsAt":"2026-10-28T08:10:00Z"}]}`
+	}
+	if code, _ := call(http.MethodPost, "/api/alertmanager", alert("firing")); code != http.StatusAccepted {
+		t.Fatalf("firing = %d", code)
+	}
+	w := <-writes
+	if w.remove || w.n.ID != "Alert/shop/PaymentsQueueBacklog.deployment.api" || w.n.Parent != "Deployment/shop/api" || w.n.Labels["severity"] != "warning" || w.n.Labels["team"] != "" {
+		t.Errorf("firing wrote %+v", w)
+	}
+	if code, _ := call(http.MethodPost, "/api/alertmanager", alert("resolved")); code != http.StatusAccepted {
+		t.Fatalf("resolved = %d", code)
+	}
+	if w := <-writes; !w.remove || w.n.ID != "Alert/shop/PaymentsQueueBacklog.deployment.api" {
+		t.Errorf("resolved wrote %+v", w)
+	}
+	_, body := call(http.MethodGet, "/api/sources", "")
+	if !strings.Contains(body, `"alertmanager":true`) || !strings.Contains(body, `"lastAlert"`) || !strings.Contains(body, `"sensitivity":"normal"`) {
+		t.Errorf("sources = %s", body)
+	}
+}

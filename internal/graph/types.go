@@ -287,6 +287,17 @@ func (n Node) Equal(o Node) bool {
 		equalPtr(n.Traffic, o.Traffic, func(a, b Traffic) bool { return a.Equal(b) })
 }
 
+// KindAlert is the kind of a firing Alertmanager alert about an app
+// (ADR-0016). Its Name is the alert's name, its Parent the app, its
+// Status.Since when it started firing and its "severity" label the alert's.
+// Nothing else about the alert is kept: its text is written by people.
+const KindAlert = "Alert"
+
+// AlertID is the ID of an alert's node.
+func AlertID(app Node, alertName string) string {
+	return ID(KindAlert, app.Namespace, strings.ReplaceAll(alertName, ":", "_")+"."+strings.ToLower(app.Kind)+"."+app.Name)
+}
+
 // KindTraffic is the kind of the node that holds an app's traffic.
 const KindTraffic = "Traffic"
 

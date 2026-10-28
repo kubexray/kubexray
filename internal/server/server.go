@@ -90,6 +90,18 @@ type Server struct {
 	publicURL   string             // where people open kubexray, for links in alerts
 
 	access ValuesAccess // whose values each person sees, when on (ADR-0020)
+
+	// alertNodes writes firing alerts into the graph (ADR-0016), and
+	// sources says where signals come from; both set in serve mode.
+	alertNodes func(n graph.Node, remove bool)
+	sources    func() Sources
+	lastAlert  atomic.Pointer[time.Time]
+}
+
+// SetSignals makes firing Alertmanager alerts incidents, written into the
+// graph through alertNodes, and serves where signals come from.
+func (s *Server) SetSignals(alertNodes func(n graph.Node, remove bool), sources func() Sources) {
+	s.alertNodes, s.sources = alertNodes, sources
 }
 
 // SetValuesAccess limits each signed-in person to the values Kubernetes
@@ -330,9 +342,10 @@ func (s *Server) Handler() http.Handler {
 			api.HandleFunc("GET /api/recommend", s.recommendPreview)
 			api.HandleFunc("POST /api/recommend", s.recommend)
 		}
-		if s.alerts.Enabled() {
+		if s.alerts.Enabled() || s.alertNodes != nil {
 			api.HandleFunc("POST /api/alertmanager", s.alertmanager)
 		}
+		api.HandleFunc("GET /api/sources", s.serveSources)
 	}
 	api.Handle("GET /", http.FileServerFS(s.assets))
 
@@ -726,9 +739,20 @@ func (s *Server) alertmanager(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusServiceUnavailable) // Alertmanager retries
 		return
 	}
+	now := s.now()
+	s.lastAlert.Store(&now)
 	for _, a := range n.Alerts {
 		id, byPod := a.Target()
 		inc, known := incidents[id]
+		// A pod label alone may be the scraped target's, not the alert's
+		// subject: an app that's fine gets no incident from it.
+		weak := byPod && inc.Healthy && a.Status == "firing"
+		if known && s.alertNodes != nil && a.Name() != "" && !weak {
+			s.alertNodes(alertNode(a, inc), a.Status != "firing")
+		}
+		if !s.alerts.Enabled() {
+			continue
+		}
 		switch {
 		case !known:
 			continue // not about an app, or not one kubexray knows
@@ -747,6 +771,32 @@ func (s *Server) alertmanager(w http.ResponseWriter, r *http.Request) {
 		s.alerts.Queue(alert.Message{Alert: a, Incident: inc, Link: alert.Link(s.publicURL, at, inc.App)})
 	}
 	w.WriteHeader(http.StatusAccepted)
+}
+
+// alertNode is a firing alert as the graph keeps it: its name and severity,
+// under the app it's about.
+func alertNode(a alert.Alert, inc cause.Incident) graph.Node {
+	app := graph.Node{Kind: inc.Kind, Namespace: inc.Namespace, Name: inc.Name}
+	n := graph.Node{
+		ID: graph.AlertID(app, a.Name()), Kind: graph.KindAlert, Namespace: inc.Namespace, Name: a.Name(), Parent: inc.App,
+		Status: graph.Status{Reason: "firing", Since: a.StartsAt},
+	}
+	if sev := a.Labels["severity"]; sev != "" {
+		n.Labels = map[string]string{"severity": sev}
+	}
+	return n
+}
+
+func (s *Server) serveSources(w http.ResponseWriter, _ *http.Request) {
+	var src Sources
+	if s.sources != nil {
+		src = s.sources()
+	}
+	src.Alertmanager = s.alertNodes != nil || s.alerts.Enabled()
+	if t := s.lastAlert.Load(); t != nil {
+		src.LastAlert = *t
+	}
+	writeJSON(w, src)
 }
 
 // timeParam reads an RFC 3339 query parameter, or def when it's absent

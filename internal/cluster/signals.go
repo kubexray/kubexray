@@ -105,6 +105,9 @@ func (w *Watcher) watchMemory(ctx context.Context) {
 		}
 		return
 	}
+	w.mu.Lock()
+	w.sources.MetricsServer = true
+	w.mu.Unlock()
 	go func() {
 		t := time.NewTicker(metricsEvery)
 		defer t.Stop()

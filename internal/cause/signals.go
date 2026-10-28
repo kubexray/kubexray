@@ -20,11 +20,34 @@ type Signal struct {
 
 // Signal kinds.
 const (
+	AlertSignal    = "alert"
 	ErrorsSignal   = "errors"
 	LatencySignal  = "latency"
 	RestartsSignal = "restarts"
 	MemorySignal   = "memory"
 )
+
+// alertSignal is the user's own alert about the app, firing in
+// Alertmanager: the earliest, with how many more.
+func alertSignal(alerts []graph.Node) *Signal {
+	if len(alerts) == 0 {
+		return nil
+	}
+	first := alerts[0]
+	for _, a := range alerts {
+		if a.Status.Since.Before(first.Status.Since) {
+			first = a
+		}
+	}
+	summary := first.Name + " is firing"
+	if sev := first.Labels["severity"]; sev != "" {
+		summary = fmt.Sprintf("%s (%s) is firing", first.Name, sev)
+	}
+	if len(alerts) > 1 {
+		summary += fmt.Sprintf(", and %s", plural(len(alerts)-1, "more alert"))
+	}
+	return &Signal{Kind: AlertSignal, Source: "Alertmanager", State: "has a firing alert", Summary: summary, Since: first.Status.Since}
+}
 
 // trafficHold is how long errors or latency must stay too high, unless the
 // reading says (its sensitivity): Normal (ADR-0016).

@@ -65,6 +65,18 @@ code { font-family: var(--font-data); font-size: 12px; }
 .diff { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; font: 13px var(--font-data); }
 .diff .old { text-decoration: line-through; color: var(--muted); }
 .diff .new { color: var(--crit); font-weight: 500; }
+.sources-intro { margin: 0 0 14px; color: var(--muted); font-size: 14px; }
+.sources-table { width: 100%; border-collapse: collapse; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; font-size: 14px; }
+.sources-table th, .sources-table td { text-align: left; padding: 11px 16px; border-top: 1px solid var(--border); vertical-align: top; }
+.sources-table thead th { border-top: 0; background: var(--sunken); font: 600 11.5px var(--font-body); letter-spacing: 0.05em; text-transform: uppercase; color: var(--muted); }
+.sources-table tbody th { font-weight: 600; white-space: nowrap; }
+.sources-table tr.sub th { font-weight: 500; padding-left: 30px; }
+.sources-table .note { color: var(--muted); overflow-wrap: anywhere; }
+.sources-table td.ok { color: var(--ok); font-weight: 600; white-space: nowrap; }
+.sources-table td.off { color: var(--muted); white-space: nowrap; }
+.sources-sensitivity { margin-top: 14px; display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 14px; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 12px 16px; font-size: 14px; }
+.sources-sensitivity .note { color: var(--muted); font-size: 13px; }
+@media (max-width: 720px) { .sources-table thead { display: none; } .sources-table tr { display: grid; } .sources-table th, .sources-table td { border-top: 0; padding: 4px 14px; } .sources-table tr { border-top: 1px solid var(--border); padding: 8px 0; } }
 .signal-tag { display: inline-flex; padding: 1px 9px; border-radius: 999px; font: 600 12px var(--font-body); background: var(--accent-soft); color: var(--accent); white-space: nowrap; }
 .cause-values { flex-basis: 100%; list-style: none; margin: 0; padding: 0; display: grid; gap: 3px; font-size: 13px; }
 .cause-values code { font: 12.5px var(--font-data); color: var(--text); }

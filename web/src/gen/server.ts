@@ -59,6 +59,21 @@ export interface AtResponse {
   incidents: cause.Incident[];
   groups: cause.Group[];
 }
+/**
+ * Sources is where kubexray's signals come from, for the sources page.
+ */
+export interface Sources {
+  metricsServer: boolean;
+  prometheus?: string;
+  exporters?: string[];
+  sensitivity: string;
+  /**
+   * Alertmanager says whether kubexray receives alerts, and LastAlert
+   * when the last notification came.
+   */
+  alertmanager: boolean;
+  lastAlert?: string /* RFC 3339 */;
+}
 
 //////////
 // source: recommend.go

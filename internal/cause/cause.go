@@ -244,6 +244,7 @@ type index struct {
 	podsOf   map[string][]graph.Node // app ID → its pods, sorted by name
 	appByPod map[string]string
 	services map[string][]graph.Node // namespace → Services, see servicesIn
+	alertsOf map[string][]graph.Node // app ID → its firing alerts
 }
 
 func newIndex(st *graph.State) *index {
@@ -252,12 +253,19 @@ func newIndex(st *graph.State) *index {
 		x.out[e.From] = append(x.out[e.From], e)
 		x.in[e.To] = append(x.in[e.To], e)
 	}
+	x.alertsOf = map[string][]graph.Node{}
 	for _, n := range st.Nodes {
-		if n.Kind == "Pod" {
+		switch n.Kind {
+		case "Pod":
 			app := x.appOf(n.ID)
 			x.appByPod[n.ID] = app
 			x.podsOf[app] = append(x.podsOf[app], n)
+		case graph.KindAlert:
+			x.alertsOf[n.Parent] = append(x.alertsOf[n.Parent], n)
 		}
+	}
+	for _, alerts := range x.alertsOf {
+		slices.SortFunc(alerts, func(a, b graph.Node) int { return cmp.Compare(a.Name, b.Name) })
 	}
 	for _, pods := range x.podsOf {
 		slices.SortFunc(pods, func(a, b graph.Node) int { return cmp.Compare(a.Name, b.Name) })
@@ -347,7 +355,7 @@ func (x *index) explain(app graph.Node, opts Options) Incident {
 	// reason survives anonymization; the message doesn't.
 	refused := app.Kind == "Deployment" && (app.Status.Reason == "FailedCreate" || app.Status.Message != "")
 	if (len(inc.Symptom.BadPods) == 0 && inc.Symptom.Ready >= inc.Symptom.Desired && !refused) || (app.Kind == "Job" && app.Status.Phase == "Complete") {
-		inc.Signal = cmp.Or(trafficSignal(traffic, opts.Now), signal(pods, opts.Now))
+		inc.Signal = cmp.Or(trafficSignal(traffic, opts.Now), alertSignal(x.alertsOf[app.ID]), signal(pods, opts.Now))
 		if inc.Signal == nil {
 			inc.Healthy = true
 			return inc
@@ -366,7 +374,7 @@ func (x *index) explain(app graph.Node, opts Options) Incident {
 	if refused && len(inc.Symptom.BadPods) == 0 {
 		inc.Symptom.Summary = "new pods can't be created"
 	}
-	inc.Signal = trafficSignal(traffic, opts.Now) // failing pods, and failing requests
+	inc.Signal = cmp.Or(trafficSignal(traffic, opts.Now), alertSignal(x.alertsOf[app.ID])) // failing pods, and what else says so
 	inc.Since = since(pods)
 	if inc.Since.IsZero() && refused {
 		inc.Since = app.Status.Since // when the ReplicaFailure condition appeared

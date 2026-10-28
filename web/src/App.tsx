@@ -3,14 +3,15 @@ import { FeedSets } from "./lib/feedContext";
 import { ChangesView } from "./components/ChangesView";
 import { Header, type View } from "./components/Header";
 import { IncidentsView } from "./components/IncidentsView";
+import { SourcesView } from "./components/SourcesView";
 import type { Entry } from "./components/IncidentCard";
 import { PostmortemDialog } from "./components/PostmortemDialog";
 import { ShareDialog } from "./components/ShareDialog";
 import { Timeline } from "./components/Timeline";
 import { Workspace } from "./components/Workspace";
 import type { Change, Group, Incident } from "./gen/cause";
-import type { FeedResponse, HistoryResponse } from "./gen/server";
-import { fetchAt, fetchChanges, fetchFeed, fetchHistory, fetchMe, fetchWhy, type Me, signInURL } from "./lib/api";
+import type { FeedResponse, HistoryResponse, Sources } from "./gen/server";
+import { fetchAt, fetchChanges, fetchFeed, fetchHistory, fetchMe, fetchSources, fetchWhy, type Me, signInURL } from "./lib/api";
 import { changeEvents, mergeEvents } from "./lib/events";
 import { type ClusterState, fromSnapshot } from "./lib/state";
 import { MAX_EVENTS, useStream } from "./lib/useStream";
@@ -130,6 +131,7 @@ export function App() {
   const me = useMe();
   const history = usePoll<HistoryResponse>(fetchHistory, 5000);
   const changes = usePoll<Change[]>(fetchChanges, 10_000);
+  const sources = usePoll<Sources>(fetchSources, 30_000);
   const feed = usePoll<FeedResponse>(fetchFeed, 5000);
   const [view, setView] = useState<View>("map");
   const [query, setQuery] = useState("");
@@ -194,6 +196,8 @@ export function App() {
       <ChangesView sets={sets} now={now} query={query} live canRewindTo={canRewindTo} onRewind={(ts, id) => showOnMap(id, ts)} recommend={history?.recommend} />
     ) : view === "incidents" ? (
       <IncidentsView incidents={incidents} groups={groups} sets={sets} now={at ? Date.parse(at) : now} onShow={(id) => showOnMap(id, at)} />
+    ) : view === "sources" ? (
+      <SourcesView sources={sources} now={now} />
     ) : undefined;
 
   return (
@@ -207,7 +211,7 @@ export function App() {
             view={v}
             status={stream.status}
             rewound={!!at}
-            nav={{ active: view, onChange: setView, incidents: incidents.length }}
+            nav={{ active: view, onChange: setView, incidents: incidents.length, sources: true }}
             search={{ value: query, onChange: setQuery }}
             me={me}
           />
