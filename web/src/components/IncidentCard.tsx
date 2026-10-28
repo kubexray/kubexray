@@ -26,7 +26,7 @@ export function stateText(inc: Incident): string {
   return "has failing pods";
 }
 
-const SIGNAL: Record<string, string> = { errors: "Errors", latency: "Latency", restarts: "Restarts", memory: "Memory" };
+const SIGNAL: Record<string, string> = { alert: "Your alert", errors: "Errors", latency: "Latency", restarts: "Restarts", memory: "Memory" };
 
 /** What spotted an incident whose pods look healthy: "Restarts · Kubernetes". */
 export function SignalTag({ inc }: { inc: Incident }) {

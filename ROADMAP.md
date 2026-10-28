@@ -189,7 +189,7 @@ kubexray notices what users feel, not only what crashes (ADR-0016).
 - [ ] EKS Application Load Balancers through CloudWatch, mapped with TargetGroupBindings.
 - [x] Baselines, breaks and sensitivity; signal incidents through the cause engine.
 - [ ] Charts of an app's errors and latency with changes marked.
-- [ ] Alertmanager alerts as incidents on the map; a sources page.
+- [x] Alertmanager alerts as incidents; a sources page.
 - [ ] The demo cluster gets Traefik and Prometheus; the public demo shows a "failing requests" incident.
 
 **Done when:** a deploy that makes checkout fail requests, with every pod green, is an incident naming the deploy.

@@ -41,3 +41,15 @@ type AtResponse struct {
 	Incidents []cause.Incident `json:"incidents"`
 	Groups    []cause.Group    `json:"groups"`
 }
+
+// Sources is where kubexray's signals come from, for the sources page.
+type Sources struct {
+	MetricsServer bool     `json:"metricsServer"`
+	Prometheus    string   `json:"prometheus,omitempty"`
+	Exporters     []string `json:"exporters,omitempty"`
+	Sensitivity   string   `json:"sensitivity"`
+	// Alertmanager says whether kubexray receives alerts, and LastAlert
+	// when the last notification came.
+	Alertmanager bool      `json:"alertmanager"`
+	LastAlert    time.Time `json:"lastAlert,omitzero"`
+}

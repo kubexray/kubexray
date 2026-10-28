@@ -14,7 +14,7 @@ const STATUS: Record<StreamStatus | "replay", string> = {
 };
 
 /** The three views: the map, the change feed, and incidents. */
-export type View = "map" | "changes" | "incidents";
+export type View = "map" | "changes" | "incidents" | "sources";
 
 interface Props {
   view: NamespaceView[];
@@ -22,7 +22,8 @@ interface Props {
   rewound?: boolean;
   /** What's being shown, e.g. which cluster a replay is from. */
   label?: string;
-  nav?: { active: View; onChange: (v: View) => void; incidents: number };
+  /** sources: show the Sources view (live only). */
+  nav?: { active: View; onChange: (v: View) => void; incidents: number; sources?: boolean };
   search?: { value: string; onChange: (q: string) => void };
   /** Who is signed in, with sign-in (ADR-0013). */
   me?: Me | null;
@@ -49,7 +50,7 @@ export function Header({ view, status, rewound = false, label, nav, search, me }
       </div>
       {nav && (
         <nav className="views" aria-label="Views">
-          {VIEWS.map((v) => (
+          {[...VIEWS, ...(nav.sources ? [{ id: "sources" as View, label: "Sources" }] : [])].map((v) => (
             <button key={v.id} type="button" aria-current={nav.active === v.id ? "page" : undefined} className={nav.active === v.id ? "on" : ""} onClick={() => nav.onChange(v.id)}>
               {v.label}
               {v.id === "incidents" && nav.incidents > 0 && <span className="views-count">{nav.incidents}</span>}

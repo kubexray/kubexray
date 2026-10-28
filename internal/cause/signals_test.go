@@ -135,3 +135,19 @@ func TestFailingRequestsAgainstNormal(t *testing.T) {
 		t.Errorf("incidents = %+v", incs)
 	}
 }
+
+func TestFiringAlert(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 10, 28, 12, 0, 0, 0, time.UTC)
+	st := signalCluster(graph.Node{})
+	app := st.Nodes["Deployment/shop/reports"]
+	a := graph.Node{
+		ID: graph.AlertID(app, "ReportsLagging"), Kind: graph.KindAlert, Namespace: "shop", Name: "ReportsLagging", Parent: app.ID,
+		Labels: map[string]string{"severity": "warning"}, Status: graph.Status{Reason: "firing", Since: now.Add(-5 * time.Minute)},
+	}
+	st.Nodes[a.ID] = a
+	incs := Analyze(st, DefaultOptions(now))
+	if len(incs) != 1 || incs[0].State() != "has a firing alert" || incs[0].Signal.Source != "Alertmanager" || incs[0].Symptom.Summary != "ReportsLagging (warning) is firing" {
+		t.Fatalf("incidents = %+v", incs)
+	}
+}

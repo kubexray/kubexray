@@ -212,6 +212,10 @@ export interface Signal {
 /**
  * Signal kinds.
  */
+export const AlertSignal = "alert";
+/**
+ * Signal kinds.
+ */
 export const ErrorsSignal = "errors";
 /**
  * Signal kinds.

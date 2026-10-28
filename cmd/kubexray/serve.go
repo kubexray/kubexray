@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	authorizationv1 "k8s.io/api/authorization/v1"
@@ -19,7 +20,9 @@ import (
 
 	"github.com/kubexray/kubexray/internal/alert"
 	"github.com/kubexray/kubexray/internal/auth"
+	"github.com/kubexray/kubexray/internal/cluster"
 	"github.com/kubexray/kubexray/internal/feed"
+	"github.com/kubexray/kubexray/internal/graph"
 	"github.com/kubexray/kubexray/internal/recorder"
 	"github.com/kubexray/kubexray/internal/server"
 	"github.com/kubexray/kubexray/internal/version"
@@ -181,6 +184,28 @@ func serve(ctx context.Context, args []string, stderr io.Writer) error {
 		srv.SetAlerts(notifier, *publicURL)
 		go notifier.Run(ctx)
 	}
+	// Firing alerts become incidents (ADR-0016) once the graph exists.
+	var (
+		graphOnce   atomic.Pointer[graph.Graph]
+		watcherOnce atomic.Pointer[cluster.Watcher]
+	)
+	srv.SetSignals(func(n graph.Node, remove bool) {
+		g := graphOnce.Load()
+		switch {
+		case g == nil:
+		case remove:
+			g.RemoveNode(n.ID)
+		default:
+			g.UpsertNode(n)
+		}
+	}, func() server.Sources {
+		src := server.Sources{Sensitivity: conn.sensitivity}
+		if w := watcherOnce.Load(); w != nil {
+			s := w.Sources()
+			src.MetricsServer, src.Prometheus, src.Exporters = s.MetricsServer, s.Prometheus, s.Exporters
+		}
+		return src
+	})
 	ln, err := srv.ListenRemote(ctx, remote)
 	if err != nil {
 		return fmt.Errorf("listening: %w", err)
@@ -194,6 +219,8 @@ func serve(ctx context.Context, args []string, stderr io.Writer) error {
 		}
 		return err
 	}
+	graphOnce.Store(g)
+	watcherOnce.Store(conn.watcher)
 	return recordAndServe(ctx, g, rec, hub, srv, ln, log, func() {
 		from, _, _ := rec.Bounds()
 		log.Info("kubexray is serving", "addr", ln.Addr().String(), "cluster", name, "history_from", from, "secrets", !conn.noSecrets)

@@ -1,7 +1,7 @@
 // The server's read-only API (ADR-0007). Requests carry the session cookie
 // automatically; they only work from the page kubexray serves.
 import type { Change, Incident } from "../gen/cause";
-import type { AtResponse, FeedResponse, HistoryResponse, RecommendPreview } from "../gen/server";
+import type { AtResponse, FeedResponse, HistoryResponse, RecommendPreview, Sources } from "../gen/server";
 
 export class SignedOutError extends Error {
   constructor() {
@@ -27,6 +27,9 @@ export const fetchWhy = (id: string, signal?: AbortSignal) => get<Incident>(`/ap
 export const fetchChanges = (signal?: AbortSignal) => get<Change[]>("/api/changes", signal);
 
 export const fetchFeed = (signal?: AbortSignal) => get<FeedResponse>("/api/feed", signal);
+
+/** Where signals come from (ADR-0016). */
+export const fetchSources = (signal?: AbortSignal) => get<Sources>("/api/sources", signal);
 
 /** Who is signed in (ADR-0013). Empty without sign-in: token or proxy mode. */
 export interface Me {

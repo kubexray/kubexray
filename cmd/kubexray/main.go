@@ -18,6 +18,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -118,6 +119,7 @@ type connection struct {
 	// history walks what was recorded before this start, to seed traffic
 	// baselines; nil when there's none.
 	history func(fn func(raw []byte) error) error
+	watcher *cluster.Watcher // set by sync
 
 	// Set by resolve.
 	cfg      *rest.Config
@@ -219,6 +221,7 @@ func (c *connection) sync(ctx context.Context, log *slog.Logger, stderr io.Write
 	if err := w.Start(ctx); err != nil {
 		return nil, "", err
 	}
+	c.watcher = w
 	return g, c.ns, nil
 }
 
@@ -422,6 +425,15 @@ func ui(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
+	var watcherOnce atomic.Pointer[cluster.Watcher]
+	srv.SetSignals(nil, func() server.Sources { // no Alertmanager receiver on a laptop
+		src := server.Sources{Sensitivity: conn.sensitivity}
+		if w := watcherOnce.Load(); w != nil {
+			s := w.Sources()
+			src.MetricsServer, src.Prometheus, src.Exporters = s.MetricsServer, s.Prometheus, s.Exporters
+		}
+		return src
+	})
 	svc, err := recOpts.service(&conn, log)
 	if err != nil {
 		return err
@@ -442,6 +454,7 @@ func ui(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		}
 		return err
 	}
+	watcherOnce.Store(conn.watcher)
 
 	return recordAndServe(ctx, g, rec, hub, srv, ln, log, func() {
 		_, _ = fmt.Fprintf(stdout, "kubexray is running at %s   (Ctrl-C to stop)\n", srv.URL())

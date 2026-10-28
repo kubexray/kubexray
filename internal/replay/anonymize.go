@@ -2,6 +2,7 @@ package replay
 
 import (
 	"fmt"
+	"maps"
 	"strings"
 
 	"github.com/kubexray/kubexray/internal/graph"
@@ -150,6 +151,12 @@ func (a *anonymizer) node(n *graph.Node) {
 		// Named after its app, so it still lines up with it.
 		kind, ns, name := graph.ParseID(n.Parent)
 		n.ID, n.Name = graph.TrafficID(graph.Node{Kind: kind, Namespace: ns, Name: name}), name
+	}
+	if n.Kind == graph.KindAlert && n.Parent != "" {
+		kind, ns, name := graph.ParseID(n.Parent)
+		n.ID = graph.AlertID(graph.Node{Kind: kind, Namespace: ns, Name: name}, n.Name)
+		n.Labels = maps.Clone(n.Labels) // severity says nothing about the cluster
+		return
 	}
 	n.Labels = a.labels(n.Labels)
 	n.Selector = a.labels(n.Selector) // the same replacements, so it still matches

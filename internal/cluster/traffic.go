@@ -143,7 +143,7 @@ func (w *Watcher) noteSources(where string, adapters []prom.Adapter) {
 	if where == w.sources.Prometheus && slices.Equal(names, w.sources.Exporters) {
 		return
 	}
-	w.sources = Sources{Prometheus: where, Exporters: names}
+	w.sources.Prometheus, w.sources.Exporters = where, names
 	if where == "" {
 		w.log.Info("no Prometheus found: request signals are off")
 	} else {
@@ -153,15 +153,16 @@ func (w *Watcher) noteSources(where string, adapters []prom.Adapter) {
 
 // Sources says where signals come from, for the sources page.
 type Sources struct {
-	Prometheus string   `json:"prometheus,omitempty"`
-	Exporters  []string `json:"exporters,omitempty"`
+	MetricsServer bool     `json:"metricsServer"`
+	Prometheus    string   `json:"prometheus,omitempty"`
+	Exporters     []string `json:"exporters,omitempty"`
 }
 
 // Sources reports what the watcher reads signals from.
 func (w *Watcher) Sources() Sources {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	return Sources{Prometheus: w.sources.Prometheus, Exporters: slices.Clone(w.sources.Exporters)}
+	return Sources{MetricsServer: w.sources.MetricsServer, Prometheus: w.sources.Prometheus, Exporters: slices.Clone(w.sources.Exporters)}
 }
 
 // readTraffic collects every adapter's numbers and files them under apps.
