@@ -1,4 +1,4 @@
-import { memo, useLayoutEffect, useRef, useState } from "react";
+import { memo, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { Node } from "../gen/graph";
 import { podHealth, podText } from "../lib/health";
 import { type NamespaceView, type Workload, wireTarget, workloadHealth, workloadProblem } from "../lib/view";
@@ -24,15 +24,154 @@ interface Props {
   onHover: (id: string | null) => void;
 }
 
+/** The open-state key of the group holding Kubernetes' own namespaces. */
+const SYSTEM = "_system";
+const nsId = (name: string) => `ns-${name}`;
+
 export const MapView = memo(function MapView(props: Props) {
+  const apps = props.view.filter((ns) => !ns.system);
+  const system = props.view.filter((ns) => ns.system);
+  // A namespace from the bar: opened, and scrolled to.
+  const jump = (name: string) => {
+    if (system.some((ns) => ns.name === name)) props.onToggle(SYSTEM, true);
+    props.onToggle(name, true);
+    requestAnimationFrame(() => document.getElementById(nsId(name))?.scrollIntoView({ block: "start", behavior: "smooth" }));
+  };
+  const current = props.highlight.selected?.split("/")[1]; // "Kind/namespace/name"
   return (
     <div className="map" aria-label="Cluster map">
-      {props.view.map((ns) => (
+      {props.view.length > 1 && <NamespaceBar apps={apps} system={system} current={current} onJump={jump} />}
+      {apps.map((ns) => (
         <Namespace key={ns.name} ns={ns} {...props} />
       ))}
+      {system.length > 0 && <SystemGroup system={system} {...props} />}
     </div>
   );
 });
+
+const chipCount = (ns: NamespaceView) =>
+  ns.problems ? `${ns.problems} failing` : ns.workloadCount ? String(ns.workloadCount) : ns.serviceCount ? `${ns.serviceCount} svc` : "empty";
+
+/** Every namespace at a glance, always in view: a click opens one and
+ * scrolls to it. Kubernetes' own namespaces sit in a menu. */
+function NamespaceBar({ apps, system, current, onJump }: { apps: NamespaceView[]; system: NamespaceView[]; current?: string; onJump: (ns: string) => void }) {
+  const [menu, setMenu] = useState(false);
+  const box = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!menu) return;
+    const away = (e: PointerEvent) => !box.current?.contains(e.target as globalThis.Node) && setMenu(false);
+    const esc = (e: KeyboardEvent) => e.key === "Escape" && setMenu(false);
+    addEventListener("pointerdown", away);
+    addEventListener("keydown", esc);
+    return () => {
+      removeEventListener("pointerdown", away);
+      removeEventListener("keydown", esc);
+    };
+  }, [menu]);
+  const sysProblems = system.reduce((n, ns) => n + ns.problems, 0);
+  return (
+    <nav className="ns-bar" aria-label="Namespaces">
+      <div className="ns-bar-list">
+        {apps.map((ns) => (
+          <button
+            key={ns.name}
+            type="button"
+            className={`ns-chip${ns.problems ? " bad" : ""}${current === ns.name ? " on" : ""}`}
+            aria-current={current === ns.name || undefined}
+            onClick={() => onJump(ns.name)}
+          >
+            <i aria-hidden="true" />
+            {ns.name} <em>{chipCount(ns)}</em>
+          </button>
+        ))}
+      </div>
+      {system.length > 0 && (
+        <>
+          <span className="ns-sep" aria-hidden="true" />
+          <div className="ns-sys" ref={box}>
+            <button
+              type="button"
+              className={`ns-chip sys${sysProblems ? " bad" : ""}${menu ? " open" : ""}${system.some((ns) => ns.name === current) ? " on" : ""}`}
+              aria-haspopup="menu"
+              aria-expanded={menu}
+              onClick={() => setMenu(!menu)}
+            >
+              System <em>{sysProblems ? `${sysProblems} failing` : system.length}</em>
+              <span aria-hidden="true">{menu ? "▴" : "▾"}</span>
+            </button>
+            {menu && (
+              <div className="ns-menu" role="menu">
+                {system.map((ns) => (
+                  <button
+                    key={ns.name}
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      setMenu(false);
+                      onJump(ns.name);
+                    }}
+                  >
+                    <i className={ns.problems ? "bad" : undefined} aria-hidden="true" />
+                    {ns.name}
+                    <em>{ns.problems ? `${ns.problems} failing` : ns.workloadCount ? `${ns.workloadCount} app${ns.workloadCount === 1 ? "" : "s"}` : "empty"}</em>
+                  </button>
+                ))}
+                <p>Kubernetes&apos; own namespaces.</p>
+              </div>
+            )}
+          </div>
+        </>
+      )}
+    </nav>
+  );
+}
+
+/** Kubernetes' own namespaces, folded into one group: open when one of
+ * them has a problem. */
+function SystemGroup({ system, ...props }: Props & { system: NamespaceView[] }) {
+  const problems = system.reduce((n, ns) => n + ns.problems, 0);
+  const apps = system.reduce((n, ns) => n + ns.workloadCount, 0);
+  const isOpen = props.open.get(SYSTEM) ?? system.some((ns) => !ns.allHealthy);
+  return (
+    <details
+      className="ns system-group"
+      open={isOpen}
+      onToggle={(e) => {
+        if (e.currentTarget.open !== isOpen) props.onToggle(SYSTEM, e.currentTarget.open);
+      }}
+    >
+      <summary>
+        <span className="ns-name">System</span>
+        <span className={`ns-meta ${problems ? "bad" : ""}`}>
+          {system.length} namespaces · {apps} apps · {problems ? `${problems} need${problems === 1 ? "s" : ""} attention` : "all healthy"}
+        </span>
+      </summary>
+      {isOpen && (
+        <div className="ns-group">
+          {system.map((ns) => (
+            <Namespace key={ns.name} ns={ns} {...props} />
+          ))}
+        </div>
+      )}
+    </details>
+  );
+}
+
+/** A closed namespace's pods, as dots: what's running at a glance. */
+function PodDots({ ns }: { ns: NamespaceView }) {
+  const pods = ns.rows.flatMap((r) => r.workload?.pods ?? []);
+  if (!pods.length) return null;
+  const shown = pods.slice(0, 40);
+  const failing = pods.filter((p) => podHealth(p) === "crit").length;
+  return (
+    <span className="ns-pods" role="img" aria-label={`${pods.length} pod${pods.length === 1 ? "" : "s"}${failing ? `, ${failing} failing` : ""}`}>
+      {shown.map((p) => (
+        <i key={p.id} className={podHealth(p)} />
+      ))}
+      {pods.length > shown.length && <em>+{pods.length - shown.length}</em>}
+    </span>
+  );
+}
 
 function Namespace({ ns, open, highlight, causeOf, onToggle, onSelect, onHover }: Props & { ns: NamespaceView }) {
   const isOpen = open.get(ns.name) ?? (!ns.system || !ns.allHealthy);
@@ -46,6 +185,7 @@ function Namespace({ ns, open, highlight, causeOf, onToggle, onSelect, onHover }
   );
   return (
     <details
+      id={nsId(ns.name)}
       className="ns"
       open={isOpen}
       onToggle={(e) => {
@@ -56,6 +196,7 @@ function Namespace({ ns, open, highlight, causeOf, onToggle, onSelect, onHover }
       <summary>
         <span className="ns-name">{ns.name}</span>
         <span className={`ns-meta ${ns.problems ? "bad" : ""}`}>{meta}</span>
+        {!isOpen && <PodDots ns={ns} />}
       </summary>
       {isOpen && (
         <div className="lanes">

@@ -202,3 +202,16 @@ test("what happened: resized, filtered, and a way back to any moment", async ({ 
   await expect(page.locator(".tl-time")).not.toHaveText(shown);
   await shot(page, "what-happened");
 });
+
+test("the namespace bar jumps to any namespace, Kubernetes' own in a menu", async ({ page }) => {
+  await openDemo(page);
+  const bar = page.getByRole("navigation", { name: "Namespaces" });
+  await expect(bar.getByRole("button", { name: /^shop \d/ })).toBeVisible();
+  await bar.getByRole("button", { name: /^System/ }).click();
+  const item = page.getByRole("menuitem").first();
+  const name = ((await item.innerText()).split("\n")[0] ?? "").trim();
+  await item.click();
+  await expect(page.getByRole("menu")).toHaveCount(0);
+  await expect(page.locator(`details#ns-${name}`)).toHaveAttribute("open", "");
+  await expect(page.locator(`details#ns-${name} > summary`)).toBeInViewport();
+});
