@@ -128,5 +128,7 @@ export interface Set {
   verdict: Verdict;
   note?: string; // e.g. "settled in 48s", "checkout is degraded 1m later"
   incident?: string; // the app it broke
+  broke?: string /* RFC 3339 */; // when the incident it caused began
   ended?: string /* RFC 3339 */; // when the incident it caused ended
+  fixes?: string[]; // the apps whose incidents it ended
 }

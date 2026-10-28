@@ -78,7 +78,7 @@ func assess(s *Set, st *graph.State, incidents map[string]cause.Incident, now ti
 			}
 		}
 		if over && now.Sub(s.At) <= SettleWindow {
-			s.Verdict = Fixed
+			s.Verdict, s.Fixes = Fixed, slices.Sorted(maps.Keys(s.during))
 			s.Note = fmt.Sprintf("%s healthy %s later", names(slices.Sorted(maps.Keys(s.during))), short(now.Sub(s.Last)))
 			return
 		}
@@ -135,6 +135,9 @@ func broke(s *Set, incidents map[string]cause.Incident) bool {
 		for _, e := range s.Entries {
 			if top.Object == e.Object && top.At.Sub(e.At).Abs() <= Window {
 				s.Verdict, s.Incident = Broke, app
+				if s.Broke.IsZero() || inc.Since.Before(s.Broke) {
+					s.Broke = inc.Since
+				}
 				later := ""
 				if !inc.Since.IsZero() && inc.Since.After(s.At) {
 					later = " " + short(inc.Since.Sub(s.At)) + " later"

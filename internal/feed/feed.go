@@ -72,7 +72,9 @@ type Set struct {
 	Verdict   Verdict       `json:"verdict"`
 	Note      string        `json:"note,omitempty"`     // e.g. "settled in 48s", "checkout is degraded 1m later"
 	Incident  string        `json:"incident,omitempty"` // the app it broke
+	Broke     time.Time     `json:"broke,omitzero"`     // when the incident it caused began
 	Ended     time.Time     `json:"ended,omitzero"`     // when the incident it caused ended
+	Fixes     []string      `json:"fixes,omitempty"`    // the apps whose incidents it ended
 
 	during    map[string]bool // apps that had an incident when it was made
 	healthAt  time.Time       // when it was first seen settled
