@@ -13,16 +13,29 @@ export function down(inc: Incident): boolean {
 }
 
 /** Mirrors cause.Incident.State: scaled to zero behind an Ingress, down,
- * degraded, refused new pods, or failing pods during an otherwise healthy
- * rollout. */
+ * degraded, refused new pods, failing pods during an otherwise healthy
+ * rollout, or a signal such as restarts (ADR-0016). */
 export function stateText(inc: Incident): string {
   const bad = inc.symptom.badPods?.length ?? 0;
   if (inc.healthy) return "is healthy";
+  if (inc.signal && bad === 0) return inc.signal.state;
   if (inc.symptom.desired === 0 && inc.symptom.ready === 0 && bad === 0) return "is scaled to zero";
   if (down(inc)) return "is down";
   if (inc.symptom.ready < inc.symptom.desired) return "is degraded";
   if (bad === 0) return "can't create new pods";
   return "has failing pods";
+}
+
+const SIGNAL: Record<string, string> = { restarts: "Restarts", memory: "Memory" };
+
+/** What spotted an incident whose pods look healthy: "Restarts · Kubernetes". */
+export function SignalTag({ inc }: { inc: Incident }) {
+  if (!inc.signal) return null;
+  return (
+    <span className="signal-tag">
+      {SIGNAL[inc.signal.kind] ?? inc.signal.kind} · {inc.signal.source}
+    </span>
+  );
 }
 
 /** Most severe first: apps that are fully down, then the oldest. */
@@ -173,6 +186,7 @@ export function IncidentCard({ list, at, canRewindTo, onShow, onRewind, actions 
             {first.name} {stateText(first)}
           </h2>
         )}
+        {!top.group && <SignalTag inc={first} />}
         <span className="since">
           {top.group ? "" : `in ${first.namespace} · `}
           {since && <>for {duration(since, now)} · since {clock(since)}</>}

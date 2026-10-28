@@ -236,7 +236,19 @@ type Status struct {
 	Message   string `json:"message,omitempty"`
 	Exit      int32  `json:"exit,omitempty"`      // exit code behind the reason (pods)
 	Container string `json:"container,omitempty"` // the container the reason comes from (pods)
+	// Signals (ADR-0016), pods only: when the latest restarts happened (at
+	// most MaxRestartTimes), memory use as a percentage of the limit in steps
+	// of 5, and since when it has been at MemoryHighPct or more.
+	Restarted  []time.Time `json:"restarted,omitempty"`
+	MemoryPct  int32       `json:"memoryPct,omitempty"`
+	MemoryHigh time.Time   `json:"memoryHigh,omitzero"`
 }
+
+// MaxRestartTimes is how many restart times a pod keeps.
+const MaxRestartTimes = 10
+
+// MemoryHighPct is where memory use counts as close to the limit.
+const MemoryHighPct = 90
 
 // Replicas summarises a workload's scale.
 type Replicas struct {
@@ -320,7 +332,8 @@ func (s Status) Equal(o Status) bool {
 		return false
 	}
 	return s.Phase == o.Phase && s.Ready == o.Ready && s.Reason == o.Reason && s.Restarts == o.Restarts && s.Since.Equal(o.Since) &&
-		s.Message == o.Message && s.Exit == o.Exit && s.Container == o.Container
+		s.Message == o.Message && s.Exit == o.Exit && s.Container == o.Container &&
+		slices.EqualFunc(s.Restarted, o.Restarted, time.Time.Equal) && s.MemoryPct == o.MemoryPct && s.MemoryHigh.Equal(o.MemoryHigh)
 }
 
 // Edge is a directed relationship between two nodes.

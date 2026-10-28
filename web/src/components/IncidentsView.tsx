@@ -2,7 +2,7 @@ import type { Group, Incident } from "../gen/cause";
 import type { Set as ChangeSet } from "../gen/feed";
 import { author, verdictNote } from "../lib/feed";
 import { duration, hm } from "../lib/format";
-import { CauseLine, DiagnosisLine, entries, stateText } from "./IncidentCard";
+import { CauseLine, DiagnosisLine, entries, SignalTag, stateText } from "./IncidentCard";
 
 interface Props {
   incidents: Incident[];
@@ -33,6 +33,7 @@ export function IncidentsView({ incidents, groups, sets, now, onShow }: Props) {
                 <div className="feed-title">
                   <span className="feed-ns">{e.group ? "cluster" : first.namespace}</span>
                   <span className="feed-name">{e.group ? `${e.group.cause.summary}: ${e.incidents.length} apps` : `${first.name} ${stateText(first)}`}</span>
+                  {!e.group && <SignalTag inc={first} />}
                 </div>
                 <div className="feed-by">
                   {e.incidents.map((i) => `${i.name}: ${i.symptom.summary}`).join(" · ")}

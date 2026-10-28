@@ -98,6 +98,10 @@ export interface Incident {
    * LastChange is the app's most recent change, for context when it's healthy.
    */
   lastChange?: graph.Change;
+  /**
+   * Signal is what spotted it when its pods look healthy (ADR-0016).
+   */
+  signal?: Signal;
 }
 /**
  * Options tune the analysis.
@@ -179,3 +183,27 @@ export interface Entry {
   group?: Group;
   incidents: Incident[];
 }
+
+//////////
+// source: signals.go
+
+/**
+ * Signal is what spotted an incident whose pods look healthy (ADR-0016):
+ * restarts, or memory close to its limit. Pod failures need none.
+ */
+export interface Signal {
+  kind: string; // restarts or memory
+  source: string; // Kubernetes or metrics-server
+  state: string; // e.g. "keeps restarting", as Incident.State says it
+  summary: string;
+  since: string /* RFC 3339 */;
+  pod?: string; // the pod it's most clearly about
+}
+/**
+ * Signal kinds.
+ */
+export const RestartsSignal = "restarts";
+/**
+ * Signal kinds.
+ */
+export const MemorySignal = "memory";
