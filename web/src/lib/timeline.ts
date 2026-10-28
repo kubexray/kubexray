@@ -1,10 +1,12 @@
 // The timeline's picture of a window of history (the redesign of the rewind
 // bar): incidents as spans that are broken until the fix and recovering
 // after it, the changes that broke and fixed them as marks, and every other
-// change as bars of activity. Live and replays share it.
+// change as bars of activity (the marks too: each is a change). Live and
+// replays share it.
 import type { Incident } from "../gen/cause";
 import type { Set as ChangeSet } from "../gen/feed";
 import { stateText } from "../components/IncidentCard";
+import { shortName } from "./feed";
 
 /** An incident: broken from start, fixed at fix, healthy again at end. No
  * end: still going at the window's edge. */
@@ -25,7 +27,7 @@ export interface Mark {
   set: ChangeSet;
 }
 
-/** How many objects changed in a slice of time, apart from the marks. */
+/** How many objects changed in a slice of time, the marks' changes included. */
 export interface Bar {
   start: number;
   count: number;
@@ -94,6 +96,17 @@ export function model(sets: ChangeSet[], current: Incident[], from: number, to: 
       special.add(fix.id);
     }
   }
+  // Fixes of incidents whose cause isn't in the feed: one that began before
+  // kubexray started recording, say. Drawn from when it began, which the
+  // fix noted.
+  for (const f of fixes) {
+    if (special.has(f.id)) continue;
+    for (const app of f.fixes ?? []) {
+      spans.push({ app, label: `${shortName(app)} was broken`, start: ms(f.broke) || ms(f.at), fix: ms(f.at), end: f.ended ? ms(f.ended) : undefined });
+    }
+    marks.push({ at: ms(f.at), kind: "fix", label: "fixed", set: f });
+    special.add(f.id);
+  }
   // Incidents going on now that no change in the feed explains.
   for (const inc of current) {
     if (inc.healthy || !inc.since) continue;
@@ -104,7 +117,6 @@ export function model(sets: ChangeSet[], current: Incident[], from: number, to: 
 
   const counts = new Map<number, number>();
   for (const s of sets) {
-    if (special.has(s.id)) continue;
     const at = ms(s.at);
     if (at < from || at > to) continue;
     const b = Math.floor((at - from) / bucket);

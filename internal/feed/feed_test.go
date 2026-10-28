@@ -238,6 +238,28 @@ func TestTheConfigMapStory(t *testing.T) {
 	}
 }
 
+// An incident whose cause wasn't recorded (it began before kubexray
+// started): the change that fixes it still says when it began and ended,
+// so the timeline can draw it.
+func TestFixOfAnIncidentFromBeforeTheRecording(t *testing.T) {
+	t.Parallel()
+	st, tr := cluster(), New(MaxSets)
+	inc := incident("Deployment/shop/checkout", at(-600), at(-300)) // from before kubexray started
+	tr.Assess(st, []cause.Incident{inc}, at(0))
+
+	co := st.Nodes["Deployment/shop/checkout"]
+	co.Change = by("kubectl-set", "kubectl", "set", at(10))
+	co.Spec = &graph.Spec{Revision: "3", Containers: []graph.Container{{Name: "checkout", Image: "busybox:1.36"}}}
+	apply(t, tr, st, at(10), co)
+	tr.Assess(st, []cause.Incident{inc}, at(15))
+	tr.Assess(st, nil, at(40)) // checkout recovered
+
+	fix := only(t, tr)
+	if fix.Verdict != Fixed || !fix.Broke.Equal(at(-300)) || !fix.Ended.Equal(at(40)) {
+		t.Errorf("the fix = %q, incident from %v to %v; want fixed, from -5m0s to 40s", fix.Verdict, fix.Broke.Sub(t0), fix.Ended.Sub(t0))
+	}
+}
+
 func TestRolloutSettlesOrSticks(t *testing.T) {
 	t.Parallel()
 	st, tr := cluster(), New(MaxSets)
@@ -383,5 +405,79 @@ func TestSeedPutsHistoryFirst(t *testing.T) {
 	sets := live.Sets(time.Time{})
 	if len(sets) != 2 || !sets[0].At.Equal(at(600)) || !sets[1].At.Equal(at(0)) {
 		t.Errorf("seeded = %+v", sets)
+	}
+}
+
+// A restarted kubexray rebuilds its feed from history: an app that
+// recovered and went quiet is healthy from then, not from the next change,
+// and the change that fixed it gets the credit, as it did live.
+func TestRebuildEndsIncidentsWhenTheyEnded(t *testing.T) {
+	t.Parallel()
+	st := cluster()
+	pod := func(ready bool, reason string, since time.Time) graph.Node {
+		p := st.Nodes["Pod/shop/checkout-1-a"]
+		p.Parent, p.Created = "Node/worker-2", at(0)
+		p.Status = graph.Status{Phase: "Running", Ready: ready, Reason: reason, Since: since}
+		return p
+	}
+	st.Nodes["Pod/shop/checkout-1-a"] = pod(true, "", at(0))
+	snap := st.Snapshot()
+	snap.TS = at(0)
+	edit := func(when float64, level string) graph.Node {
+		c := st.Nodes["ConfigMap/shop/checkout-config"]
+		c.Change = by("kubectl-patch", "kubectl", "patch", at(when))
+		c.Data = map[string]graph.Value{"LOG_LEVEL": {Text: level}}
+		return c
+	}
+	co := func(ready int32) graph.Node {
+		d := st.Nodes["Deployment/shop/checkout"]
+		d.Status = graph.Status{Ready: ready == 3, Replicas: &graph.Replicas{Desired: 3, Ready: ready, Updated: 3}}
+		return d
+	}
+	seq := snap.Seq
+	delta := func(when float64, nodes ...graph.Node) graph.Message {
+		seq++
+		m := graph.Message{V: 1, Type: graph.MessageDelta, Seq: seq, TS: at(when)}
+		for i := range nodes {
+			m.Ops = append(m.Ops, graph.Op{Op: graph.OpUpsertNode, Node: &nodes[i]})
+		}
+		return m
+	}
+	restart := snap
+	restart.TS = at(3600)
+	history := []graph.Message{
+		snap,
+		delta(60, edit(60, "verbose")), // breaks it
+		delta(70, co(2), pod(false, "CrashLoopBackOff", at(70))), // an incident from 100, after the grace
+		delta(120, edit(120, "info")),                            // fixes it
+		delta(130, co(3), pod(true, "", at(130))),
+		restart, // quiet until kubexray restarts an hour later
+	}
+	tr := New(MaxSets)
+	err := Rebuild(tr, func(fn func([]byte) error) error {
+		for _, m := range history {
+			raw, err := json.Marshal(m)
+			if err != nil {
+				return err
+			}
+			if err := fn(raw); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sets := tr.Sets(time.Time{})
+	if len(sets) != 2 {
+		t.Fatalf("%d sets, want 2: %+v", len(sets), sets)
+	}
+	fix, broke := sets[0], sets[1]
+	if broke.Verdict != Broke || broke.Ended.Before(at(130)) || broke.Ended.After(at(170)) {
+		t.Errorf("the edit that broke it: %q, ended %v in, want soon after 130s", broke.Verdict, broke.Ended.Sub(t0))
+	}
+	if fix.Verdict != Fixed {
+		t.Errorf("the edit that fixed it: %q %q, want fixed", fix.Verdict, fix.Note)
 	}
 }

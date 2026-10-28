@@ -6,6 +6,7 @@ import { FeedSets } from "../lib/feedContext";
 import { verdictNote } from "../lib/feed";
 import { keepLabels, labelWidth, type Mark, model, moments, RANGES, type Range, type Span, step, ticks, windowFor } from "../lib/timeline";
 import { useNow } from "../lib/useNow";
+import { DiffView, hasDiff } from "./DiffView";
 import { stateText } from "./IncidentCard";
 
 interface Props {
@@ -40,6 +41,8 @@ export function Timeline({ bounds, at, mode, incidents, onSeek, onFocus, playing
   const sets = useContext(FeedSets);
   const [range, setRange] = useState<Range>("hour");
   const [hover, setHover] = useState<Hover>(null);
+  // The change a click opened, by set ID: it stays until closed.
+  const [pinned, setPinned] = useState<string | null>(null);
   const plot = useRef<HTMLDivElement>(null);
   const dragging = useRef(false);
   // The plot's width, to know which labels fit.
@@ -52,6 +55,12 @@ export function Timeline({ bounds, at, mode, incidents, onSeek, onFocus, playing
     ro.observe(el);
     return () => ro.disconnect();
   }, [shown]);
+  useEffect(() => {
+    if (!pinned) return;
+    const close = (e: KeyboardEvent) => e.key === "Escape" && setPinned(null);
+    addEventListener("keydown", close);
+    return () => removeEventListener("keydown", close);
+  }, [pinned]);
 
   const live = mode === "live";
   const first = bounds ? Date.parse(bounds.from) : 0;
@@ -61,10 +70,13 @@ export function Timeline({ bounds, at, mode, incidents, onSeek, onFocus, playing
   const span = Math.max(1, to - from);
   const pct = (t: number) => Math.min(100, Math.max(0, ((t - from) / span) * 100));
 
-  const m = model(sets, incidents, from, to, value);
+  // Where an incident still going is drawn to: live, now, wherever the
+  // moment shown is (the incidents are live ones); in a replay, the moment.
+  const edge = live ? last : value;
+  const m = model(sets, incidents, from, to, edge);
   const all = moments(sets, m.spans);
   // Labels that fit: newest first, the rest a hover away.
-  const spanEnd = (s: Span) => s.end ?? (s.fix !== undefined ? value : (s.fix ?? value));
+  const spanEnd = (s: Span) => s.end ?? edge;
   const spanLabels = keepLabels(
     m.spans.map((s) => {
       const w = labelWidth(s.label.length, width);
@@ -83,6 +95,7 @@ export function Timeline({ bounds, at, mode, incidents, onSeek, onFocus, playing
   const causeLabels = markLabels("cause");
   const fixLabels = markLabels("fix");
   const peak = Math.max(1, ...m.bars.map((b) => b.count));
+  const open = m.marks.find((mk) => mk.set.id === pinned); // the live set: its verdict updates
 
   if (!bounds) {
     return (
@@ -93,9 +106,12 @@ export function Timeline({ bounds, at, mode, incidents, onSeek, onFocus, playing
   }
 
   const seek = (t: number) => onSeek(live && t >= last - 1000 ? null : iso(Math.min(last, Math.max(first, t))));
+  // A point on the plot: its moment, or now within a few pixels of the
+  // live edge, where a pixel is seconds wide.
   const fromX = (clientX: number) => {
     const r = plot.current?.getBoundingClientRect();
-    return r ? from + ((clientX - r.left) / r.width) * span : value;
+    if (!r) return value;
+    return live && r.right - clientX < 12 ? last : from + ((clientX - r.left) / r.width) * span;
   };
   const go = (dir: -1 | 1) => {
     const t = step(all, value, dir);
@@ -103,7 +119,9 @@ export function Timeline({ bounds, at, mode, incidents, onSeek, onFocus, playing
     else if (dir > 0 && live) onSeek(null);
   };
   const toIncident = (s: Span) => {
-    const t = Math.min(s.start + SHOWN_AFTER, (s.fix ?? s.end ?? last) - 1000);
+    // An incident that began before kubexray started recording: as early as
+    // there's history.
+    const t = Math.max(first, Math.min(s.start + SHOWN_AFTER, (s.fix ?? s.end ?? last) - 1000));
     if (onFocus) onFocus(s.app, iso(t));
     else seek(t);
   };
@@ -163,13 +181,15 @@ export function Timeline({ bounds, at, mode, incidents, onSeek, onFocus, playing
         className="tl-plot"
         ref={plot}
         onPointerDown={(e) => {
-          if ((e.target as HTMLElement).closest(".tl-hit")) return;
+          if ((e.target as HTMLElement).closest(".tl-hit, .tl-card")) return;
+          setPinned(null);
           dragging.current = true;
           e.currentTarget.setPointerCapture(e.pointerId);
           seek(fromX(e.clientX));
         }}
         onPointerMove={(e) => dragging.current && seek(fromX(e.clientX))}
         onPointerUp={() => (dragging.current = false)}
+        onLostPointerCapture={() => (dragging.current = false)}
         onPointerLeave={() => setHover(null)}
       >
         {first > from && (
@@ -183,9 +203,15 @@ export function Timeline({ bounds, at, mode, incidents, onSeek, onFocus, playing
           </div>
         )}
 
+        <div className="tl-bars" aria-hidden="true">
+          {m.bars.map((b) => (
+            <i key={b.start} className={b.start + m.bucket <= first ? "off" : undefined} style={{ height: b.count ? `${6 + (b.count / peak) * 34}px` : "2px" }} />
+          ))}
+        </div>
+
         {m.spans.map((s, i) => {
-          const fix = s.fix ?? s.end ?? value;
-          const end = s.end ?? (s.fix !== undefined ? value : fix);
+          const fix = s.fix ?? s.end ?? edge;
+          const end = s.end ?? edge;
           return (
             <div key={`${s.app}@${s.start}`}>
               <button
@@ -200,19 +226,20 @@ export function Timeline({ bounds, at, mode, incidents, onSeek, onFocus, playing
                 <div className={`tl-recovering${s.end === undefined && ongoing ? " ongoing" : ""}`} style={{ left: `${pct(s.fix)}%`, width: `${pct(end) - pct(s.fix)}%` }} />
               )}
               {spanLabels[i] && (
-                <span className={`tl-span-label${pct(s.start) > 80 ? " end" : ""}`} style={pct(s.start) > 80 ? { right: `${100 - pct(end)}%` } : { left: `${pct(s.start)}%` }}>
+                <button
+                  type="button"
+                  tabIndex={-1}
+                  className={`tl-hit tl-span-label${pct(s.start) > 80 ? " end" : ""}`}
+                  style={pct(s.start) > 80 ? { right: `${100 - pct(end)}%` } : { left: `${pct(s.start)}%` }}
+                  onClick={() => toIncident(s)}
+                  onPointerEnter={() => setHover({ left: pct(s.start), span: s })}
+                >
                   {s.label}
-                </span>
+                </button>
               )}
             </div>
           );
         })}
-
-        <div className="tl-bars" aria-hidden="true">
-          {m.bars.map((b) => (
-            <i key={b.start} className={b.start + m.bucket <= first ? "off" : undefined} style={{ height: b.count ? `${6 + (b.count / peak) * 34}px` : "2px" }} />
-          ))}
-        </div>
 
         {m.marks.map((mk, i) => (
           <button
@@ -220,8 +247,9 @@ export function Timeline({ bounds, at, mode, incidents, onSeek, onFocus, playing
             type="button"
             className={`tl-hit tl-mark ${mk.kind}${pct(mk.at) < 8 ? " start" : pct(mk.at) > 92 ? " end" : ""}`}
             style={{ left: `${pct(mk.at)}%` }}
-            aria-label={`${mk.kind === "cause" ? "Broke something" : "Fixed"}: ${mk.set.title}. Rewind to just before it`}
-            onClick={() => seek(mk.at - 1000)}
+            aria-label={`${mk.kind === "cause" ? "Broke something" : "Fixed"}: ${mk.set.title}. See the change`}
+            aria-expanded={pinned === mk.set.id}
+            onClick={() => setPinned((p) => (p === mk.set.id ? null : mk.set.id))}
             onPointerEnter={() => setHover({ left: pct(mk.at), mark: mk })}
           >
             {(mk.kind === "cause" ? causeLabels[i] : fixLabels[i]) && <span>{mk.label}</span>}
@@ -238,7 +266,16 @@ export function Timeline({ bounds, at, mode, incidents, onSeek, onFocus, playing
           ))}
         </div>
 
-        {hover && <HoverCard hover={hover} value={value} />}
+        {open ? (
+          <ChangeCard
+            mark={open}
+            left={pct(open.at)}
+            onRewind={() => seek(open.at - 1000)}
+            onClose={() => setPinned(null)}
+          />
+        ) : (
+          hover && <HoverCard hover={hover} value={edge} />
+        )}
       </div>
 
       <div className="track">
@@ -263,9 +300,37 @@ export function Timeline({ bounds, at, mode, incidents, onSeek, onFocus, playing
   );
 }
 
+const sideOf = (left: number) => (left > 70 ? { right: `${100 - left}%` } : { left: `${Math.max(0, left - 4)}%` });
+
+/** A change, opened from its mark: who made it, what it did, and its diff. */
+function ChangeCard({ mark, left, onRewind, onClose }: { mark: Mark; left: number; onRewind: () => void; onClose: () => void }) {
+  const s = mark.set;
+  return (
+    <section className="tl-card pinned" style={sideOf(left)} aria-label="The change">
+      <div className="tl-card-head">
+        <span className="meta">
+          {clock(s.at)}
+          {s.by && ` · ${who(s.by)}`}
+        </span>
+        <button type="button" className="tl-close" aria-label="Close" onClick={onClose}>
+          ×
+        </button>
+      </div>
+      <strong>{s.title}</strong>
+      <span className={`verdict-line ${mark.kind}`}>{verdictNote(s) || (mark.kind === "fix" ? "Fixed an incident" : "Broke something")}</span>
+      {hasDiff(s.entries) ? <DiffView entries={s.entries} /> : <span className="muted">No diff recorded for this change.</span>}
+      <div className="tl-card-actions">
+        <button type="button" onClick={onRewind}>
+          Rewind to just before
+        </button>
+      </div>
+    </section>
+  );
+}
+
 /** What a mark or an incident was, on hover. */
 function HoverCard({ hover, value }: { hover: NonNullable<Hover>; value: number }) {
-  const side = hover.left > 70 ? { right: `${100 - hover.left}%` } : { left: `${Math.max(0, hover.left - 4)}%` };
+  const side = sideOf(hover.left);
   if (hover.mark) {
     const s = hover.mark.set;
     const line = s.entries.flatMap((e) => e.diff ?? []).find((l) => l.from || l.to);
@@ -282,7 +347,7 @@ function HoverCard({ hover, value }: { hover: NonNullable<Hover>; value: number 
           </span>
         )}
         <span className={`verdict-line ${hover.mark.kind}`}>{verdictNote(s) || (hover.mark.kind === "fix" ? "Fixed an incident" : "Broke something")}</span>
-        <span className="muted">Click to rewind to just before it</span>
+        <span className="muted">Click to see the change</span>
       </div>
     );
   }

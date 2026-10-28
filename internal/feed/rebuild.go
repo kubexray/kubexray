@@ -33,6 +33,13 @@ func Rebuild(t *Tracker, walk func(fn func(raw []byte) error) error) error {
 		if err := json.Unmarshal(raw, &m); err != nil {
 			return fmt.Errorf("feed: decoding recorded history: %w", err)
 		}
+		// The cluster went quiet after the last message: judge it as it
+		// stood then, as the live hub would have, before this one changes
+		// it. Otherwise an app that recovered and stayed quiet looks broken
+		// until the next change, or the next restart.
+		if state != nil && assessed.Before(state.TS) && !m.TS.Before(state.TS.Add(assessEvery)) {
+			assess(state.TS.Add(assessEvery))
+		}
 		if m.Type == graph.MessageSnapshot {
 			assess(m.TS)
 			st, err := graph.NewState(m) // a new epoch: a new baseline
@@ -45,7 +52,13 @@ func Rebuild(t *Tracker, walk func(fn func(raw []byte) error) error) error {
 		if state == nil {
 			return nil
 		}
+		made := t.made()
 		t.Observe(state, m)
+		// New changes: note the incidents going on as they were made, which
+		// the live hub knows to the second, so a fix gets its credit.
+		if t.made() != made {
+			t.during(made, cause.Analyze(state, cause.DefaultOptions(m.TS)))
+		}
 		if err := state.Apply(m); err != nil {
 			return err
 		}
