@@ -72,55 +72,55 @@
           <header class="record-head">
             <span class="wordmark small"><img class="mark" src="/src/assets/kubexray-icon.svg" alt="" width="20" height="20" /><span>kube<span>xray</span></span></span>
             <span class="replay-badge">Replay</span>
-            <span id="record-title" class="record-meta">kind-kubexray-demo · 32 minutes recorded</span>
+            <span id="record-title" class="record-meta">kubexray-demo · 37 minutes recorded</span>
           </header>
           <ol class="tape">
             <li>
-              <a class="tape-row" href="./play/?replay=demo.kxr&amp;app=Deployment%2Fshop%2Fstorefront&amp;t=2026-10-26T20%3A43%3A51Z">
-                <time>T+06:14</time>
+              <a class="tape-row" href="./play/?replay=demo.kxr&amp;app=Deployment%2Fshop%2Fstorefront&amp;t=2026-10-28T11%3A20%3A51Z">
+                <time>T+07:37</time>
                 <span class="rail" aria-hidden="true"><i class="down"></i><b></b></span>
                 <span class="what"><strong>Helm upgrade storefront 1.0.0 → 1.1.0</strong><small>by Helm</small></span>
                 <span class="verdict healthy">Healthy</span>
               </a>
             </li>
             <li>
-              <a class="tape-row" href="./play/?replay=demo.kxr&amp;app=Deployment%2Fshop%2Fcheckout&amp;t=2026-10-26T20%3A47%3A51Z">
-                <time>T+10:14</time>
+              <a class="tape-row" href="./play/?replay=demo.kxr&amp;app=Deployment%2Fshop%2Fcheckout&amp;t=2026-10-28T11%3A24%3A51Z">
+                <time>T+11:37</time>
                 <span class="rail" aria-hidden="true"><i class="up"></i><i class="down red"></i><b class="red"></b></span>
-                <span class="what"><strong>ConfigMap checkout-config edited</strong><small>by kubectl patch</small></span>
+                <span class="what"><strong>ConfigMap checkout-config edited</strong><small>LOG_LEVEL info → verbose, by kubectl patch</small></span>
                 <span class="verdict broke">Broke something</span>
               </a>
             </li>
             <li class="incident">
-              <a class="tape-row" href="./play/?replay=demo.kxr&amp;app=Deployment%2Fshop%2Fcheckout&amp;t=2026-10-26T20%3A49%3A21Z">
-                <time>T+11:14</time>
+              <a class="tape-row" href="./play/?replay=demo.kxr&amp;app=Deployment%2Fshop%2Fcheckout&amp;t=2026-10-28T11%3A26%3A21Z">
+                <time>T+12:37</time>
                 <span class="rail" aria-hidden="true"><i class="up red"></i><i class="down"></i><b class="red ring"></b></span>
                 <span class="what">
                   <strong><span class="incident-label">Incident</span> checkout is degraded</strong>
                   <small>1 pod CrashLoopBackOff, a minute after the edit</small>
-                  <small class="cause">Likely cause: the ConfigMap edit at T+10:14</small>
+                  <small class="cause">Likely cause: the ConfigMap edit at T+11:37</small>
                 </span>
               </a>
             </li>
             <li>
-              <a class="tape-row" href="./play/?replay=demo.kxr&amp;app=Deployment%2Fshop%2Fcheckout&amp;t=2026-10-26T20%3A51%3A22Z">
-                <time>T+13:45</time>
+              <a class="tape-row" href="./play/?replay=demo.kxr&amp;app=Deployment%2Fshop%2Fcheckout&amp;t=2026-10-28T11%3A28%3A21Z">
+                <time>T+15:07</time>
                 <span class="rail" aria-hidden="true"><i class="up"></i><i class="down"></i><b></b></span>
-                <span class="what"><strong>ConfigMap checkout-config edited</strong><small>by kubectl patch</small></span>
+                <span class="what"><strong>ConfigMap checkout-config edited</strong><small>LOG_LEVEL verbose → info, by kubectl patch</small></span>
                 <span class="verdict fixed">Fixed an incident</span>
               </a>
             </li>
             <li>
-              <a class="tape-row" href="./play/?replay=demo.kxr&amp;app=Deployment%2Fshop%2Fcheckout&amp;t=2026-10-26T20%3A51%3A47Z">
-                <time>T+14:10</time>
+              <a class="tape-row" href="./play/?replay=demo.kxr&amp;app=Deployment%2Fshop%2Fcheckout&amp;t=2026-10-28T11%3A28%3A45Z">
+                <time>T+15:32</time>
                 <span class="rail" aria-hidden="true"><i class="up"></i><b class="ok"></b></span>
                 <span class="what"><strong>checkout 3/3 ready</strong><small>recovered 25 s after the fix</small></span>
               </a>
             </li>
           </ol>
           <figcaption class="record-foot">
-            <span>Five moments from a real half-hour recording of the demo cluster. Each line opens the player there.</span>
-            <a class="btn btn-primary" href="./play/?replay=demo.kxr&amp;app=Deployment%2Fshop%2Fcheckout&amp;t=2026-10-26T20%3A47%3A40Z">Play the incident</a>
+            <span>Five moments from a real recording of the demo cluster. Each line opens the player there.</span>
+            <a class="btn btn-primary" href="./play/?replay=demo.kxr&amp;app=Deployment%2Fshop%2Fcheckout&amp;t=2026-10-28T11%3A24%3A40Z">Play the incident</a>
           </figcaption>
         </figure>
       </section>
@@ -148,11 +148,11 @@
             <button type="button" role="tab" id="tab-changes" aria-controls="still-changes" aria-selected="false" tabindex="-1">Changes</button>
           </div>
           <div id="still-map" role="tabpanel" aria-labelledby="tab-map">
-            <a class="still-img" href="./play/?replay=demo.kxr&amp;app=Deployment%2Fshop%2Fcheckout&amp;t=2026-10-26T20%3A49%3A30Z" aria-label="Open this moment in the player">
+            <a class="still-img" href="./play/?replay=demo.kxr&amp;app=Deployment%2Fshop%2Fcheckout&amp;t=2026-10-28T11%3A26%3A30Z" aria-label="Open this moment in the player">
               <img class="on-light" src="/src/site/img/hero-light.webp" width="1440" height="900" alt="kubexray showing an incident: checkout is degraded, likely caused by an edit to the ConfigMap checkout-config, with the shop namespace mapped from Ingress to Service to app to config." />
               <img class="on-dark" src="/src/site/img/hero-dark.webp" width="1440" height="900" alt="" />
             </a>
-            <p class="caption"><span>T+11:54</span> The incident in the player: the incident, the likely cause, and the failing path on the map.</p>
+            <p class="caption"><span>T+13:23</span> The incident in the player: the incident, the likely cause, and the failing path on the map.</p>
           </div>
           <div id="still-changes" role="tabpanel" aria-labelledby="tab-changes" hidden>
             <a class="still-img" href="./play/?replay=demo.kxr&amp;view=changes" aria-label="The Changes page, in the player">
@@ -201,6 +201,37 @@
           </div>
         </article>
 
+        <article class="feature">
+          <div class="feature-text">
+            <p class="eyebrow">See diff</p>
+            <h2>What changed, down to the value</h2>
+            <p>Every change opens to its diff, like Argo CD: a ConfigMap key, an environment variable, a Service port, any field of any kind. Values stay inside the cluster, and anything that looks like a credential is hidden.</p>
+            <ul class="ticks">
+              <li>ConfigMaps, workloads, Services, HPAs, RBAC and custom resources</li>
+              <li>Hand edits to what Helm, Argo CD or Flux manage, with the command that puts them back</li>
+              <li>Values follow Kubernetes permissions: people see what they could read with kubectl</li>
+            </ul>
+          </div>
+          <div class="shot">
+            <img class="on-light" src="/src/site/img/diff-light.webp" width="1656" height="388" loading="lazy" alt="A change card opened to its diff: LOG_LEVEL info changed to verbose, marked Resolved: it broke checkout for 3m 55s." />
+            <img class="on-dark" src="/src/site/img/diff-dark.webp" width="1656" height="388" loading="lazy" alt="" />
+          </div>
+        </article>
+        <article class="feature flip">
+          <div class="feature-text">
+            <p class="eyebrow">Signals</p>
+            <h2>It notices what users feel, not only what crashes</h2>
+            <p>Failing requests, slow responses, restarts and memory near its limit, while every pod still looks green. kubexray finds Prometheus, Traefik, ingress-nginx, Istio and metrics-server on its own, learns what's normal for each app, and names the change behind a break.</p>
+            <ul class="ticks">
+              <li>Each app judged against its own usual range, not a fixed number</li>
+              <li>Your Alertmanager alerts become incidents too, with a likely cause</li>
+            </ul>
+          </div>
+          <div class="shot">
+            <img class="on-light" src="/src/site/img/signals-light.webp" width="1656" height="254" loading="lazy" alt="An incident: api is failing requests, read from Traefik, with the likely cause a Service edit that changed targetPort from 80 to 8080." />
+            <img class="on-dark" src="/src/site/img/signals-dark.webp" width="1656" height="254" loading="lazy" alt="" />
+          </div>
+        </article>
         <article class="feature stacked">
           <div class="feature-text">
             <p class="eyebrow">Rewind</p>
@@ -208,8 +239,8 @@
             <p>kubexray records around the clock. Drag the timeline to any moment and the whole cluster is drawn as it was. Compare two moments to see exactly what changed in between.</p>
           </div>
           <div class="shot strip">
-            <img class="on-light" src="/src/site/img/rewind-light.webp" width="1408" height="56" loading="lazy" alt="The timeline: play, a track with red marks where things went wrong, Compare, and the current moment." />
-            <img class="on-dark" src="/src/site/img/rewind-dark.webp" width="1408" height="56" loading="lazy" alt="" />
+            <img class="on-light" src="/src/site/img/rewind-light.webp" width="1408" height="54" loading="lazy" alt="The timeline: play, a track with red marks where things went wrong, Compare, and the current moment." />
+            <img class="on-dark" src="/src/site/img/rewind-dark.webp" width="1408" height="54" loading="lazy" alt="" />
           </div>
         </article>
 

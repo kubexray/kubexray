@@ -191,7 +191,7 @@ kubexray notices what users feel, not only what crashes (ADR-0016).
 - [ ] Charts of an app's errors and latency with changes marked.
 - [x] Alertmanager alerts as incidents; a sources page.
 - [x] The demo cluster gets metrics-server, Traefik with steady traffic, and Prometheus; a `requests` break scenario.
-- [ ] The public demo shows a "failing requests" incident.
+- [x] The public demo shows a "failing requests" incident, values in diffs, and drift put back as Helm applied it.
 
 **Done when:** a deploy that makes checkout fail requests, with every pod green, is an incident naming the deploy.
 

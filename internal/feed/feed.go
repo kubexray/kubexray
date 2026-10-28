@@ -440,11 +440,18 @@ func specEntries(old, n graph.Node, at time.Time, by *graph.Change) []Entry {
 			}
 		}
 	}
-	if old.Spec.Revision != "" && n.Spec.Revision != "" && old.Spec.Revision != n.Spec.Revision && !detailed {
-		var d differ
-		d.template(*old.Spec, *n.Spec)
+	// A new revision, or a template that differs even without one: kubectl
+	// replace drops the revision annotation until the controller puts the
+	// next one back.
+	newRevision := old.Spec.Revision != "" && n.Spec.Revision != "" && old.Spec.Revision != n.Spec.Revision
+	var d differ
+	d.template(*old.Spec, *n.Spec)
+	if !detailed && (newRevision || len(d.lines) > 0) {
 		what := cmp.Or(describe(append(d.lines, manifestDiff(old, n)...)), "pod template changed")
-		add("template", fmt.Sprintf("%s (revision %s → %s)", what, old.Spec.Revision, n.Spec.Revision))
+		if newRevision {
+			what = fmt.Sprintf("%s (revision %s → %s)", what, old.Spec.Revision, n.Spec.Revision)
+		}
+		add("template", what)
 	}
 	if v := versionChange(old, n); v != nil && len(out) > 0 {
 		out[0].Version = v
