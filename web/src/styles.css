@@ -265,8 +265,8 @@ aside { display: flex; flex-direction: column; gap: 12px; min-height: 0; min-wid
 .tl-mark.end span { transform: translateX(-100%); left: 14px; }
 .tl-compare { position: absolute; top: 20px; height: 70px; background: color-mix(in srgb, var(--accent) 8%, transparent); border-left: 2px dashed var(--accent); pointer-events: none; }
 .tl-compare span { position: absolute; left: 6px; top: -18px; font: 600 10.5px var(--font-body); letter-spacing: 0.04em; text-transform: uppercase; color: var(--accent); white-space: nowrap; }
-.tl-broken { position: absolute; top: 30px; height: 60px; padding: 0; border: 0; background: color-mix(in srgb, var(--crit) 24%, var(--surface)); cursor: pointer; }
-.tl-broken:hover, .tl-broken:focus-visible { background: color-mix(in srgb, var(--crit) 32%, var(--surface)); }
+.tl-broken { position: absolute; top: 30px; height: 60px; padding: 0; border: 0; background: color-mix(in srgb, var(--crit) 22%, transparent); cursor: pointer; }
+.tl-broken:hover, .tl-broken:focus-visible { background: color-mix(in srgb, var(--crit) 32%, transparent); }
 .tl-recovering { position: absolute; top: 30px; height: 60px; pointer-events: none; background: repeating-linear-gradient(135deg, color-mix(in srgb, var(--crit) 12%, var(--surface)) 0 5px, var(--surface) 5px 9px); }
 .ongoing { animation: tl-pulse 1.6s ease-in-out infinite; }
 @keyframes tl-pulse { 50% { opacity: 0.55; } }
@@ -297,6 +297,16 @@ aside { display: flex; flex-direction: column; gap: 12px; min-height: 0; min-wid
 .tl-card s { color: color-mix(in srgb, var(--surface) 65%, var(--text)); }
 .tl-card .verdict-line.cause { color: color-mix(in srgb, var(--crit) 50%, var(--surface)); font-weight: 600; }
 .tl-card .verdict-line.fix { color: color-mix(in srgb, var(--ok) 45%, var(--surface)); font-weight: 600; }
+/* A change opened from its mark: a light card that stays, with the diff. */
+.tl-card.pinned { width: 420px; max-height: 340px; overflow: auto; pointer-events: auto; cursor: auto; background: var(--surface); color: var(--text); border: 1px solid var(--border); box-shadow: 0 16px 36px -16px rgb(16 24 32 / 0.45); }
+.tl-card.pinned .meta, .tl-card.pinned .muted { color: var(--muted); }
+.tl-card.pinned .verdict-line.cause { color: var(--crit); }
+.tl-card.pinned .verdict-line.fix { color: var(--ok); }
+.tl-card-head { display: flex; align-items: center; justify-content: space-between; }
+.tl-close { border: 0; background: transparent; color: var(--muted); font-size: 18px; line-height: 1; padding: 0 2px; cursor: pointer; }
+.tl-close:hover { color: var(--text); }
+.tl-card-actions { display: flex; gap: 8px; margin-top: 4px; }
+.tl-card-actions button { padding: 6px 12px; border-radius: 8px; border: 1px solid var(--text); background: var(--text); color: var(--surface); font-size: 12.5px; font-weight: 600; cursor: pointer; }
 /* The range input: there for the keyboard and screen readers, out of sight. */
 .track { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
 .compare { border: 1px solid var(--border-strong); background: transparent; border-radius: 6px; padding: 5px 12px; cursor: pointer; font-size: 13px; white-space: nowrap; }

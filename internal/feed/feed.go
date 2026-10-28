@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kubexray/kubexray/internal/cause"
 	"github.com/kubexray/kubexray/internal/graph"
 )
 
@@ -126,6 +127,31 @@ func (t *Tracker) Observe(prev *graph.State, m graph.Message) {
 	}
 	for _, e := range entries {
 		t.add(prev, e)
+	}
+}
+
+// made counts the sets made so far.
+func (t *Tracker) made() int {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.nextID
+}
+
+// during notes, on the sets made since the count was since, which of their
+// apps had an incident when they were made.
+func (t *Tracker) during(since int, incidents []cause.Incident) {
+	sick := map[string]bool{}
+	for _, inc := range incidents {
+		sick[inc.App] = true
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	for i := len(t.sets) - 1; i >= 0 && i >= len(t.sets)-(t.nextID-since); i-- {
+		for _, a := range t.sets[i].Apps {
+			if sick[a] {
+				t.sets[i].during[a] = true
+			}
+		}
 	}
 }
 

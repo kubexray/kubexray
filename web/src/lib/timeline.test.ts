@@ -23,8 +23,8 @@ describe("timeline model", () => {
     const m = model([broke, fixed, other], [], T0, T0 + 30 * 60_000, T0 + 30 * 60_000);
     expect(m.spans).toEqual([expect.objectContaining({ label: "checkout is degraded", start: T0 + 11 * 60_000, fix: T0 + 14 * 60_000, end: T0 + 15 * 60_000 })]);
     expect(m.marks.map((k) => [k.kind, k.label])).toEqual([["cause", "LOG_LEVEL → verbose"], ["fix", "fixed"]]);
-    // The marks aren't counted again as activity.
-    expect(m.bars.reduce((n, b) => n + b.count, 0)).toBe(1);
+    // Every change is activity, the marks' too.
+    expect(m.bars.reduce((n, b) => n + b.count, 0)).toBe(3);
   });
 
   it("ends an incident the feed can't explain at the moment shown, never past it", () => {
