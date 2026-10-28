@@ -26,9 +26,16 @@ const (
 	MemorySignal   = "memory"
 )
 
-// trafficHold is how long errors or latency must stay too high: Normal
-// sensitivity (ADR-0016).
+// trafficHold is how long errors or latency must stay too high, unless the
+// reading says (its sensitivity): Normal (ADR-0016).
 const trafficHold = 2 * time.Minute
+
+func holdOf(t *graph.Traffic) time.Duration {
+	if t.Hold > 0 {
+		return time.Duration(t.Hold) * time.Second
+	}
+	return trafficHold
+}
 
 // trafficSignal reads an app's traffic, if it's breaking. It applies
 // whether or not the pods look healthy: requests failing is the incident
@@ -37,15 +44,23 @@ func trafficSignal(t *graph.Traffic, now time.Time) *Signal {
 	switch {
 	case t == nil:
 		return nil
-	case !t.ErrorsSince.IsZero() && now.Sub(t.ErrorsSince) >= trafficHold:
+	case !t.ErrorsSince.IsZero() && now.Sub(t.ErrorsSince) >= holdOf(t):
+		normal := ""
+		if r := t.ErrorsNormal; r != nil {
+			normal = fmt.Sprintf(", normal %s–%s", pct(r.Low), pct(r.High))
+		}
 		return &Signal{
 			Kind: ErrorsSignal, Source: t.Source, State: "is failing requests", Since: t.ErrorsSince,
-			Summary: fmt.Sprintf("%s of requests fail (%s a second)", pct(t.ErrorPct), rate(t.RPS)),
+			Summary: fmt.Sprintf("%s of requests fail (%s a second%s)", pct(t.ErrorPct), rate(t.RPS), normal),
 		}
-	case !t.SlowSince.IsZero() && now.Sub(t.SlowSince) >= trafficHold:
+	case !t.SlowSince.IsZero() && now.Sub(t.SlowSince) >= holdOf(t):
+		normal := ""
+		if r := t.P99Normal; r != nil {
+			normal = fmt.Sprintf(", normally %s–%s", seconds(r.Low), seconds(r.High))
+		}
 		return &Signal{
 			Kind: LatencySignal, Source: t.Source, State: "is slow", Since: t.SlowSince,
-			Summary: fmt.Sprintf("99%% of requests answer within %s (%s a second)", seconds(t.P99), rate(t.RPS)),
+			Summary: fmt.Sprintf("99%% of requests answer within %s (%s a second%s)", seconds(t.P99), rate(t.RPS), normal),
 		}
 	}
 	return nil

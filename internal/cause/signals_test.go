@@ -115,3 +115,23 @@ func TestServiceEditCausesFailingRequests(t *testing.T) {
 		t.Errorf("cause = %+v", c)
 	}
 }
+
+func TestFailingRequestsAgainstNormal(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 10, 28, 12, 0, 0, 0, time.UTC)
+	st := signalCluster(graph.Node{})
+	app := st.Nodes["Deployment/shop/reports"]
+	tr := graph.Node{
+		ID: graph.TrafficID(app), Kind: graph.KindTraffic, Namespace: "shop", Name: "reports", Parent: app.ID,
+		Traffic: &graph.Traffic{Source: "Traefik", RPS: 12, ErrorPct: 8.1, ErrorsSince: now.Add(-3 * time.Minute), Hold: 300, ErrorsNormal: &graph.Range{Low: 0.1, High: 0.6}},
+	}
+	st.Nodes[tr.ID] = tr
+	// Calm holds 5 minutes: three isn't enough.
+	if incs := Analyze(st, DefaultOptions(now)); len(incs) != 0 {
+		t.Errorf("calm, 3 minutes: %+v", incs)
+	}
+	incs := Analyze(st, DefaultOptions(now.Add(3*time.Minute)))
+	if len(incs) != 1 || incs[0].Symptom.Summary != "8.1% of requests fail (12 a second, normal 0.1%–0.6%)" {
+		t.Errorf("incidents = %+v", incs)
+	}
+}

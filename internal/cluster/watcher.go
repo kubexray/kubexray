@@ -56,11 +56,13 @@ type Watcher struct {
 	now      func() time.Time
 
 	// Traffic from Prometheus (WithPrometheus): by traffic node ID.
-	client    kubernetes.Interface
-	promURL   string
-	inCluster bool
-	traffic   map[string]graph.Traffic
-	sources   Sources
+	client      kubernetes.Interface
+	promURL     string
+	inCluster   bool
+	traffic     map[string]graph.Traffic
+	history     map[string]history // by traffic node ID, for baselines
+	sensitivity Sensitivity
+	sources     Sources
 
 	noSecrets bool // see WithoutSecrets
 	values    bool // see WithValues
@@ -102,11 +104,13 @@ func New(client kubernetes.Interface, metaClient metadata.Interface, g *graph.Gr
 		meta:  metadatainformer.NewSharedInformerFactory(metaClient, 0),
 		owned: map[string]map[string]graph.Edge{},
 
-		restarts: map[string][]time.Time{},
-		memory:   map[string]memUse{},
-		now:      time.Now,
-		client:   client,
-		traffic:  map[string]graph.Traffic{},
+		restarts:    map[string][]time.Time{},
+		memory:      map[string]memUse{},
+		now:         time.Now,
+		client:      client,
+		traffic:     map[string]graph.Traffic{},
+		history:     map[string]history{},
+		sensitivity: Normal,
 	}
 }
 

@@ -250,6 +250,24 @@ export interface Traffic {
    */
   errorsSince?: string /* RFC 3339 */;
   slowSince?: string /* RFC 3339 */;
+  /**
+   * What's normal for the app, from its own history (ADR-0016): the
+   * middle 90% of its minutes. Nil until there's an hour of history.
+   */
+  errorsNormal?: Range;
+  p99Normal?: Range;
+  /**
+   * Hold is how long a break must last to be an incident, in seconds:
+   * the sensitivity it was judged with.
+   */
+  hold?: number /* int */;
+}
+/**
+ * Range is a usual range of values.
+ */
+export interface Range {
+  low: number /* float64 */;
+  high: number /* float64 */;
 }
 /**
  * Edge is a directed relationship between two nodes.

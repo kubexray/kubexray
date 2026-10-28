@@ -68,6 +68,7 @@ spec:
             - --no-secrets
             {{- end }}
             - --values={{ .Values.diffs.values }}
+            - {{ printf "--sensitivity=%s" (.Values.signals.sensitivity | default "normal") | quote }}
             {{- with .Values.signals.prometheusURL }}
             - {{ printf "--prometheus-url=%s" . | quote }}
             {{- end }}

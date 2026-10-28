@@ -306,12 +306,27 @@ type Traffic struct {
 	// When errors and latency started being too high, while they are.
 	ErrorsSince time.Time `json:"errorsSince,omitzero"`
 	SlowSince   time.Time `json:"slowSince,omitzero"`
+	// What's normal for the app, from its own history (ADR-0016): the
+	// middle 90% of its minutes. Nil until there's an hour of history.
+	ErrorsNormal *Range `json:"errorsNormal,omitempty"`
+	P99Normal    *Range `json:"p99Normal,omitempty"`
+	// Hold is how long a break must last to be an incident, in seconds:
+	// the sensitivity it was judged with.
+	Hold int `json:"hold,omitempty"`
+}
+
+// Range is a usual range of values.
+type Range struct {
+	Low  float64 `json:"low"`
+	High float64 `json:"high"`
 }
 
 // Equal reports whether two readings are the same.
 func (t Traffic) Equal(o Traffic) bool {
 	return t.Source == o.Source && t.RPS == o.RPS && t.ErrorPct == o.ErrorPct && t.P99 == o.P99 &&
-		t.ErrorsSince.Equal(o.ErrorsSince) && t.SlowSince.Equal(o.SlowSince)
+		t.ErrorsSince.Equal(o.ErrorsSince) && t.SlowSince.Equal(o.SlowSince) && t.Hold == o.Hold &&
+		equalPtr(t.ErrorsNormal, o.ErrorsNormal, func(a, b Range) bool { return a == b }) &&
+		equalPtr(t.P99Normal, o.P99Normal, func(a, b Range) bool { return a == b })
 }
 
 // Equal reports whether two specs are identical.

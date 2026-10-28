@@ -185,6 +185,7 @@ func serve(ctx context.Context, args []string, stderr io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("listening: %w", err)
 	}
+	conn.history = rec.Walk // baselines survive a restart
 	g, _, err := conn.sync(ctx, log, stderr)
 	if err != nil {
 		_ = ln.Close()

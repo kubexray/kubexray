@@ -114,6 +114,10 @@ type connection struct {
 	values                         bool     // keep values for diffs (ADR-0017)
 	resources                      hostList // more kinds to keep a manifest history of (ADR-0018)
 	prometheus                     string   // where to read traffic (ADR-0016); found when empty
+	sensitivity                    string   // calm, normal or strict (ADR-0016)
+	// history walks what was recorded before this start, to seed traffic
+	// baselines; nil when there's none.
+	history func(fn func(raw []byte) error) error
 
 	// Set by resolve.
 	cfg      *rest.Config
@@ -127,6 +131,7 @@ func (c *connection) flags(fs *flag.FlagSet, withNamespace bool) {
 		fs.StringVar(&c.namespace, "n", "", "namespace (default: the context's namespace)")
 		fs.StringVar(&c.namespace, "namespace", "", "namespace (default: the context's namespace)")
 	}
+	fs.StringVar(&c.sensitivity, "sensitivity", "normal", `how readily errors and latency are an incident: "calm" (a big jump for 5 minutes), "normal" (2 minutes) or "strict" (1 minute)`)
 	fs.StringVar(&c.prometheus, "prometheus-url", "", "read request errors and latency from this Prometheus, e.g. http://prometheus.monitoring.svc:9090 (default: look for it in the cluster)")
 	fs.Var(&c.resources, "resource", "also keep a history of this resource, as group/version/resource, e.g. argoproj.io/v1alpha1/applications (repeatable)")
 	fs.BoolVar(&c.values, "values", true, "keep ConfigMap and environment values so diffs can show them; credential-looking ones are hidden, Secrets are never read")
@@ -195,7 +200,16 @@ func (c *connection) sync(ctx context.Context, log *slog.Logger, stderr io.Write
 	// In the cluster (no kubeconfig, a service account): reach Prometheus
 	// directly, not through the API's service proxy.
 	inCluster := c.kubeconfig == "" && os.Getenv("KUBERNETES_SERVICE_HOST") != "" && os.Getenv("KUBECONFIG") == ""
-	w := cluster.New(client, metaClient, g, log).WithManifests(dyn, resources).WithPrometheus(c.prometheus, inCluster)
+	sens, err := cluster.ParseSensitivity(c.sensitivity)
+	if err != nil {
+		return nil, "", fmt.Errorf("--sensitivity: %w", err)
+	}
+	w := cluster.New(client, metaClient, g, log).WithManifests(dyn, resources).WithPrometheus(c.prometheus, inCluster).WithSensitivity(sens)
+	if c.history != nil {
+		if err := w.SeedTraffic(c.history); err != nil {
+			log.Warn("learning traffic baselines from history", "err", err)
+		}
+	}
 	if c.noSecrets {
 		w.WithoutSecrets()
 	}

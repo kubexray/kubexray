@@ -187,7 +187,8 @@ kubexray notices what users feel, not only what crashes (ADR-0016).
 - [x] Restarts and memory close to its limit, from Kubernetes and metrics-server, with no setup.
 - [x] Prometheus found automatically; adapters for Traefik, ingress-nginx, Istio and OpenTelemetry; routing changes (Services, Ingresses, NetworkPolicies) as causes.
 - [ ] EKS Application Load Balancers through CloudWatch, mapped with TargetGroupBindings.
-- [ ] Baselines, breaks and sensitivity; signal incidents through the cause engine; charts with changes marked.
+- [x] Baselines, breaks and sensitivity; signal incidents through the cause engine.
+- [ ] Charts of an app's errors and latency with changes marked.
 - [ ] Alertmanager alerts as incidents on the map; a sources page.
 - [ ] The demo cluster gets Traefik and Prometheus; the public demo shows a "failing requests" incident.
 
