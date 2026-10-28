@@ -174,3 +174,31 @@ test("see diff shows what changed, value by value", async ({ page }) => {
   await expect(edit.locator(".diff-line.add")).toContainText("verbose");
   await expect(edit.getByRole("button", { name: "Hide diff" })).toHaveAttribute("aria-expanded", "true");
 });
+
+test("what happened: resized, filtered, and a way back to any moment", async ({ page }) => {
+  await openDemo(page);
+  const log = page.getByRole("region", { name: "What happened" });
+  // The side panel widens from the keyboard, and the log becomes a table.
+  const handle = page.getByRole("separator", { name: "Resize the side panel" });
+  const before = Number(await handle.getAttribute("aria-valuenow"));
+  await handle.focus();
+  for (let i = 0; i < 12; i++) await page.keyboard.press("ArrowLeft");
+  await expect(handle).toHaveAttribute("aria-valuenow", String(before + 12 * 16));
+  await expect(log.locator(".log-th")).toBeVisible();
+  // The details pushed as far down as they go: the log keeps its room, inside the panel.
+  await page.getByRole("separator", { name: "Resize the details and the log" }).focus();
+  await page.keyboard.press("End");
+  const aside = await page.locator("aside").boundingBox();
+  const filters = await log.locator(".log-filters").boundingBox();
+  expect(filters && aside && filters.y + filters.height <= aside.y + aside.height).toBe(true);
+  await page.keyboard.press("Home");
+  // Changes only.
+  await log.getByRole("button", { name: /^Changes/ }).click();
+  await expect(log.locator(".log-row .what.crit")).toHaveCount(0);
+  await expect(log.locator(".log-row").first()).toContainText("checkout-config");
+  // A change clicked: the map moves to just after it.
+  const shown = await page.locator(".tl-time").innerText();
+  await log.locator(".log-row").filter({ hasText: "checkout-config" }).last().click();
+  await expect(page.locator(".tl-time")).not.toHaveText(shown);
+  await shot(page, "what-happened");
+});

@@ -130,6 +130,19 @@ func (t *Tracker) Observe(prev *graph.State, m graph.Message) {
 	}
 }
 
+// endOngoing ends, at a time, the incidents still going: recording stopped
+// there, so nothing is known after it.
+func (t *Tracker) endOngoing(at time.Time) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	for _, s := range t.sets {
+		if s.Verdict == Broke && s.Ended.IsZero() {
+			s.Ended = at
+		}
+	}
+	t.ongoing = map[string]time.Time{}
+}
+
 // made counts the sets made so far.
 func (t *Tracker) made() int {
 	t.mu.Lock()

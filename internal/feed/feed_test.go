@@ -453,23 +453,26 @@ func TestRebuildEndsIncidentsWhenTheyEnded(t *testing.T) {
 		delta(130, co(3), pod(true, "", at(130))),
 		restart, // quiet until kubexray restarts an hour later
 	}
-	tr := New(MaxSets)
-	err := Rebuild(tr, func(fn func([]byte) error) error {
-		for _, m := range history {
-			raw, err := json.Marshal(m)
-			if err != nil {
-				return err
+	rebuild := func(history []graph.Message) []Set {
+		tr := New(MaxSets)
+		err := Rebuild(tr, func(fn func([]byte) error) error {
+			for _, m := range history {
+				raw, err := json.Marshal(m)
+				if err != nil {
+					return err
+				}
+				if err := fn(raw); err != nil {
+					return err
+				}
 			}
-			if err := fn(raw); err != nil {
-				return err
-			}
+			return nil
+		})
+		if err != nil {
+			t.Fatal(err)
 		}
-		return nil
-	})
-	if err != nil {
-		t.Fatal(err)
+		return tr.Sets(time.Time{})
 	}
-	sets := tr.Sets(time.Time{})
+	sets := rebuild(history)
 	if len(sets) != 2 {
 		t.Fatalf("%d sets, want 2: %+v", len(sets), sets)
 	}
@@ -479,5 +482,19 @@ func TestRebuildEndsIncidentsWhenTheyEnded(t *testing.T) {
 	}
 	if fix.Verdict != Fixed {
 		t.Errorf("the edit that fixed it: %q %q, want fixed", fix.Verdict, fix.Note)
+	}
+
+	// Still broken when kubexray stopped, and nothing recorded until it
+	// restarts an hour later: the incident ends where the recording did.
+	seq = snap.Seq
+	sets = rebuild([]graph.Message{
+		snap,
+		delta(60, edit(60, "verbose")),
+		delta(70, co(2), pod(false, "CrashLoopBackOff", at(70))),
+		delta(110, pod(false, "CrashLoopBackOff", at(70))),
+		restart,
+	})
+	if len(sets) != 1 || sets[0].Verdict != Broke || !sets[0].Ended.Equal(at(110)) {
+		t.Errorf("across a gap = %+v, want broke, ended at 110s", sets)
 	}
 }

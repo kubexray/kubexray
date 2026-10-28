@@ -25,6 +25,8 @@ interface Props {
   onPlay?: () => void;
   /** Diff mode (Workspace). */
   compare?: Compare;
+  /** A moment to mark, from the event pointed at in the log. */
+  ghost?: string | null;
 }
 
 type Hover = { left: number; mark?: Mark; span?: Span } | null;
@@ -36,7 +38,7 @@ const RANGE_LABEL: Record<Range, string> = { hour: "Hour", day: "Day", week: "We
 const SHOWN_AFTER = 35_000;
 
 /** The rewind timeline: what changed, what broke, what fixed it, over time. */
-export function Timeline({ bounds, at, mode, incidents, onSeek, onFocus, playing, onPlay, compare }: Props) {
+export function Timeline({ bounds, at, mode, incidents, onSeek, onFocus, playing, onPlay, compare, ghost }: Props) {
   const now = useNow();
   const sets = useContext(FeedSets);
   const [range, setRange] = useState<Range>("hour");
@@ -245,7 +247,7 @@ export function Timeline({ bounds, at, mode, incidents, onSeek, onFocus, playing
           <button
             key={`${mk.kind}-${mk.set.id}`}
             type="button"
-            className={`tl-hit tl-mark ${mk.kind}${pct(mk.at) < 8 ? " start" : pct(mk.at) > 92 ? " end" : ""}`}
+            className={`tl-hit tl-mark ${mk.kind}${pct(mk.at) < 8 ? " start" : pct(mk.at) > 92 ? " end" : ""}${(mk.kind === "cause" ? causeLabels[i] : fixLabels[i]) ? "" : " bare"}`}
             style={{ left: `${pct(mk.at)}%` }}
             aria-label={`${mk.kind === "cause" ? "Broke something" : "Fixed"}: ${mk.set.title}. See the change`}
             aria-expanded={pinned === mk.set.id}
@@ -257,6 +259,11 @@ export function Timeline({ bounds, at, mode, incidents, onSeek, onFocus, playing
         ))}
 
         <div className="tl-head" style={{ left: `${pct(value)}%` }} aria-hidden="true" />
+        {ghost && Date.parse(ghost) >= from && Date.parse(ghost) <= to && (
+          <div className="tl-ghost" style={{ left: `${pct(Date.parse(ghost))}%` }} aria-hidden="true">
+            <span>{clock(ghost)}</span>
+          </div>
+        )}
 
         <div className="tl-axis" aria-hidden="true">
           {ticks(from, to).map((t) => (

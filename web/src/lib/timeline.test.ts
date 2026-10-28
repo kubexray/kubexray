@@ -27,6 +27,14 @@ describe("timeline model", () => {
     expect(m.bars.reduce((n, b) => n + b.count, 0)).toBe(3);
   });
 
+  it("draws one incident once, however many changes are credited with it", () => {
+    const also = set({ ...broke, id: "b2", at: T(10.5), title: "another edit" });
+    const late = set({ id: "f2", at: T(14.2), verdict: "fixed", fixes: ["Deployment/shop/checkout"], broke: T(11), ended: T(15) });
+    const m = model([broke, also, fixed, late], [], T0, T0 + 30 * 60_000, T0 + 30 * 60_000);
+    expect(m.spans).toHaveLength(1);
+    expect(m.marks.filter((k) => k.kind === "cause")).toHaveLength(1);
+  });
+
   it("draws an incident whose cause wasn't recorded from its fix", () => {
     const fix = set({ id: "f", at: T(14), verdict: "fixed", fixes: ["Deployment/shop/api"], broke: T(-5), ended: T(15) });
     const m = model([fix], [], T0, T0 + 30 * 60_000, T0 + 30 * 60_000);

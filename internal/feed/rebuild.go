@@ -41,7 +41,16 @@ func Rebuild(t *Tracker, walk func(fn func(raw []byte) error) error) error {
 			assess(state.TS.Add(assessEvery))
 		}
 		if m.Type == graph.MessageSnapshot {
-			assess(m.TS)
+			// A snapshot after the first is a new recording: kubexray
+			// stopped in between. Judge the last one as it ended; an
+			// incident still open then is drawn to its last recorded
+			// moment, not across the gap.
+			if state != nil {
+				if assessed.Before(state.TS) {
+					assess(state.TS)
+				}
+				t.endOngoing(state.TS)
+			}
 			st, err := graph.NewState(m) // a new epoch: a new baseline
 			if err != nil {
 				return err

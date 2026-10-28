@@ -1,6 +1,7 @@
-import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { type CSSProperties, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Group, Incident } from "../gen/cause";
 import type { ClusterEvent } from "../lib/events";
+import { labelOf } from "../lib/eventlog";
 import { clock } from "../lib/format";
 import type { ClusterState } from "../lib/state";
 import { searchView } from "../lib/feed";
@@ -10,6 +11,7 @@ import { DiffPanel } from "./DiffPanel";
 import { EventLog } from "./EventLog";
 import { type Entry, entries, IncidentCard } from "./IncidentCard";
 import { MapView } from "./MapView";
+import { Splitter, useStoredSize } from "./Splitter";
 
 interface Props {
   /** Renders the header for the current view. */
@@ -22,8 +24,9 @@ interface Props {
   /** The moment shown, or null for live. */
   at: string | null;
   loading?: boolean;
-  /** Renders the timeline, given diff mode's controls. */
-  timeline: (compare: Compare) => ReactNode;
+  /** Renders the timeline, given diff mode's controls and the moment of
+   * the event pointed at in the log, to mark. */
+  timeline: (compare: Compare, ghost: string | null) => ReactNode;
   /** Another view (Changes, Incidents) shown instead of the map. */
   page?: ReactNode;
   /** Narrows the map to matching apps. */
@@ -37,6 +40,11 @@ interface Props {
   /** The selected node, and the app it belongs to (a pod's workload). */
   onSelectionChange?: (id: string | null, app: string | null) => void;
 }
+
+/** The side panel's width until it's resized. */
+const ASIDE_W = 420;
+/** The least height the log keeps under the details, with its handle. */
+const LOG_MIN = 152;
 
 /** Diff mode's controls for the timeline: the moment compared from, if any. */
 export interface Compare {
@@ -115,6 +123,31 @@ export function Workspace(props: Props) {
   const toggle = useCallback((ns: string, isOpen: boolean) => setOpen((o) => new Map(o).set(ns, isOpen)), []);
 
   const selectedApp = appOf(selected);
+  // The side panel's width, and the details' height above the log (0: as
+  // tall as they need, up to most of it).
+  const [asideW, setAsideW] = useStoredSize("kubexray.aside.width", ASIDE_W);
+  const [detailsH, setDetailsH] = useStoredSize("kubexray.aside.details", 0);
+  const [logFull, setLogFull] = useState(false);
+  // The side panel's height, so the details never leave the log less than
+  // its minimum.
+  const asideRef = useRef<HTMLElement>(null);
+  const [asideH, setAsideH] = useState(700);
+  useEffect(() => {
+    const el = asideRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(([e]) => e && setAsideH(e.contentRect.height));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  const detailsMax = Math.max(60, asideH - LOG_MIN);
+  const [ghost, setGhost] = useState<string | null>(null);
+  const scope = useMemo(() => (selectedApp ? { app: selectedApp, related: chainOf(view, selectedApp) } : null), [view, selectedApp]);
+  // An event clicked in the log: its object, just after it happened.
+  const pick = (id: string, ts: string) => {
+    if (id) show(id);
+    setLogFull(false);
+    props.onRewind(ts);
+  };
   const listed = incidents.find((i) => i.app === selectedApp) ?? null;
 
   // The broken paths of the top incident, or of every app in its group.
@@ -165,18 +198,29 @@ export function Workspace(props: Props) {
       <p className="guide">
         Read each row left to right: requests come in, a load balancer spreads them across the app's pods, and the app reads its config and storage.
       </p>
-      <main className={`main${props.loading ? " loading" : ""}`}>
+      <main className={`main${props.loading ? " loading" : ""}${logFull ? " log-full" : ""}`} style={{ "--aside": `${asideW}px` } as CSSProperties}>
         <MapView view={mapView} open={open} highlight={highlight} causeOf={causeOf} onToggle={toggle} onSelect={setSelected} onHover={setHovered} />
-        <aside>
-          <DetailsPanel id={selected} state={state} view={view} incident={listed ?? props.why ?? null} onSelect={show} />
+        <Splitter axis="col" label="Resize the side panel" value={asideW} min={300} max={900} pane="after" onChange={setAsideW} onReset={() => setAsideW(ASIDE_W)} />
+        <aside ref={asideRef}>
+          <DetailsPanel id={selected} state={state} view={view} incident={listed ?? props.why ?? null} onSelect={show} height={detailsH ? Math.min(detailsH, detailsMax) : undefined} />
+          <Splitter axis="row" label="Resize the details and the log" value={Math.min(detailsH || 260, detailsMax)} min={60} max={detailsMax} pane="before" onChange={setDetailsH} onReset={() => setDetailsH(0)} />
           {base ? (
             <DiffPanel from={base} to={{ at: shownAt, state }} onSelect={show} onClose={() => setBase(null)} />
           ) : (
-            <EventLog events={events} at={at} />
+            <EventLog
+              events={events}
+              at={at}
+              scope={scope}
+              scopeName={selectedApp ? labelOf(selectedApp).split(" ")[1] : undefined}
+              onPick={pick}
+              onHover={setGhost}
+              full={logFull}
+              onFull={setLogFull}
+            />
           )}
         </aside>
       </main>
-      {props.timeline(compare)}
+      {props.timeline(compare, ghost)}
     </div>
   );
 }

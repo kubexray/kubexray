@@ -16,14 +16,17 @@ interface Props {
   /** The cause engine's answer for the selected app, when there is one. */
   incident: Incident | null;
   onSelect: (id: string) => void;
+  /** A height set by dragging the handle below; none, as tall as needed. */
+  height?: number;
 }
 
-export function DetailsPanel({ id, state, view, incident, onSelect }: Props) {
+export function DetailsPanel({ id, state, view, incident, onSelect, height }: Props) {
+  const sized = height ? { height, maxHeight: "none", flex: "none" } : undefined;
   const now = useNow();
   const n = id ? state?.nodes.get(id) : undefined;
   if (!n || !state) {
     return (
-      <section className="panel details" aria-live="polite">
+      <section className="panel details" aria-live="polite" style={sized}>
         <h2>Selected</h2>
         <p className="empty">
           {id ? "This object doesn't exist at this point in time." : "Select an app, pod or service to see what it's doing and how it connects."}
@@ -80,7 +83,7 @@ export function DetailsPanel({ id, state, view, incident, onSelect }: Props) {
   }
 
   return (
-    <section className="panel details" aria-live="polite">
+    <section className="panel details" aria-live="polite" style={sized}>
       <h2>Selected</h2>
       <div className="kind">{n.kind}</div>
       <div className="name">{n.name}</div>

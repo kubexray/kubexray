@@ -95,8 +95,21 @@ code { font-family: var(--font-data); font-size: 12px; }
 .guide { margin: -4px 0 0; color: var(--muted); font-size: 13px; }
 
 /* Main area */
-.main { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 12px; }
-.map { overflow: auto; min-height: 0; min-width: 0; display: flex; flex-direction: column; gap: 12px; padding-bottom: 8px; }
+.main { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) auto min(var(--aside, 420px), calc(100% - 420px)); }
+.map { overflow: auto; min-height: 0; min-width: 0; display: flex; flex-direction: column; gap: 12px; padding-bottom: 8px; container-type: inline-size; }
+/* The log full screen: the side panel takes the whole area, the log all of it. */
+.main.log-full { grid-template-columns: minmax(0, 1fr); }
+.main.log-full > .map, .main.log-full > .splitter, .main.log-full aside > .details, .main.log-full aside > .splitter { display: none; }
+
+/* Drag handles between panes. */
+.splitter { display: flex; align-items: center; justify-content: center; flex: none; touch-action: none; }
+.splitter.col { width: 12px; cursor: col-resize; }
+.splitter.row { height: 12px; cursor: row-resize; }
+.splitter i { border-radius: 3px; background: var(--border-strong); transition: background 0.15s; }
+.splitter.col i { width: 4px; height: 40px; }
+.splitter.row i { width: 40px; height: 4px; }
+.splitter:hover i, .splitter.dragging i, .splitter:focus-visible i { background: var(--accent); }
+.splitter:focus-visible { outline: none; }
 
 details.ns { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; }
 details.ns > summary { list-style: none; cursor: pointer; display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; padding: 12px 16px; }
@@ -115,6 +128,8 @@ details.ns[open] > summary::before { transform: rotate(45deg); }
   position: relative; display: grid; min-width: 780px;
   grid-template-columns: 110px 130px minmax(260px, 420px) 210px; column-gap: 44px; row-gap: 10px;
 }
+/* A wide side panel leaves the map less room: tighter columns before it scrolls. */
+@container (max-width: 1000px) { .grid { column-gap: 24px; } }
 .colhead { display: grid; gap: 1px; padding-bottom: 4px; }
 .colhead b { font: 600 12px var(--font-body); color: var(--muted); }
 .colhead small { font-size: 11px; color: var(--faint); line-height: 1.35; }
@@ -172,7 +187,7 @@ svg.wires path.incident { stroke: var(--crit); stroke-width: 2.5; }
 .caused { font-size: 12px; color: var(--muted); border-top: 1px dashed var(--border); padding-top: 6px; }
 
 /* Side panel */
-aside { display: flex; flex-direction: column; gap: 12px; min-height: 0; min-width: 0; }
+aside { display: flex; flex-direction: column; min-height: 0; min-width: 0; overflow: hidden; }
 .panel { border: 1px solid var(--border); border-radius: 10px; background: var(--surface); padding: 14px 16px; min-width: 0; }
 .panel h2 { margin: 0 0 10px; font: 600 11px var(--font-body); letter-spacing: 0.07em; text-transform: uppercase; color: var(--faint); }
 .details { overflow-y: auto; max-height: 62%; }
@@ -206,13 +221,52 @@ aside { display: flex; flex-direction: column; gap: 12px; min-height: 0; min-wid
 .podlist .st { margin-left: auto; color: var(--muted); }
 .empty { color: var(--muted); margin: 0; font-size: 13px; }
 
-.log { flex: 1; min-height: 140px; display: flex; flex-direction: column; }
-.log ol { list-style: none; margin: 0; padding: 0; overflow-y: auto; flex: 1; font-size: 12px; display: grid; align-content: start; gap: 1px; }
-.log li { display: grid; grid-template-columns: 64px 1fr; gap: 8px; padding: 3px 6px; border-radius: 5px; color: var(--muted); }
+/* What happened: a list when narrow, a table once there's room. */
+.log { flex: 1; min-height: 140px; display: flex; flex-direction: column; container: log / inline-size; }
+.log.full { min-height: 0; }
+/* Narrow: the title, scope and full screen on one line, the filters under
+   them. Wide: all on one line. */
+.log-head { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
+.log-head h2 { margin: 0 auto 0 0; }
+.log-filters { display: flex; gap: 4px; order: 3; flex-basis: 100%; }
+.log .chip { border: 1px solid var(--border); background: var(--surface); border-radius: 999px; padding: 2px 9px; font-size: 12px; color: var(--muted); cursor: pointer; }
+.log .chip em { font-style: normal; font-size: 11px; opacity: 0.7; margin-left: 2px; }
+.log .chip.on { background: var(--text); border-color: var(--text); color: var(--surface); }
+.log .chip.scope { margin-left: auto; }
+.log .chip.scope.on { background: var(--accent-soft); border-color: transparent; color: var(--accent); font-weight: 600; }
+.log .icon { width: 26px; height: 26px; display: grid; place-items: center; border: 1px solid var(--border); border-radius: 7px; background: var(--surface); color: var(--muted); cursor: pointer; }
+.log-head .log-filters + .icon { margin-left: auto; }
+.log ol { list-style: none; margin: 0; padding: 0; overflow-y: auto; flex: 1; font-size: 12.5px; display: grid; align-content: start; gap: 1px; }
+.log ol ol { overflow: visible; }
 .log li.future { opacity: 0.4; }
-.log time { font: 11px var(--font-data); font-variant-numeric: tabular-nums; color: var(--faint); }
-.log .crit { color: var(--crit); }
-.log .change { color: var(--accent); }
+.log-th { grid-template-columns: 8px 84px minmax(0, 1fr); gap: 8px; align-items: center; padding: 4px 6px; }
+.log-row { all: unset; box-sizing: border-box; display: grid; grid-template-columns: 8px 84px minmax(0, 1fr); gap: 8px; align-items: center; padding: 4px 6px; width: 100%; border-radius: 6px; cursor: pointer; position: relative; }
+.log-row:hover, .log-row:focus-visible { background: var(--sunken); }
+.log-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.log-row.child { padding-left: 22px; grid-template-columns: 8px 84px minmax(0, 1fr); }
+.log-row .dot { width: 7px; height: 7px; margin: 0; background: var(--border-strong); }
+.log-row .dot.change { background: var(--accent); }
+.log-row .dot.crit { background: var(--crit); }
+.log-row time { font: 11.5px var(--font-data); font-variant-numeric: tabular-nums; color: var(--muted); white-space: nowrap; }
+.log-row .line { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
+.log-row .obj { color: var(--text); font-weight: 500; }
+.log-row .what.crit { color: var(--crit); }
+.log-row .what.change { color: var(--accent); }
+.log-row .who { color: var(--faint); }
+.log-row.group .obj::before { content: "▸ "; color: var(--faint); }
+.log-row.group[aria-expanded="true"] .obj::before { content: "▾ "; }
+.log-row .go { position: absolute; right: 6px; top: 50%; transform: translateY(-50%); opacity: 0; padding: 1px 8px; border: 1px solid var(--border-strong); border-radius: 6px; background: var(--surface); color: var(--accent); font-size: 11.5px; font-weight: 600; pointer-events: none; }
+.log-row:hover .go, .log-row:focus-visible .go { opacity: 1; }
+.log-th { display: none; font: 600 10.5px var(--font-data); letter-spacing: 0.06em; text-transform: uppercase; color: var(--faint); border-bottom: 1px solid var(--border); }
+@container log (min-width: 560px) {
+  .log-head h2 { margin-right: 6px; }
+  .log-filters { order: 0; flex-basis: auto; }
+  .log-row, .log-row.child, .log-th { grid-template-columns: 8px 84px minmax(110px, 0.6fr) minmax(0, 1fr) minmax(0, 0.4fr); gap: 10px; }
+  .log-th { display: grid; }
+  .log-row .line { display: contents; }
+  .log-row .obj, .log-row .what, .log-row .who { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .log-row .obj { font: 500 12px var(--font-data); }
+}
 
 /* Diff mode */
 .compare-panel { flex: 1; min-height: 140px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
@@ -286,7 +340,12 @@ aside { display: flex; flex-direction: column; gap: 12px; min-height: 0; min-wid
 .tl-mark.fix { top: 30px; height: 78px; }
 .tl-mark.fix::before { background: var(--ok); bottom: 18px; }
 .tl-mark.fix span { bottom: 0; background: var(--ok); }
+/* Marks whose label didn't fit: a short tick in the plot, still a hover away. */
+.tl-mark.cause.bare::before { top: 26px; }
 .tl-mark:focus-visible, .tl-broken:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+/* The moment of the event pointed at in the log. */
+.tl-ghost { position: absolute; z-index: 4; top: 24px; height: 72px; margin-left: -1px; border-left: 2px dashed var(--accent); pointer-events: none; }
+.tl-ghost span { position: absolute; top: -18px; left: 0; transform: translateX(-50%); padding: 0 5px; border: 1px solid var(--accent); border-radius: 4px; background: var(--surface); color: var(--accent); font: 600 10.5px var(--font-data); white-space: nowrap; }
 .tl-head { position: absolute; z-index: 3; top: 24px; height: 72px; width: 2px; margin-left: -1px; background: var(--accent); pointer-events: none; }
 .tl-head::after { content: ""; position: absolute; left: -4px; bottom: -6px; width: 10px; height: 10px; border-radius: 50%; background: var(--accent); }
 .tl-axis { position: absolute; left: 0; right: 0; top: 108px; height: 14px; pointer-events: none; }
@@ -321,7 +380,8 @@ aside { display: flex; flex-direction: column; gap: 12px; min-height: 0; min-wid
 
 @media (max-width: 900px) {
   #root, .app { height: auto; }
-  .main { grid-template-columns: minmax(0, 1fr); }
+  .main { grid-template-columns: minmax(0, 1fr); gap: 12px; }
+  .main .splitter { display: none; }
   .map { overflow: visible; }
   .details { max-height: none; }
   .log { max-height: 300px; }
