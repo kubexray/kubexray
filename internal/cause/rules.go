@@ -29,11 +29,16 @@ func (a *analysis) inWindow(t time.Time) bool {
 	if t.IsZero() {
 		return false
 	}
-	start := a.inc.Since
-	if start.IsZero() {
-		start = a.opts.Now
-	}
+	start := a.start()
 	return !t.Before(start.Add(-a.opts.Lookback)) && !t.After(start.Add(a.opts.Skew))
+}
+
+// start is when the incident began, or now.
+func (a *analysis) start() time.Time {
+	if a.inc.Since.IsZero() {
+		return a.opts.Now
+	}
+	return a.inc.Since
 }
 
 func (a *analysis) causes() []Cause {
@@ -416,8 +421,8 @@ func (a *analysis) dependencies() []Cause {
 			out = append(out, c)
 			continue
 		}
-		ch := n.Change
-		if ch == nil || !a.inWindow(ch.At) || createdWith(n, a.app) {
+		ch, again := a.changeOf(n)
+		if ch == nil || createdWith(n, a.app) {
 			continue
 		}
 		c := Cause{
@@ -441,6 +446,9 @@ func (a *analysis) dependencies() []Cause {
 			// Pods read config when they start: only pods started since the
 			// edit see it, so "only new pods fail" points straight at it.
 			c.Confidence, c.Evidence = Likely, b.evidence("the edit")
+		}
+		if again != nil {
+			c.Evidence = append(c.Evidence, "it was edited again after the incident began, likely to fix it")
 		}
 		out = append(out, c)
 	}

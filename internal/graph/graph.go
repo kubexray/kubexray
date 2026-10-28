@@ -64,6 +64,16 @@ func (g *Graph) UpsertNode(n Node) {
 	defer g.mu.Unlock()
 
 	old, exists := g.nodes[n.ID]
+	if exists && n.Earlier == nil {
+		// Remember the write before the latest one.
+		switch {
+		case old.Change != nil && n.Change != nil && !old.Change.At.Equal(n.Change.At):
+			c := *old.Change
+			n.Earlier = &c
+		default:
+			n.Earlier = old.Earlier
+		}
+	}
 	if exists && old.Equal(n) {
 		return
 	}

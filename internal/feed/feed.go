@@ -510,7 +510,7 @@ func appsTouched(st *graph.State, e Entry) []string {
 	if appKinds[e.Kind] {
 		return []string{e.Object}
 	}
-	if e.Kind != "ConfigMap" && e.Kind != "Secret" && e.Kind != "PersistentVolumeClaim" {
+	if e.Kind != "ConfigMap" && e.Kind != "Secret" && e.Kind != "PersistentVolumeClaim" && e.Kind != "Service" && e.Kind != "Ingress" {
 		return nil
 	}
 	owner := map[string]string{} // child → owner
@@ -519,12 +519,27 @@ func appsTouched(st *graph.State, e Entry) []string {
 			owner[ed.To] = ed.From
 		}
 	}
+	// The objects requests go through: the Services an Ingress routes to.
+	via := map[string]bool{e.Object: true}
+	if e.Kind == "Ingress" {
+		for _, ed := range st.Edges {
+			if ed.Type == graph.EdgeRoutes && ed.From == e.Object {
+				via[ed.To] = true
+			}
+		}
+	}
 	seen := map[string]bool{}
 	for _, ed := range st.Edges {
-		if ed.Type != graph.EdgeMounts || ed.To != e.Object {
+		var pod string
+		switch {
+		case ed.Type == graph.EdgeMounts && ed.To == e.Object:
+			pod = ed.From // a pod uses the ConfigMap, Secret or volume
+		case ed.Type == graph.EdgeSelects && via[ed.From]:
+			pod = ed.To // a Service sends the pod requests (ADR-0016)
+		default:
 			continue
 		}
-		app := ed.From
+		app := pod
 		for range 3 {
 			up, ok := owner[app]
 			if !ok {

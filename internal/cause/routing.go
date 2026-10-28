@@ -16,24 +16,28 @@ func (a *analysis) routing() []Cause {
 	traffic := sig != nil && (sig.Kind == ErrorsSignal || sig.Kind == LatencySignal)
 	var out []Cause
 	add := func(n graph.Node, kind Kind) {
-		if n.Change == nil || !a.inWindow(n.Change.At) || n.Change.Tool == "controller" {
+		ch, again := a.changeOf(n)
+		if ch == nil || ch.Tool == "controller" {
 			return
 		}
 		verb := "changed"
-		if created(n) {
+		if again == nil && created(n) {
 			verb = "created"
 		}
 		c := Cause{
-			Kind: kind, Object: n.ID, At: n.Change.At, By: n.Change, Origin: n.Origin, Confidence: Possible,
+			Kind: kind, Object: n.ID, At: ch.At, By: ch, Origin: n.Origin, Confidence: Possible,
 			Summary: fmt.Sprintf("%s %s was %s", n.Kind, n.Name, verb),
 		}
-		if gap := sig.Since.Sub(n.Change.At); traffic && kind == KindRouting && gap >= 0 && gap <= trafficHold+trafficEvery {
+		if gap := sig.Since.Sub(ch.At); traffic && kind == KindRouting && gap >= 0 && gap <= trafficHold+trafficEvery {
 			c.Confidence = Likely
 			when := "within a minute of it"
 			if gap >= time.Minute {
 				when = duration(gap) + " after it"
 			}
 			c.Evidence = []string{fmt.Sprintf("requests started %s %s", failingWord(sig), when)}
+		}
+		if again != nil {
+			c.Evidence = append(c.Evidence, "it was changed again after the incident began, likely to fix it")
 		}
 		out = append(out, c)
 	}
@@ -71,6 +75,22 @@ func (a *analysis) routing() []Cause {
 		}
 	}
 	return out
+}
+
+// changeOf is the write to n that may have caused the incident: its latest,
+// when that came in the window before it began, or else the one before
+// (Earlier), when the latest came after it began, likely a fix. again is
+// that later write.
+func (a *analysis) changeOf(n graph.Node) (ch, again *graph.Change) {
+	switch {
+	case n.Change == nil:
+		return nil, nil
+	case a.inWindow(n.Change.At):
+		return n.Change, nil
+	case n.Earlier != nil && n.Change.At.After(a.start()) && a.inWindow(n.Earlier.At):
+		return n.Earlier, n.Change
+	}
+	return nil, nil
 }
 
 // trafficEvery is how often traffic is read: a break is seen up to this

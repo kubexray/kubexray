@@ -483,3 +483,22 @@ func TestConcurrentUse(t *testing.T) {
 		}
 	}
 }
+
+func TestUpsertKeepsTheEarlierChange(t *testing.T) {
+	t.Parallel()
+	g := New()
+	at := func(m int) time.Time { return time.Date(2026, 10, 28, 12, m, 0, 0, time.UTC) }
+	n := Node{ID: "Service/shop/api", Kind: "Service", Namespace: "shop", Name: "api", Change: &Change{At: at(0), By: "helm", Tool: "helm"}}
+	g.UpsertNode(n)
+	n.Change = &Change{At: at(5), By: "kubectl-patch", Tool: "kubectl"}
+	g.UpsertNode(n)
+	n.Change = &Change{At: at(9), By: "kubectl-patch", Tool: "kubectl"}
+	g.UpsertNode(n)
+	n.Status.Ready = true // another update, no new write: Earlier stays
+	g.UpsertNode(n)
+	_, _, snap := g.FlushAndSnapshot()
+	got := snap.Nodes[0]
+	if got.Earlier == nil || !got.Earlier.At.Equal(at(5)) {
+		t.Errorf("earlier = %+v", got.Earlier)
+	}
+}

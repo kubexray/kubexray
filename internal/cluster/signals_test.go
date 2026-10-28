@@ -15,24 +15,35 @@ import (
 	"github.com/kubexray/kubexray/internal/graph"
 )
 
-func restartingPod(count int32, finished time.Time) *corev1.Pod {
+func restartingPod(count int32, finished time.Time, ready bool) *corev1.Pod {
+	status := corev1.ConditionFalse
+	if ready {
+		status = corev1.ConditionTrue
+	}
 	return &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "reports-1"},
-		Status: corev1.PodStatus{ContainerStatuses: []corev1.ContainerStatus{{
-			Name: "reports", RestartCount: count,
-			LastTerminationState: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{Reason: "OOMKilled", FinishedAt: metav1.NewTime(finished)}},
-		}}},
+		Status: corev1.PodStatus{
+			Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: status}},
+			ContainerStatuses: []corev1.ContainerStatus{{
+				Name: "reports", RestartCount: count,
+				LastTerminationState: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{Reason: "OOMKilled", FinishedAt: metav1.NewTime(finished)}},
+			}},
+		},
 	}
+}
+
+func newSignalWatcher() *Watcher {
+	return New(kubefake.NewClientset(), metadatafake.NewSimpleMetadataClient(metadatafake.NewTestScheme()), graph.New(), slog.New(slog.DiscardHandler))
 }
 
 func TestRestartTimes(t *testing.T) {
 	t.Parallel()
-	w := New(kubefake.NewClientset(), metadatafake.NewSimpleMetadataClient(metadatafake.NewTestScheme()), graph.New(), slog.New(slog.DiscardHandler))
+	w := newSignalWatcher()
 	t0 := time.Date(2026, 10, 28, 12, 0, 0, 0, time.UTC)
 	const id = "Pod/shop/reports-1"
 
 	// First seen with 2 restarts: only the latest's time is known.
-	p1 := restartingPod(2, t0)
+	p1 := restartingPod(2, t0, true)
 	if got := w.noteRestarts(id, nil, p1); len(got) != 1 || !got[0].Equal(t0) {
 		t.Errorf("first seen: %v", got)
 	}
@@ -40,22 +51,46 @@ func TestRestartTimes(t *testing.T) {
 	if got := w.noteRestarts(id, nil, p1); len(got) != 1 {
 		t.Errorf("resync: %v", got)
 	}
-	p2 := restartingPod(3, t0.Add(time.Minute))
+	// It was ready, then restarted: that counts.
+	p2 := restartingPod(3, t0.Add(time.Minute), false)
 	if got := w.noteRestarts(id, p1, p2); len(got) != 2 || !got[1].Equal(t0.Add(time.Minute)) {
-		t.Errorf("a restart: %v", got)
+		t.Errorf("a restart after running fine: %v", got)
 	}
 	// Status updates without a restart change nothing.
 	if got := w.noteRestarts(id, p2, p2); len(got) != 2 {
 		t.Errorf("no restart: %v", got)
 	}
+	// Flaky: ready between every restart. Only the last ten are kept.
 	prev := p2
 	for i := int32(4); i < 20; i++ {
-		next := restartingPod(i, t0.Add(time.Duration(i)*time.Minute))
-		w.noteRestarts(id, prev, next)
-		prev = next
+		up := restartingPod(i-1, t0.Add(time.Duration(i)*time.Minute), true)
+		w.noteRestarts(id, prev, up)
+		down := restartingPod(i, t0.Add(time.Duration(i)*time.Minute), false)
+		w.noteRestarts(id, up, down)
+		prev = down
 	}
 	if got := w.restarts[id]; len(got) != graph.MaxRestartTimes {
 		t.Errorf("kept %d times", len(got))
+	}
+}
+
+// A crash loop never gets ready between restarts: they're its own
+// incident, not a pattern of restarts once it's fixed.
+func TestCrashLoopRestartsDontCount(t *testing.T) {
+	t.Parallel()
+	w := newSignalWatcher()
+	t0 := time.Date(2026, 10, 28, 12, 0, 0, 0, time.UTC)
+	const id = "Pod/shop/checkout-1"
+	prev := restartingPod(0, time.Time{}, false)
+	w.noteRestarts(id, nil, prev)
+	for i := int32(1); i <= 5; i++ {
+		next := restartingPod(i, t0.Add(time.Duration(i)*time.Minute), false)
+		w.noteRestarts(id, prev, next)
+		prev = next
+	}
+	fixed := restartingPod(5, t0.Add(5*time.Minute), true)
+	if got := w.noteRestarts(id, prev, fixed); len(got) != 0 {
+		t.Errorf("crash-loop restarts kept: %v", got)
 	}
 }
 

@@ -192,3 +192,22 @@ func TestDiffWithoutAWriteRecord(t *testing.T) {
 		t.Errorf("entry = %+v", e)
 	}
 }
+
+// A Service and an Ingress touch the apps whose pods they send requests to,
+// so a verdict can blame them (ADR-0016).
+func TestRoutingTouchesApps(t *testing.T) {
+	t.Parallel()
+	st := cluster()
+	add := func(n graph.Node) { st.Nodes[n.ID] = n }
+	edge := func(ty graph.EdgeType, from, to string) { e := graph.NewEdge(ty, from, to); st.Edges[e.ID] = e }
+	add(graph.Node{ID: "Service/shop/checkout", Kind: "Service", Namespace: "shop", Name: "checkout"})
+	add(graph.Node{ID: "Ingress/shop/web", Kind: "Ingress", Namespace: "shop", Name: "web"})
+	edge(graph.EdgeSelects, "Service/shop/checkout", "Pod/shop/checkout-1-a")
+	edge(graph.EdgeRoutes, "Ingress/shop/web", "Service/shop/checkout")
+	for _, id := range []string{"Service/shop/checkout", "Ingress/shop/web"} {
+		kind, _, _ := strings.Cut(id, "/")
+		if got := appsTouched(st, Entry{Object: id, Kind: kind}); !slices.Equal(got, []string{"Deployment/shop/checkout"}) {
+			t.Errorf("%s touches %v", id, got)
+		}
+	}
+}

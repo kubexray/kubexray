@@ -38,10 +38,13 @@ type Node struct {
 	Labels    map[string]string `json:"labels,omitempty"`
 	Status    Status            `json:"status"`
 	Created   time.Time         `json:"created"`
-	Spec      *Spec             `json:"spec,omitempty"`     // workloads and pods (ADR-0005)
-	Change    *Change           `json:"change,omitempty"`   // latest non-status write
-	Origin    *Origin           `json:"origin,omitempty"`   // Helm, Argo CD or Flux
-	Selector  map[string]string `json:"selector,omitempty"` // a Service's pod selector
+	Spec      *Spec             `json:"spec,omitempty"`   // workloads and pods (ADR-0005)
+	Change    *Change           `json:"change,omitempty"` // latest non-status write
+	// Earlier is the write before Change, kept by the graph: a change that
+	// caused an incident, and has since been changed again to fix it.
+	Earlier  *Change           `json:"earlier,omitempty"`
+	Origin   *Origin           `json:"origin,omitempty"`   // Helm, Argo CD or Flux
+	Selector map[string]string `json:"selector,omitempty"` // a Service's pod selector
 	// Data is a ConfigMap's contents, only when values are on (ADR-0017).
 	// Secrets are never read.
 	Data map[string]Value `json:"data,omitempty"`
@@ -280,6 +283,7 @@ func (n Node) Equal(o Node) bool {
 		n.Created.Equal(o.Created) &&
 		equalPtr(n.Spec, o.Spec, Spec.Equal) &&
 		equalPtr(n.Change, o.Change, Change.Equal) &&
+		equalPtr(n.Earlier, o.Earlier, Change.Equal) &&
 		equalPtr(n.Origin, o.Origin, func(a, b Origin) bool { return a == b }) &&
 		maps.Equal(n.Selector, o.Selector) &&
 		maps.Equal(n.Data, o.Data) &&
@@ -380,6 +384,10 @@ func (n Node) clone() Node {
 	if n.Change != nil {
 		c := *n.Change
 		n.Change = &c
+	}
+	if n.Earlier != nil {
+		c := *n.Earlier
+		n.Earlier = &c
 	}
 	if n.Origin != nil {
 		o := *n.Origin

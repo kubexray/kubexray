@@ -52,6 +52,7 @@ type Watcher struct {
 
 	// Signals (ADR-0016): recent restart times and memory use, by pod ID.
 	restarts map[string][]time.Time
+	wasReady map[string]bool // ready since its last restart
 	memory   map[string]memUse
 	now      func() time.Time
 
@@ -105,6 +106,7 @@ func New(client kubernetes.Interface, metaClient metadata.Interface, g *graph.Gr
 		owned: map[string]map[string]graph.Edge{},
 
 		restarts:    map[string][]time.Time{},
+		wasReady:    map[string]bool{},
 		memory:      map[string]memUse{},
 		now:         time.Now,
 		client:      client,
