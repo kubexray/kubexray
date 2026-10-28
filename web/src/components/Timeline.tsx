@@ -116,7 +116,9 @@ export function Timeline({ bounds, at, mode, incidents, onSeek, onFocus, playing
     else if (dir > 0 && live) onSeek(null);
   };
   const toIncident = (s: Span) => {
-    const t = Math.min(s.start + SHOWN_AFTER, (s.fix ?? s.end ?? last) - 1000);
+    // An incident that began before kubexray started recording: as early as
+    // there's history.
+    const t = Math.max(first, Math.min(s.start + SHOWN_AFTER, (s.fix ?? s.end ?? last) - 1000));
     if (onFocus) onFocus(s.app, iso(t));
     else seek(t);
   };
