@@ -214,7 +214,9 @@ button.owner:hover, button.owner[aria-expanded="true"] { background: var(--text)
 .drift-chip i { width: 6px; height: 6px; border-radius: 50%; background: var(--warn); }
 /* The rows one release manages, outlined. */
 .release { position: absolute; border: 1.5px dashed color-mix(in srgb, var(--accent) 45%, var(--border)); border-radius: 12px; pointer-events: none; }
-.release span { position: absolute; top: -9px; left: 12px; padding: 0 8px; border-radius: 999px; background: var(--surface); color: var(--accent); font: 500 10.5px var(--font-data); white-space: nowrap; }
+.release span { position: absolute; top: 5px; left: 10px; color: var(--accent); font: 500 10.5px var(--font-data); white-space: nowrap; }
+/* The line a release's label sits on, above its rows. */
+.release-gap { grid-column: 1 / -1; height: 14px; margin-bottom: -4px; }
 /* A Helm release's history, from its badge. */
 .release-history { position: fixed; z-index: 30; width: 400px; max-width: calc(100vw - 16px); padding: 12px; background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 18px 40px -16px rgb(16 24 32 / 0.45); font-size: 13px; }
 .release-history:focus { outline: none; }

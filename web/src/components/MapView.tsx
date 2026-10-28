@@ -201,6 +201,14 @@ function groupRows(rows: ViewRow[]): ViewRow[] {
   return rows.map((r, i) => ({ r, i })).sort((a, b) => rank(a.r) - rank(b.r) || a.i - b.i).map(({ r }) => r);
 }
 
+/** Whether a row is the first of a release's: a line for its label goes
+ * before it. */
+function startsRelease(rows: ViewRow[], i: number): boolean {
+  const o = rows[i] && rowOwner(rows[i]);
+  const prev = i > 0 && rows[i - 1] ? rowOwner(rows[i - 1] as ViewRow) : undefined;
+  return !!o && (!prev || ownerKey(prev) !== ownerKey(o));
+}
+
 /** An outline around the rows a release (or a GitOps app) manages. */
 export interface Release {
   key: string;
@@ -264,8 +272,9 @@ function Namespace({ ns, open, highlight, causeOf, onToggle, onSelect, onHover }
             <ColHead title="Load balancer" sub="Service" />
             <ColHead title="App" sub="Deployment · StatefulSet · DaemonSet · Job. Each dot is a pod, one running copy." />
             <ColHead title="Config & storage" sub="ConfigMap · Secret · Volume" />
-            {rows.map((row) => (
+            {rows.map((row, i) => (
               <Row key={row.key}>
+                {startsRelease(rows, i) && <div className="release-gap" data-key={`release|${ownerKey(rowOwner(row) as Owner)}`} aria-hidden="true" />}
                 <div className="cell">{row.ingresses.map((i) => card(i, "Ingress"))}</div>
                 <div className="cell">
                   {row.services.map((s) => (
@@ -585,11 +594,16 @@ function Grid({ ns, highlight, releases = [], children }: { ns: NamespaceView; h
       const pad = 5;
       setBoxes(
         releases.flatMap((r) => {
+          // Tight around its cards; its label on the line reserved above them.
           const rects = r.cards.map(box).filter((b): b is DOMRect => !!b);
+          const head = box(`release|${r.key}`);
           if (!rects.length) return [];
-          const top = Math.min(...rects.map((b) => b.top)) - g.top - pad;
+          const top = (head?.top ?? Math.min(...rects.map((b) => b.top)) - pad) - g.top;
           const bottom = Math.max(...rects.map((b) => b.bottom)) - g.top + pad;
-          return [{ key: r.key, label: r.label, top, left: -10, width: g.width + 20, height: bottom - top }];
+          const left = Math.min(...rects.map((b) => b.left)) - g.left - 10;
+          const right = Math.max(...rects.map((b) => b.right)) - g.left + 10;
+          const fits = r.label.length * 6.6 + 24; // never narrower than its label
+          return [{ key: r.key, label: r.label, top, left, width: Math.max(right - left, fits), height: bottom - top }];
         }),
       );
     };
