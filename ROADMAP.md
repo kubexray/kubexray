@@ -190,7 +190,8 @@ kubexray notices what users feel, not only what crashes (ADR-0016).
 - [x] Baselines, breaks and sensitivity; signal incidents through the cause engine.
 - [ ] Charts of an app's errors and latency with changes marked.
 - [x] Alertmanager alerts as incidents; a sources page.
-- [ ] The demo cluster gets Traefik and Prometheus; the public demo shows a "failing requests" incident.
+- [x] The demo cluster gets metrics-server, Traefik with steady traffic, and Prometheus; a `requests` break scenario.
+- [ ] The public demo shows a "failing requests" incident.
 
 **Done when:** a deploy that makes checkout fail requests, with every pod green, is an incident naming the deploy.
 

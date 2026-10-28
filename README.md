@@ -60,7 +60,7 @@ CI enforces budgets for the browser numbers.
 
 ## Try the demo
 
-Breaks a small shop app on a local [kind](https://kind.sigs.k8s.io) cluster and lets kubexray explain it. Needs Go, Node, Docker, kind and kubectl. The demo uses its own kubeconfig and doesn't touch your kubectl setup.
+Breaks a small shop app on a local [kind](https://kind.sigs.k8s.io) cluster and lets kubexray explain it. Needs Go, Node, Docker, kind, kubectl and Helm. The demo uses its own kubeconfig and doesn't touch your kubectl setup. It also installs what kubexray reads beyond Kubernetes: metrics-server, Traefik in front of the shop with steady traffic, and Prometheus. `DEMO_SIGNALS=0 make demo` skips them for a lighter cluster.
 
 ```sh
 make demo        # create the cluster, deploy the shop app, open kubexray
@@ -82,6 +82,7 @@ Other ways to break it, each with the answer kubexray should give:
 | `unschedulable` | checkout's memory request is raised to 64Gi | the scheduler can't place it: nodes have too little memory; very likely the resources change |
 | `bad-config` | a key api reads is renamed in its Secret | can't create the container: the key is missing; very likely the Secret edit |
 | `scale-zero` | api is scaled to 0 while the web Ingress routes to it | scaled to zero with traffic still routed to it; very likely the scale |
+| `requests` | the api Service is pointed at the wrong port; every pod stays healthy | failing requests, read from Traefik through Prometheus; likely the Service edit, with `targetPort 80 → 8080` |
 | `quota` | a 64Mi memory quota is added to the namespace, then api restarts | Kubernetes refuses its new pods; very likely the new ResourceQuota |
 
 `make e2e` runs every scenario and checks kubexray's answers; CI does the same on each change to the engine.

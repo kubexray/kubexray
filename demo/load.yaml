@@ -1,0 +1,20 @@
+# Steady traffic through Traefik to the shop, so kubexray has requests to
+# read and baselines to learn (ADR-0016). About five requests a second.
+apiVersion: v1
+kind: Namespace
+metadata: {name: shoppers}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: shoppers, namespace: shoppers}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: shoppers}}
+  template:
+    metadata: {labels: {app: shoppers}}
+    spec:
+      containers:
+        - name: shoppers
+          image: curlimages/curl:8.16.0
+          command: ["sh", "-c", "while true; do curl -s -o /dev/null --max-time 5 http://traefik.traefik.svc/; sleep 0.2; done"]
+          resources: {requests: {cpu: 10m, memory: 16Mi}, limits: {memory: 32Mi}}
