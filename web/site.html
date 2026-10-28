@@ -144,15 +144,14 @@
       <section class="still" id="player" aria-label="The player">
         <div class="wrap wide">
           <div class="still-tabs" role="tablist" aria-label="Views in the player">
-            <button type="button" role="tab" id="tab-map" aria-controls="still-map" aria-selected="true">Map</button>
+            <button type="button" role="tab" id="tab-map" aria-controls="still-map" aria-selected="true">Live</button>
             <button type="button" role="tab" id="tab-changes" aria-controls="still-changes" aria-selected="false" tabindex="-1">Changes</button>
           </div>
           <div id="still-map" role="tabpanel" aria-labelledby="tab-map">
-            <a class="still-img" href="./play/?replay=demo.kxr&amp;app=Deployment%2Fshop%2Fcheckout&amp;t=2026-10-28T11%3A26%3A30Z" aria-label="Open this moment in the player">
-              <img class="on-light" src="/src/site/img/hero-light.webp" width="1440" height="900" alt="kubexray showing an incident: checkout is degraded, likely caused by an edit to the ConfigMap checkout-config, with the shop namespace mapped from Ingress to Service to app to config." />
-              <img class="on-dark" src="/src/site/img/hero-dark.webp" width="1440" height="900" alt="" />
-            </a>
-            <p class="caption"><span>T+13:23</span> The incident in the player: the incident, the likely cause, and the failing path on the map.</p>
+            <div class="still-img still-video">
+              <video id="demo-video" muted loop playsinline preload="metadata" width="1920" height="1200" poster="/media/demo-light.jpg" aria-label="kubexray live on the demo cluster: someone edits a ConfigMap, checkout starts crash-looping, kubexray names the edit and the exact value, the timeline turns red, and the fix brings it back."></video>
+            </div>
+            <p class="caption"><span>30 s, live</span> A ConfigMap edit breaks checkout; kubexray names the change and the value, and the timeline shows it broken until the fix. <a href="./play/?replay=demo.kxr&amp;app=Deployment%2Fshop%2Fcheckout&amp;t=2026-10-28T11%3A26%3A30Z">Open the demo player</a></p>
           </div>
           <div id="still-changes" role="tabpanel" aria-labelledby="tab-changes" hidden>
             <a class="still-img" href="./play/?replay=demo.kxr&amp;view=changes" aria-label="The Changes page, in the player">
@@ -270,7 +269,7 @@
         <div class="grid">
           <div class="card">
             <h3>Read-only and private</h3>
-            <p>It only lists and watches. Secret and ConfigMap contents are never read, and replays are scrubbed.</p>
+            <p>It only lists and watches. Secrets are never read; values in diffs stay behind your login, follow Kubernetes permissions and hide anything that looks like a credential.</p>
           </div>
           <div class="card">
             <h3>Alerts with the cause attached</h3>
@@ -281,8 +280,8 @@
             <p>Built-in OpenID Connect for Google, Okta, Entra ID and Keycloak, with an allow-list and an audit log.</p>
           </div>
           <div class="card">
-            <h3>History that survives restarts</h3>
-            <p>Seven days on a volume by default, with a disk budget. The incident from 3 a.m. is still there in the morning.</p>
+            <h3>Recordings that stay light</h3>
+            <p>It records changes, not video or logs: about 2 MB an hour for a busy 365-object cluster, so a week fits easily on the default 1 GiB volume. The incident from 3 a.m. is still there in the morning, and a replay of it is a few dozen KB.</p>
           </div>
           <div class="card">
             <h3>Fast at scale</h3>

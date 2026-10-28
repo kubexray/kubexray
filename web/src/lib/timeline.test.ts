@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Incident } from "../gen/cause";
 import type { Set as ChangeSet } from "../gen/feed";
-import { bucketFor, markLabel, model, moments, step, ticks } from "./timeline";
+import { bucketFor, keepLabels, lastKey, markLabel, model, moments, step, ticks } from "./timeline";
 
 const T0 = Date.UTC(2026, 9, 28, 11, 0);
 const T = (m: number) => new Date(T0 + m * 60_000).toISOString();
@@ -50,5 +50,20 @@ describe("timeline model", () => {
     expect(bucketFor(60 * 60_000)).toBe(60_000);
     expect(bucketFor(24 * 60 * 60_000)).toBe(60 * 60_000);
     expect(ticks(T0, T0 + 60 * 60_000).length).toBeLessThanOrEqual(8);
+  });
+});
+
+describe("keepLabels", () => {
+  it("keeps the newest label when they crowd, and every label with room", () => {
+    expect(keepLabels([{ from: 10, to: 20 }, { from: 15, to: 25 }, { from: 40, to: 50 }])).toEqual([false, true, true]);
+  });
+});
+
+describe("lastKey", () => {
+  it("names a field as people do", () => {
+    expect(lastKey("spec.ports[0].targetPort")).toBe("targetPort");
+    expect(lastKey('metadata.labels["app.kubernetes.io/version"]')).toBe("version");
+    expect(lastKey("env LOG_LEVEL")).toBe("LOG_LEVEL");
+    expect(lastKey("LOG_LEVEL")).toBe("LOG_LEVEL");
   });
 });
