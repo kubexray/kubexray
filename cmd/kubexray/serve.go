@@ -13,6 +13,10 @@ import (
 	"strings"
 	"time"
 
+	authorizationv1 "k8s.io/api/authorization/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
+
 	"github.com/kubexray/kubexray/internal/alert"
 	"github.com/kubexray/kubexray/internal/auth"
 	"github.com/kubexray/kubexray/internal/feed"
@@ -51,6 +55,9 @@ func serve(ctx context.Context, args []string, stderr io.Writer) error {
 	webhookFile := fs.String("webhook-url-file", "", "file holding a webhook URL: send Alertmanager alerts there as JSON")
 	var oidcFlags oidcOptions
 	oidcFlags.flags(fs)
+	valuesAccess := fs.String("values-access", "all", `who sees ConfigMap and environment values: "all" signed-in people, or "kubernetes": only those Kubernetes lets read ConfigMaps in the namespace (needs --auth=oidc; ADR-0020)`)
+	kubeUserPrefix := fs.String("kube-username-prefix", "", "what the API server puts before OIDC usernames (its --oidc-username-prefix), with --values-access=kubernetes")
+	kubeGroupsPrefix := fs.String("kube-groups-prefix", "", "what the API server puts before OIDC groups (its --oidc-groups-prefix), with --values-access=kubernetes")
 	var recOpts recommendOptions
 	recOpts.flags(fs)
 	if err := fs.Parse(args); err != nil {
@@ -87,6 +94,12 @@ func serve(ctx context.Context, args []string, stderr io.Writer) error {
 		}
 	} else if oidcFlags.set() {
 		return errors.New("the --oidc-* and --allow-* flags need --auth=oidc")
+	}
+	switch {
+	case *valuesAccess != "all" && *valuesAccess != "kubernetes":
+		return fmt.Errorf(`--values-access must be "all" or "kubernetes", got %q`, *valuesAccess)
+	case *valuesAccess == "kubernetes" && *authMode != "oidc":
+		return errors.New("--values-access=kubernetes needs --auth=oidc: Kubernetes permissions belong to people, and only OIDC sign-in says who someone is")
 	}
 	if err := remote.Check(); err != nil {
 		return err
@@ -157,6 +170,13 @@ func serve(ctx context.Context, args []string, stderr io.Writer) error {
 	if svc != nil {
 		srv.SetRecommender(svc)
 	}
+	if *valuesAccess == "kubernetes" {
+		access, err := kubeAccess(ctx, &conn, *kubeUserPrefix, *kubeGroupsPrefix)
+		if err != nil {
+			return err
+		}
+		srv.SetValuesAccess(access)
+	}
 	if notifier := alert.NewNotifier(slackURL, webhookURL, log); notifier.Enabled() {
 		srv.SetAlerts(notifier, *publicURL)
 		go notifier.Run(ctx)
@@ -224,6 +244,7 @@ func readToken(path string) (string, error) {
 // oidcOptions are serve's sign-in flags (ADR-0013).
 type oidcOptions struct {
 	issuer, clientID, secretFile, groupsClaim, keyFile string
+	usernameClaim                                      string
 	scopes, emails, domains, groups                    hostList
 	ttl                                                time.Duration
 }
@@ -234,6 +255,7 @@ func (o *oidcOptions) flags(fs *flag.FlagSet) {
 	fs.StringVar(&o.secretFile, "oidc-client-secret-file", "", "file holding the client secret (a mounted Secret)")
 	fs.Var(&o.scopes, "oidc-scope", "a scope to ask for besides openid, email and profile, e.g. groups (repeatable)")
 	fs.StringVar(&o.groupsClaim, "oidc-groups-claim", "groups", "the ID token claim listing someone's groups")
+	fs.StringVar(&o.usernameClaim, "oidc-username-claim", "email", "the ID token claim the API server takes as the username (its --oidc-username-claim), with --values-access=kubernetes")
 	fs.Var(&o.emails, "allow-email", "let this email address in (repeatable)")
 	fs.Var(&o.domains, "allow-domain", "let everyone with a verified email in this domain in (repeatable)")
 	fs.Var(&o.groups, "allow-group", "let members of this group in (repeatable)")
@@ -261,8 +283,28 @@ func (o *oidcOptions) signIn(ctx context.Context, publicURL string, log *slog.Lo
 	}
 	return auth.NewOIDC(ctx, auth.Config{
 		Issuer: o.issuer, ClientID: o.clientID, ClientSecret: strings.TrimSpace(string(secret)),
-		PublicURL: publicURL, Scopes: o.scopes, GroupsClaim: o.groupsClaim,
+		PublicURL: publicURL, Scopes: o.scopes, GroupsClaim: o.groupsClaim, UsernameClaim: o.usernameClaim,
 		Rules:      auth.Rules{Emails: o.emails, Domains: o.domains, Groups: o.groups},
 		SessionKey: bytes.TrimSpace(key), SessionTTL: o.ttl,
 	}, log)
+}
+
+// kubeAccess checks values against Kubernetes permissions (ADR-0020), once
+// kubexray itself may ask: it needs to create SubjectAccessReviews.
+func kubeAccess(ctx context.Context, conn *connection, userPrefix, groupsPrefix string) (*server.KubeAccess, error) {
+	client, err := kubernetes.NewForConfig(conn.cfg)
+	if err != nil {
+		return nil, fmt.Errorf("creating client: %w", err)
+	}
+	self := &authorizationv1.SelfSubjectAccessReview{Spec: authorizationv1.SelfSubjectAccessReviewSpec{
+		ResourceAttributes: &authorizationv1.ResourceAttributes{Group: "authorization.k8s.io", Resource: "subjectaccessreviews", Verb: "create"},
+	}}
+	res, err := client.AuthorizationV1().SelfSubjectAccessReviews().Create(ctx, self, metav1.CreateOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("--values-access=kubernetes: checking kubexray's own permissions: %w", err)
+	}
+	if !res.Status.Allowed {
+		return nil, errors.New("--values-access=kubernetes: kubexray may not create SubjectAccessReviews; the Helm chart grants it with diffs.access: kubernetes")
+	}
+	return server.NewKubeAccess(client, userPrefix, groupsPrefix), nil
 }

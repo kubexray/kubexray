@@ -42,6 +42,13 @@ rules:
   - apiGroups: [gateway.networking.k8s.io]
     resources: [gateways, httproutes, grpcroutes]
     verbs: [get, list, watch]
+  {{- if eq .Values.diffs.access "kubernetes" }}
+  # Asking Kubernetes whether a signed-in person may read a namespace's
+  # ConfigMaps (ADR-0020). A review reads nothing and changes nothing.
+  - apiGroups: [authorization.k8s.io]
+    resources: [subjectaccessreviews]
+    verbs: [create]
+  {{- end }}
   {{- range .Values.diffs.extraResources }}
   {{- $parts := splitList "/" . }}
   {{- if or (lt (len $parts) 2) (gt (len $parts) 3) }}

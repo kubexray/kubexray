@@ -15,6 +15,12 @@ export interface DiffLine {
   from?: string;
   to?: string;
   note?: string; // e.g. "values aren't recorded"
+  /**
+   * Value marks From and To as recorded values (ADR-0017), which only
+   * people allowed to read them see (ADR-0020); images, resources and
+   * names are not values.
+   */
+  value?: boolean;
 }
 /**
  * The ops a diff line can have.

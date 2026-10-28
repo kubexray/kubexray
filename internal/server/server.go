@@ -88,7 +88,13 @@ type Server struct {
 	recommender *recommend.Service // safety recommendations, when on (ADR-0014)
 	capturing   atomic.Bool        // a crash-log capture is running
 	publicURL   string             // where people open kubexray, for links in alerts
+
+	access ValuesAccess // whose values each person sees, when on (ADR-0020)
 }
+
+// SetValuesAccess limits each signed-in person to the values Kubernetes
+// lets them read (ADR-0020).
+func (s *Server) SetValuesAccess(a ValuesAccess) { s.access = a }
 
 // SetAlerts makes the server an Alertmanager receiver that sends kubexray's
 // explanation to the notifier's destinations, linking to publicURL.
@@ -585,7 +591,14 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 		ended = t.C
 	}
 
+	allow := s.valuesFor(r)
 	send := func(raw []byte) error {
+		if allow != nil {
+			var err error
+			if raw, err = stripRaw(raw, allow); err != nil {
+				return err
+			}
+		}
 		wctx, cancel := context.WithTimeout(ctx, writeTimeout)
 		defer cancel()
 		return conn.Write(wctx, websocket.MessageText, raw)
@@ -642,6 +655,9 @@ func (s *Server) at(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	snap, err := s.rec.At(t)
+	if allow := s.valuesFor(r); allow != nil && err == nil {
+		stripMessage(&snap, allow)
+	}
 	if errors.Is(err, recorder.ErrNotRecorded) {
 		http.Error(w, "kubexray has no history for that time", http.StatusNotFound)
 		return
@@ -760,6 +776,9 @@ func (s *Server) feed(w http.ResponseWriter, r *http.Request) {
 	if sets == nil {
 		sets = []feed.Set{}
 	}
+	if allow := s.valuesFor(r); allow != nil {
+		sets = stripSets(sets, allow)
+	}
 	writeJSON(w, FeedResponse{Sets: sets, Now: now})
 }
 
@@ -822,7 +841,7 @@ func (s *Server) export(w http.ResponseWriter, r *http.Request) {
 	anonymize := q.Get("anonymize") == "1"
 	values := q.Get("values") == "1" && !anonymize
 	var buf bytes.Buffer
-	opts := replay.Options{From: from, To: to, Cluster: s.info.Cluster, Version: s.info.Version, Anonymize: anonymize, Values: values}
+	opts := replay.Options{From: from, To: to, Cluster: s.info.Cluster, Version: s.info.Version, Anonymize: anonymize, Values: values, Allow: s.valuesFor(r)}
 	switch err := replay.Write(r.Context(), &buf, msgs, opts); {
 	case errors.Is(err, replay.ErrTooLarge):
 		http.Error(w, err.Error(), http.StatusRequestEntityTooLarge)
