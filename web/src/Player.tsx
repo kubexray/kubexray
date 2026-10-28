@@ -237,7 +237,7 @@ export function Player() {
             view={v}
             status="replay"
             label={`${h.cluster}${h.anonymized ? " (anonymized)" : ""} · ${clock(h.from)} to ${clock(h.to)}`}
-            nav={{ active: view, onChange: setView, incidents: incidents?.incidents.length ?? 0 }}
+            nav={{ active: view, onChange: setView, incidents: incidents?.incidents.length ?? 0, incidentApps: incidents?.incidents.map((i) => i.app) }}
             search={{ value: query, onChange: setQuery }}
           />
         )}

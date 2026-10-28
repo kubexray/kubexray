@@ -211,7 +211,7 @@ export function App() {
             view={v}
             status={stream.status}
             rewound={!!at}
-            nav={{ active: view, onChange: setView, incidents: incidents.length, sources: true }}
+            nav={{ active: view, onChange: setView, incidents: incidents.length, sources: true, incidentApps: incidents.map((i) => i.app) }}
             search={{ value: query, onChange: setQuery }}
             me={me}
           />

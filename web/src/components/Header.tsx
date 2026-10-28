@@ -22,8 +22,10 @@ interface Props {
   rewound?: boolean;
   /** What's being shown, e.g. which cluster a replay is from. */
   label?: string;
-  /** sources: show the Sources view (live only). */
-  nav?: { active: View; onChange: (v: View) => void; incidents: number; sources?: boolean };
+  /** sources: show the Sources view (live only). incidentApps: apps with an
+   * incident, which need attention even when their pods look fine (a
+   * signal such as failing requests, ADR-0016). */
+  nav?: { active: View; onChange: (v: View) => void; incidents: number; sources?: boolean; incidentApps?: string[] };
   search?: { value: string; onChange: (q: string) => void };
   /** Who is signed in, with sign-in (ADR-0013). */
   me?: Me | null;
@@ -39,7 +41,10 @@ export function Header({ view, status, rewound = false, label, nav, search, me }
   const ws = allWorkloads(view);
   const count = (h: string) => ws.filter(({ w }) => workloadHealth(w) === h).length;
   const pods = ws.reduce((n, { w }) => n + w.pods.length, 0);
-  const bad = count("crit");
+  const incidentApps = new Set(nav?.incidentApps ?? []);
+  const crit = ws.filter(({ w }) => workloadHealth(w) === "crit").map(({ w }) => w.node.id);
+  const bad = new Set([...crit, ...incidentApps]).size;
+  const healthy = ws.filter(({ w }) => workloadHealth(w) === "ok" && !incidentApps.has(w.node.id)).length;
   const updating = count("warn");
   return (
     <header className="header">
@@ -71,7 +76,7 @@ export function Header({ view, status, rewound = false, label, nav, search, me }
       <div className="counts" aria-live="polite">
         <span>
           <i className="dot ok" />
-          <b>{count("ok")}</b> healthy apps
+          <b>{healthy}</b> healthy apps
         </span>
         {updating > 0 && (
           <span>

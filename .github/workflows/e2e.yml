@@ -42,6 +42,8 @@ jobs:
       - name: Install kind
         run: go install sigs.k8s.io/kind@v0.33.0
       - run: make e2e
+        env:
+          DEMO_SIGNALS: "0" # the scenarios need Kubernetes alone; keep CI quick
       - name: Cluster state on failure
         if: failure()
         run: |
@@ -70,6 +72,8 @@ jobs:
         run: go install sigs.k8s.io/kind@v0.33.0
       - run: helm lint --strict charts/kubexray
       - run: make e2e-helm
+        env:
+          DEMO_SIGNALS: "0"
       - name: Cluster state on failure
         if: failure()
         run: |

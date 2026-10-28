@@ -2,9 +2,12 @@
 # The kubexray demo on a local kind cluster. It uses its own kubeconfig
 # (.demo/kubeconfig) and never touches your usual kubectl configuration.
 #
-#   scripts/demo.sh up       create the cluster and deploy the shop app
+#   scripts/demo.sh up       create the cluster, deploy the shop app, and the
+#                            signal sources: metrics-server, Traefik with steady
+#                            traffic, and Prometheus (DEMO_SIGNALS=0 skips them)
 #   scripts/demo.sh break    break it: SCENARIO=config (the default), bad-image, node,
-#                            oom, bad-probe, unschedulable, bad-config, scale-zero or quota
+#                            oom, bad-probe, unschedulable, bad-config, scale-zero,
+#                            quota or requests
 #   scripts/demo.sh fix      undo every scenario
 #   scripts/demo.sh down     delete the cluster
 set -euo pipefail
@@ -14,6 +17,12 @@ CLUSTER="${DEMO_CLUSTER:-kubexray-demo}"
 export KUBECONFIG="$ROOT/.demo/kubeconfig"
 SCENARIO="${SCENARIO:-config}"
 DELAY="${BREAK_DELAY:-45}"
+SIGNALS="${DEMO_SIGNALS:-1}"
+
+# Pinned, and at least two weeks old when chosen.
+METRICS_SERVER=v0.8.0
+TRAEFIK_CHART=41.7.1
+PROMETHEUS_CHART=29.37.0
 
 say() { printf '\033[1m%s\033[0m\n' "$*"; }
 need() { command -v "$1" >/dev/null || { echo "demo needs $1: $2" >&2; exit 1; }; }
@@ -38,8 +47,31 @@ up() {
   kubectl apply -f "$ROOT/demo/shop.yaml" >/dev/null
   for d in api checkout reports; do kubectl -n shop rollout status "deploy/$d" --timeout=180s >/dev/null; done
   kubectl -n shop rollout status sts/db --timeout=180s >/dev/null
+  if [ "$SIGNALS" = 1 ]; then signals; fi
   say "The shop is running. Starting kubexray…"
   echo "In another terminal, break it with: make break"
+}
+
+# signals installs what kubexray reads beyond Kubernetes (ADR-0016):
+# metrics-server for memory, Traefik in front of the shop with steady
+# traffic, and Prometheus scraping it for errors and latency.
+signals() {
+  need helm "brew install helm"
+  say "Adding metrics-server, Traefik and Prometheus (a few minutes the first time)…"
+  kubectl apply -f "https://github.com/kubernetes-sigs/metrics-server/releases/download/$METRICS_SERVER/components.yaml" >/dev/null
+  # kind's kubelets have self-signed certificates.
+  if ! kubectl -n kube-system get deploy metrics-server -o jsonpath='{.spec.template.spec.containers[0].args}' | grep -q kubelet-insecure-tls; then
+    kubectl -n kube-system patch deploy metrics-server --type=json -p '[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--kubelet-insecure-tls"}]' >/dev/null
+  fi
+  helm upgrade --install traefik oci://ghcr.io/traefik/helm/traefik --version "$TRAEFIK_CHART" -n traefik --create-namespace --wait --timeout 5m \
+    --set ingressClass.isDefaultClass=true --set metrics.prometheus.entryPoint=metrics \
+    --set-string 'deployment.podAnnotations.prometheus\.io/scrape=true' --set-string 'deployment.podAnnotations.prometheus\.io/port=9100' >/dev/null
+  helm upgrade --install prometheus prometheus --repo https://prometheus-community.github.io/helm-charts --version "$PROMETHEUS_CHART" -n monitoring --create-namespace --wait --timeout 5m \
+    --set alertmanager.enabled=false --set prometheus-pushgateway.enabled=false --set prometheus-node-exporter.enabled=false \
+    --set kube-state-metrics.enabled=false --set server.persistentVolume.enabled=false --set server.global.scrape_interval=15s >/dev/null
+  kubectl apply -f "$ROOT/demo/load.yaml" >/dev/null
+  kubectl -n kube-system rollout status deploy/metrics-server --timeout=180s >/dev/null
+  kubectl -n shoppers rollout status deploy/shoppers --timeout=180s >/dev/null
 }
 
 # live_pod prints one pod of an app that isn't already being deleted (right
@@ -118,6 +150,18 @@ break_scale_zero() {
   echo "   ./bin/kubexray incidents --kubeconfig .demo/kubeconfig"
 }
 
+break_requests() {
+  if ! kubectl get ns traefik >/dev/null 2>&1; then
+    echo "SCENARIO=requests needs Traefik and Prometheus: run make demo without DEMO_SIGNALS=0" >&2
+    exit 1
+  fi
+  say "Someone points the api Service at port 8080. api listens on 80."
+  kubectl -n shop patch svc api --type=json -p '[{"op":"replace","path":"/spec/ports/0/targetPort","value":8080}]' >/dev/null
+  say "Every pod stays healthy, but every request through Traefik now fails."
+  say "kubexray reads it from Prometheus; in about three minutes it's an incident. Ask:"
+  echo "   ./bin/kubexray why deploy/api -n shop --kubeconfig .demo/kubeconfig"
+}
+
 break_quota() {
   say "1. Someone adds a ResourceQuota to the shop namespace: 64Mi of memory requests in all."
   kubectl -n shop create quota compute --hard=requests.memory=64Mi >/dev/null
@@ -147,6 +191,8 @@ fix() {
     kubectl -n shop patch deploy/api --type=json -p '[{"op":"remove","path":"/spec/template/spec/containers/0/readinessProbe"}]' >/dev/null
   fi
   kubectl -n shop delete resourcequota compute --ignore-not-found >/dev/null
+  # The manifest leaves targetPort to default to the port: put it back.
+  kubectl -n shop patch svc api --type=json -p '[{"op":"replace","path":"/spec/ports/0/targetPort","value":80}]' >/dev/null
   kubectl apply -f "$ROOT/demo/shop.yaml" >/dev/null
   if [ -n "$(kubectl -n shop get secret db-credentials -o jsonpath='{.data.db-password}')" ]; then
     kubectl -n shop patch secret db-credentials --type=json -p '[{"op":"remove","path":"/data/db-password"}]' >/dev/null
@@ -174,7 +220,8 @@ case "${1:-}" in
       bad-config) break_bad_config ;;
       scale-zero) break_scale_zero ;;
       quota) break_quota ;;
-      *) echo "unknown SCENARIO=$SCENARIO (config, bad-image, node, oom, bad-probe, unschedulable, bad-config, scale-zero or quota)" >&2; exit 1 ;;
+      requests) break_requests ;;
+      *) echo "unknown SCENARIO=$SCENARIO (config, bad-image, node, oom, bad-probe, unschedulable, bad-config, scale-zero, quota or requests)" >&2; exit 1 ;;
     esac ;;
   fix) fix ;;
   down) down ;;
