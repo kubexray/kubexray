@@ -211,3 +211,19 @@ func TestRoutingTouchesApps(t *testing.T) {
 		}
 	}
 }
+
+// kubectl replace drops the revision annotation until the controller adds
+// the next one, and the previous writer's record: the change still shows.
+func TestTemplateChangeWithoutARevision(t *testing.T) {
+	t.Parallel()
+	st, tr := cluster(), New(MaxSets)
+	api := st.Nodes["Deployment/shop/api"]
+	api.Spec = &graph.Spec{Revision: "3", Containers: []graph.Container{{Name: "api", Image: "nginx:1.27", Env: []graph.EnvVar{{Name: "PROMO_BANNER", Value: "fp:a", Text: "on"}}}}}
+	st.Nodes[api.ID] = api
+	api.Spec = &graph.Spec{Containers: []graph.Container{{Name: "api", Image: "nginx:1.27"}}}
+	apply(t, tr, st, at(0), api)
+	e := only(t, tr).Entries[0]
+	if e.What != "template" || e.Summary != "env PROMO_BANNER removed" {
+		t.Errorf("entry = %+v", e)
+	}
+}

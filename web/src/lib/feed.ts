@@ -19,8 +19,9 @@ export const FILTERS: { id: Filter; label: string }[] = [
 export function author(s: ChangeSet): string {
   if (who(s.by)) return who(s.by);
   if (s.entries.some((e) => e.what === "replicas")) return "an autoscaler or kubectl scale";
-  // An edit to an object Kubernetes keeps no record of writes for.
-  if (s.entries.some((e) => e.what === "changed")) return "someone (Kubernetes didn't record who)";
+  // An edit Kubernetes keeps no record of: an object without write records,
+  // or a kubectl replace, which drops the previous writer's.
+  if (s.entries.some((e) => e.what === "changed" || e.what === "template")) return "someone (Kubernetes didn't record who)";
   return "Kubernetes";
 }
 
