@@ -20,9 +20,57 @@ type Signal struct {
 
 // Signal kinds.
 const (
+	ErrorsSignal   = "errors"
+	LatencySignal  = "latency"
 	RestartsSignal = "restarts"
 	MemorySignal   = "memory"
 )
+
+// trafficHold is how long errors or latency must stay too high: Normal
+// sensitivity (ADR-0016).
+const trafficHold = 2 * time.Minute
+
+// trafficSignal reads an app's traffic, if it's breaking. It applies
+// whether or not the pods look healthy: requests failing is the incident
+// people feel.
+func trafficSignal(t *graph.Traffic, now time.Time) *Signal {
+	switch {
+	case t == nil:
+		return nil
+	case !t.ErrorsSince.IsZero() && now.Sub(t.ErrorsSince) >= trafficHold:
+		return &Signal{
+			Kind: ErrorsSignal, Source: t.Source, State: "is failing requests", Since: t.ErrorsSince,
+			Summary: fmt.Sprintf("%s of requests fail (%s a second)", pct(t.ErrorPct), rate(t.RPS)),
+		}
+	case !t.SlowSince.IsZero() && now.Sub(t.SlowSince) >= trafficHold:
+		return &Signal{
+			Kind: LatencySignal, Source: t.Source, State: "is slow", Since: t.SlowSince,
+			Summary: fmt.Sprintf("99%% of requests answer within %s (%s a second)", seconds(t.P99), rate(t.RPS)),
+		}
+	}
+	return nil
+}
+
+func pct(v float64) string {
+	if v >= 10 {
+		return fmt.Sprintf("%.0f%%", v)
+	}
+	return fmt.Sprintf("%.1f%%", v)
+}
+
+func rate(v float64) string {
+	if v >= 10 {
+		return fmt.Sprintf("%.0f", v)
+	}
+	return fmt.Sprintf("%.1f", v)
+}
+
+func seconds(v float64) string {
+	if v < 1 {
+		return fmt.Sprintf("%.0fms", v*1000)
+	}
+	return fmt.Sprintf("%.1fs", v)
+}
 
 const (
 	restartWindow = time.Hour

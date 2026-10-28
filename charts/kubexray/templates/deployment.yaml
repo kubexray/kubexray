@@ -68,6 +68,9 @@ spec:
             - --no-secrets
             {{- end }}
             - --values={{ .Values.diffs.values }}
+            {{- with .Values.signals.prometheusURL }}
+            - {{ printf "--prometheus-url=%s" . | quote }}
+            {{- end }}
             {{- if eq .Values.diffs.access "kubernetes" }}
             {{- if ne .Values.auth.mode "oidc" }}
             {{- fail "diffs.access: kubernetes needs auth.mode: oidc" }}

@@ -64,6 +64,11 @@ export interface Node {
    * metadata other than labels are left out.
    */
   manifest?: { [key: string]: Value};
+  /**
+   * Traffic is an app's requests, errors and latency (ADR-0016), on a node
+   * of kind Traffic whose Parent is the app.
+   */
+  traffic?: Traffic;
 }
 /**
  * Value is a value kubexray may show in a diff (ADR-0017): its text when
@@ -226,6 +231,25 @@ export interface Replicas {
   desired: number /* int32 */;
   ready: number /* int32 */;
   updated: number /* int32 */;
+}
+/**
+ * KindTraffic is the kind of the node that holds an app's traffic.
+ */
+export const KindTraffic = "Traffic";
+/**
+ * Traffic is an app's requests over the last few minutes, from an ingress
+ * controller, a service mesh or the app's own metrics in Prometheus.
+ */
+export interface Traffic {
+  source: string; // Traefik, ingress-nginx, Istio, OpenTelemetry
+  rps: number /* float64 */; // requests per second
+  errorPct: number /* float64 */; // share answered with 5xx, 0–100
+  p99?: number /* float64 */; // seconds
+  /**
+   * When errors and latency started being too high, while they are.
+   */
+  errorsSince?: string /* RFC 3339 */;
+  slowSince?: string /* RFC 3339 */;
 }
 /**
  * Edge is a directed relationship between two nodes.

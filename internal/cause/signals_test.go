@@ -64,3 +64,54 @@ func TestMemoryNearTheLimit(t *testing.T) {
 		t.Errorf("one minute at 95%%: %+v", incs)
 	}
 }
+
+func TestFailingRequests(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 10, 28, 12, 0, 0, 0, time.UTC)
+	st := signalCluster(graph.Node{})
+	app := st.Nodes["Deployment/shop/reports"]
+	tr := graph.Node{
+		ID: graph.TrafficID(app), Kind: graph.KindTraffic, Namespace: "shop", Name: "reports", Parent: app.ID,
+		Traffic: &graph.Traffic{Source: "Traefik", RPS: 12.3, ErrorPct: 8.1, ErrorsSince: now.Add(-3 * time.Minute)},
+	}
+	st.Nodes[tr.ID] = tr
+	incs := Analyze(st, DefaultOptions(now))
+	if len(incs) != 1 || incs[0].State() != "is failing requests" || incs[0].Signal.Source != "Traefik" || incs[0].Symptom.Summary != "8.1% of requests fail (12 a second)" {
+		t.Fatalf("incidents = %+v", incs)
+	}
+	// A minute in, not yet: Normal sensitivity waits two.
+	tr.Traffic.ErrorsSince = now.Add(-time.Minute)
+	st.Nodes[tr.ID] = tr
+	if incs := Analyze(st, DefaultOptions(now)); len(incs) != 0 {
+		t.Errorf("one minute: %+v", incs)
+	}
+}
+
+func TestServiceEditCausesFailingRequests(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 10, 28, 12, 0, 0, 0, time.UTC)
+	st := signalCluster(graph.Node{})
+	app := st.Nodes["Deployment/shop/reports"]
+	svc := graph.Node{
+		ID: "Service/shop/reports", Kind: "Service", Namespace: "shop", Name: "reports",
+		Change: &graph.Change{At: now.Add(-4 * time.Minute), By: "kubectl-patch", Tool: "kubectl", Via: "patch"},
+	}
+	st.Nodes[svc.ID] = svc
+	e := graph.NewEdge(graph.EdgeSelects, svc.ID, "Pod/shop/reports-1")
+	st.Edges[e.ID] = e
+	tr := graph.Node{
+		ID: graph.TrafficID(app), Kind: graph.KindTraffic, Namespace: "shop", Name: "reports", Parent: app.ID,
+		Traffic: &graph.Traffic{Source: "Traefik", RPS: 9.4, ErrorPct: 100, ErrorsSince: now.Add(-3 * time.Minute)},
+	}
+	st.Nodes[tr.ID] = tr
+
+	incs := Analyze(st, DefaultOptions(now))
+	if len(incs) != 1 || len(incs[0].Causes) == 0 {
+		t.Fatalf("incidents = %+v", incs)
+	}
+	c := incs[0].Causes[0]
+	if c.Kind != KindRouting || c.Object != svc.ID || c.Confidence != Likely || c.Summary != "Service reports was changed" ||
+		!strings.Contains(c.Evidence[0], "requests started failing 1 minute after it") {
+		t.Errorf("cause = %+v", c)
+	}
+}

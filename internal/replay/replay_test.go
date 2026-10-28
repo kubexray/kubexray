@@ -362,3 +362,14 @@ func TestValuesOnlyWhenAsked(t *testing.T) {
 		}
 	}
 }
+
+func TestAnonymizedTrafficStaysWithItsApp(t *testing.T) {
+	t.Parallel()
+	app := graph.Node{ID: "Deployment/payments-prod/checkout", Kind: "Deployment", Namespace: "payments-prod", Name: "checkout"}
+	tr := graph.Node{ID: graph.TrafficID(app), Kind: graph.KindTraffic, Namespace: app.Namespace, Name: app.Name, Parent: app.ID, Traffic: &graph.Traffic{Source: "Traefik", RPS: 3}}
+	m := graph.Message{Nodes: []graph.Node{app, tr}}
+	newAnonymizer().message(&m)
+	if want := graph.TrafficID(m.Nodes[0]); m.Nodes[1].ID != want || m.Nodes[1].Parent != m.Nodes[0].ID || strings.Contains(m.Nodes[1].ID, "checkout") {
+		t.Errorf("app %s, traffic %s (parent %s); want %s", m.Nodes[0].ID, m.Nodes[1].ID, m.Nodes[1].Parent, want)
+	}
+}

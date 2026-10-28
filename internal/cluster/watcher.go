@@ -55,6 +55,13 @@ type Watcher struct {
 	memory   map[string]memUse
 	now      func() time.Time
 
+	// Traffic from Prometheus (WithPrometheus): by traffic node ID.
+	client    kubernetes.Interface
+	promURL   string
+	inCluster bool
+	traffic   map[string]graph.Traffic
+	sources   Sources
+
 	noSecrets bool // see WithoutSecrets
 	values    bool // see WithValues
 
@@ -98,6 +105,8 @@ func New(client kubernetes.Interface, metaClient metadata.Interface, g *graph.Gr
 		restarts: map[string][]time.Time{},
 		memory:   map[string]memUse{},
 		now:      time.Now,
+		client:   client,
+		traffic:  map[string]graph.Traffic{},
 	}
 }
 
@@ -160,6 +169,7 @@ func (w *Watcher) Start(ctx context.Context) error {
 	}
 	w.log.Info("cluster caches synced")
 	w.watchMemory(ctx)
+	w.watchTraffic(ctx)
 	return nil
 }
 

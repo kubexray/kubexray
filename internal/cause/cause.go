@@ -56,6 +56,10 @@ const (
 	KindNode      Kind = "node"      // a node running the app's pods is unhealthy
 	KindScale     Kind = "scale"     // the app was scaled to zero
 	KindQuota     Kind = "quota"     // a ResourceQuota that refuses the app's pods changed
+	// What routes requests to the app changed: a Service in front of it, an
+	// Ingress to that Service, or a NetworkPolicy selecting its pods.
+	KindRouting    Kind = "routing"
+	KindAutoscaler Kind = "autoscaler" // the HPA that scales the app changed
 )
 
 // Cause is one candidate explanation for an incident.
@@ -334,12 +338,16 @@ func (x *index) explain(app graph.Node, opts Options) Incident {
 		return inc
 	}
 	inc.Symptom = symptom(app, pods)
+	var traffic *graph.Traffic
+	if t, ok := x.st.Nodes[graph.TrafficID(app)]; ok {
+		traffic = t.Traffic
+	}
 	// Kubernetes refusing to create pods (a quota, a webhook) is a problem even
 	// while the old pods still serve: the rollout or scale-up is stuck. The
 	// reason survives anonymization; the message doesn't.
 	refused := app.Kind == "Deployment" && (app.Status.Reason == "FailedCreate" || app.Status.Message != "")
 	if (len(inc.Symptom.BadPods) == 0 && inc.Symptom.Ready >= inc.Symptom.Desired && !refused) || (app.Kind == "Job" && app.Status.Phase == "Complete") {
-		inc.Signal = signal(pods, opts.Now)
+		inc.Signal = cmp.Or(trafficSignal(traffic, opts.Now), signal(pods, opts.Now))
 		if inc.Signal == nil {
 			inc.Healthy = true
 			return inc
@@ -358,6 +366,7 @@ func (x *index) explain(app graph.Node, opts Options) Incident {
 	if refused && len(inc.Symptom.BadPods) == 0 {
 		inc.Symptom.Summary = "new pods can't be created"
 	}
+	inc.Signal = trafficSignal(traffic, opts.Now) // failing pods, and failing requests
 	inc.Since = since(pods)
 	if inc.Since.IsZero() && refused {
 		inc.Since = app.Status.Since // when the ReplicaFailure condition appeared

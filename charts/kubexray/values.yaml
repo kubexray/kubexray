@@ -83,6 +83,13 @@ diffs:
   kubeUsernamePrefix: ""
   kubeGroupsPrefix: ""
 
+signals:
+  # Where to read request errors and latency (ADR-0016). Empty: kubexray
+  # looks for a Service named prometheus or prometheus-server, or labelled
+  # app.kubernetes.io/name=prometheus, and calls it directly. If Prometheus
+  # has a NetworkPolicy, let kubexray's pods reach its port.
+  prometheusURL: ""   # e.g. http://prometheus.monitoring.svc:9090
+
 persistence:
   # History on a volume, so it survives restarts. Without it, history lives in
   # the pod's memory and starts over when the pod does.

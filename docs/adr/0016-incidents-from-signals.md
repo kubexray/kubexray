@@ -36,7 +36,9 @@ On start, and every few minutes after:
 - **AWS ALB** metrics are found through the `TargetGroupBinding` objects the AWS Load Balancer Controller creates. They link a target group to a Service. CloudWatch is read only when `aws.cloudwatch` is on, with a read-only role from EKS Pod Identity or IRSA, and only once a minute, because CloudWatch charges per request.
 - **metrics-server** is read through the Kubernetes API (`metrics.k8s.io`).
 
-kubexray only reads. Locally it reaches Prometheus through the Kubernetes API's service proxy with the user's kubeconfig. In the cluster it calls the Service directly, and the chart's NetworkPolicy allows it.
+kubexray only reads. Locally it reaches Prometheus through the Kubernetes API's service proxy with the user's kubeconfig. In the cluster it calls the Service directly: kubexray is never given `services/proxy`, which would let it reach any Service. Its chart's NetworkPolicy only limits what comes in. If Prometheus has a NetworkPolicy, it has to let kubexray's pods in.
+
+The first adapters are Traefik (`traefik_service_requests_total`, whose `namespace-name-port@kubernetes` label is matched against known Services), ingress-nginx, Istio (`istio_requests_total` reported by the destination) and OpenTelemetry HTTP server metrics, when the collector promotes the Kubernetes namespace to a label. An app behind several is read from the first. Every minute kubexray asks each for requests, 5xx responses and p99 latency per Service over the last 2 minutes, and maps the Service to the app whose pods it selects.
 
 ### 3. Numbers to apps
 
@@ -56,7 +58,9 @@ With less than an hour of history, only the floors and the fixed rules apply, so
 
 ### 5. An incident like any other
 
-A signal incident goes through the cause engine (ADR-0006) like a pod incident: the changes to the app and what it uses in the 30 minutes before, with evidence. "Errors started 40 seconds after the new pods became ready" is the signal's version of "only pods started after the change fail". Every incident says what detected it (source and numbers), and its card shows the signal's chart with the changes marked. An app whose pods are failing and whose errors are up is one incident with two signals.
+Until baselines exist, errors break at 5% or more and latency at a p99 of 1 second or more, both above 0.2 requests a second and held for 2 minutes (Normal). The numbers are recorded per app on a small node of kind Traffic, once a minute, so rewinds and replays show them.
+
+A signal incident goes through the cause engine (ADR-0006) like a pod incident. When requests fail or slow down, changes to what routes them also count: the Services that select the app's pods, the Ingresses that route to those Services, and NetworkPolicies that select the pods (by `matchLabels`). A routing change made shortly before errors began is the likely cause, and the card shows its diff, for example `spec.ports[0].targetPort 80 → 9998`. An HPA that targets the app counts for any signal. That needs values on, since what it targets is a value. the changes to the app and what it uses in the 30 minutes before, with evidence. "Errors started 40 seconds after the new pods became ready" is the signal's version of "only pods started after the change fail". Every incident says what detected it (source and numbers), and its card shows the signal's chart with the changes marked. An app whose pods are failing and whose errors are up is one incident with two signals.
 
 Firing Alertmanager alerts (ADR-0011) also become incidents on the map, tagged as the user's own alert.
 

@@ -42,9 +42,15 @@ export const KindNode = "node"; // a node running the app's pods is unhealthy
 export const KindScale = "scale"; // the app was scaled to zero
 export const KindQuota = "quota"; // a ResourceQuota that refuses the app's pods changed
 /**
+ * What routes requests to the app changed: a Service in front of it, an
+ * Ingress to that Service, or a NetworkPolicy selecting its pods.
+ */
+export const KindRouting = "routing";
+export const KindAutoscaler = "autoscaler"; // the HPA that scales the app changed
+/**
  * Kinds of causes.
  */
-export type Kind = typeof KindImage | typeof KindResources | typeof KindTemplate | typeof KindProbe | typeof KindRestart | typeof KindChange | typeof KindConfig | typeof KindMissing | typeof KindNode | typeof KindScale | typeof KindQuota;
+export type Kind = typeof KindImage | typeof KindResources | typeof KindTemplate | typeof KindProbe | typeof KindRestart | typeof KindChange | typeof KindConfig | typeof KindMissing | typeof KindNode | typeof KindScale | typeof KindQuota | typeof KindRouting | typeof KindAutoscaler;
 /**
  * Cause is one candidate explanation for an incident.
  */
@@ -185,6 +191,10 @@ export interface Entry {
 }
 
 //////////
+// source: routing.go
+
+
+//////////
 // source: signals.go
 
 /**
@@ -199,6 +209,14 @@ export interface Signal {
   since: string /* RFC 3339 */;
   pod?: string; // the pod it's most clearly about
 }
+/**
+ * Signal kinds.
+ */
+export const ErrorsSignal = "errors";
+/**
+ * Signal kinds.
+ */
+export const LatencySignal = "latency";
 /**
  * Signal kinds.
  */
