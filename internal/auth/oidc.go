@@ -63,15 +63,19 @@ func (r Rules) Allow(email string, groups []string) (bool, string) {
 
 // Config configures OpenID Connect sign-in.
 type Config struct {
-	Issuer       string        // e.g. https://accounts.google.com
-	ClientID     string        //
-	ClientSecret string        // from a Secret
-	PublicURL    string        // where kubexray is opened; the redirect URL is PublicURL/auth/callback
-	Scopes       []string      // beyond openid, email and profile
-	GroupsClaim  string        // the ID token claim with groups, e.g. "groups"
-	Rules        Rules         //
-	SessionKey   []byte        // signs sessions and the flow state
-	SessionTTL   time.Duration // how long a sign-in lasts
+	Issuer       string   // e.g. https://accounts.google.com
+	ClientID     string   //
+	ClientSecret string   // from a Secret
+	PublicURL    string   // where kubexray is opened; the redirect URL is PublicURL/auth/callback
+	Scopes       []string // beyond openid, email and profile
+	GroupsClaim  string   // the ID token claim with groups, e.g. "groups"
+	// UsernameClaim is the claim the cluster's API server takes as the
+	// username (its --oidc-username-claim), for Kubernetes permissions
+	// (ADR-0020). Default "email".
+	UsernameClaim string
+	Rules         Rules         //
+	SessionKey    []byte        // signs sessions and the flow state
+	SessionTTL    time.Duration // how long a sign-in lasts
 }
 
 // OIDC signs people in with an OpenID Connect provider.
@@ -119,6 +123,9 @@ func NewOIDC(ctx context.Context, cfg Config, log *slog.Logger) (*OIDC, error) {
 	}
 	if cfg.GroupsClaim == "" {
 		cfg.GroupsClaim = "groups"
+	}
+	if cfg.UsernameClaim == "" {
+		cfg.UsernameClaim = "email"
 	}
 	return &OIDC{
 		cfg: cfg,
@@ -233,11 +240,22 @@ func (o *OIDC) Callback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	u := userOf(claims)
-	if ok, why := o.cfg.Rules.Allow(u.Email, stringsOf(claims[o.cfg.GroupsClaim])); !ok {
+	groups := stringsOf(claims[o.cfg.GroupsClaim])
+	if ok, why := o.cfg.Rules.Allow(u.Email, groups); !ok {
 		o.log.Warn("access denied", "audit", true, "event", "access_denied", "email", u.Email, "name", u.Name, "subject", id.Subject, "reason", why, "ip", ip)
 		http.SetCookie(w, cookie(name, "", -1, o.secure))
 		http.Error(w, fmt.Sprintf("%s doesn't have access to this kubexray. Ask whoever runs it to add you.", cmp.Or(u.Email, u.Name, "This account")), http.StatusForbidden)
 		return
+	}
+	u.KubeUser = u.Email // a verified email only
+	if o.cfg.UsernameClaim != "email" {
+		u.KubeUser, _ = claims[o.cfg.UsernameClaim].(string)
+	}
+	var dropped int
+	u.Groups, dropped = capGroups(groups)
+	if dropped > 0 {
+		// Fewer groups can only mean fewer permissions, never more.
+		o.log.Warn("too many groups to keep in a session; values in some namespaces may be hidden", "email", u.Email, "dropped", dropped)
 	}
 	session, err := o.Session(u)
 	if err != nil {
@@ -294,6 +312,26 @@ func userOf(claims map[string]any) User {
 	username, _ := claims["preferred_username"].(string)
 	sub, _ := claims["sub"].(string)
 	return User{Email: email, Name: cmp.Or(name, username, sub)}
+}
+
+// Groups kept in a session, which lives in a cookie: at most maxGroupBytes
+// in all, and none longer than maxGroup.
+const (
+	maxGroup      = 256
+	maxGroupBytes = 1536
+)
+
+func capGroups(groups []string) (kept []string, dropped int) {
+	total := 0
+	for _, g := range groups {
+		if len(g) > maxGroup || total+len(g) > maxGroupBytes {
+			dropped++
+			continue
+		}
+		total += len(g)
+		kept = append(kept, g)
+	}
+	return kept, dropped
 }
 
 func random() string {

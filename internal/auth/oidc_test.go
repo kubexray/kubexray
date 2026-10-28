@@ -2,10 +2,12 @@ package auth
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -288,5 +290,22 @@ func TestRules(t *testing.T) {
 		if got, _ := r.Allow(tc.email, tc.groups); got != tc.want {
 			t.Errorf("Allow(%q, %v) = %v, want %v", tc.email, tc.groups, got, tc.want)
 		}
+	}
+}
+
+func TestCapGroups(t *testing.T) {
+	t.Parallel()
+	long := strings.Repeat("g", maxGroup+1)
+	var many []string
+	for i := 0; i < 200; i++ {
+		many = append(many, fmt.Sprintf("team-%03d", i))
+	}
+	kept, dropped := capGroups(append([]string{"admins", long}, many...))
+	total := 0
+	for _, g := range kept {
+		total += len(g)
+	}
+	if kept[0] != "admins" || slices.Contains(kept, long) || total > maxGroupBytes || dropped == 0 || len(kept)+dropped != 202 {
+		t.Errorf("kept %d (%d bytes), dropped %d", len(kept), total, dropped)
 	}
 }

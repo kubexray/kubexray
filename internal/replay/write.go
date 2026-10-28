@@ -24,6 +24,9 @@ type Options struct {
 	// Values keeps the recorded values (ADR-0017). Anonymized replays
 	// never have them.
 	Values bool
+	// Allow, when set, keeps values only in the namespaces it allows: those
+	// the person exporting may read (ADR-0020).
+	Allow func(ns string) bool
 }
 
 // ErrTooLarge is returned when a window doesn't fit in a replay that players
@@ -105,8 +108,11 @@ func Write(ctx context.Context, w io.Writer, msgs [][]byte, opts Options) error 
 		if err := json.Unmarshal(raw, &m); err != nil {
 			return fmt.Errorf("replay: decoding message %d: %w", i, err)
 		}
-		if !opts.Values || anon != nil {
+		switch {
+		case !opts.Values || anon != nil:
 			graph.StripValues(&m)
+		case opts.Allow != nil:
+			graph.StripValuesWhere(&m, func(n graph.Node) bool { return !opts.Allow(n.Namespace) })
 		}
 		if anon != nil {
 			anon.message(&m)

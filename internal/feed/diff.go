@@ -19,6 +19,10 @@ type DiffLine struct {
 	From string `json:"from,omitempty"`
 	To   string `json:"to,omitempty"`
 	Note string `json:"note,omitempty"` // e.g. "values aren't recorded"
+	// Value marks From and To as recorded values (ADR-0017), which only
+	// people allowed to read them see (ADR-0020); images, resources and
+	// names are not values.
+	Value bool `json:"value,omitempty"`
 }
 
 // The ops a diff line can have.
@@ -159,7 +163,7 @@ func (d *differ) container(label string, p, c graph.Container) {
 // recorded reports a value that changed, with its text when it was
 // recorded, and why not when it wasn't.
 func (d *differ) recorded(path string, was, now bool, from, to graph.Value, unread string) {
-	l := DiffLine{Path: path, Op: Changed, From: from.Text, To: to.Text}
+	l := DiffLine{Path: path, Op: Changed, From: from.Text, To: to.Text, Value: from.Text != "" || to.Text != ""}
 	switch {
 	case !was:
 		l.Op, l.From = Added, ""
@@ -224,7 +228,7 @@ func (d *differ) env(label string, was, now []graph.EnvVar) {
 		path := label + "env " + v.Name
 		switch {
 		case !ok && v.From == "" && v.Text != "":
-			d.add(DiffLine{Path: path, Op: Added, To: v.Text, Note: note("", graph.Value{}, envValue(v), Added)})
+			d.add(DiffLine{Path: path, Op: Added, To: v.Text, Note: note("", graph.Value{}, envValue(v), Added), Value: true})
 		case !ok:
 			d.add(DiffLine{Path: path, Op: Added, To: source(v), Note: literal(v)})
 		case p.From != v.From:
@@ -257,6 +261,30 @@ func literal(v graph.EnvVar) string {
 		return note("values aren't recorded", graph.Value{}, envValue(v), Added)
 	}
 	return ""
+}
+
+// WithoutValues drops the values from diff lines, saying why, and returns
+// a function that takes them out of a summary or title that quoted them:
+// "LOG_LEVEL info → verbose" becomes "LOG_LEVEL changed" (ADR-0020).
+func WithoutValues(lines []DiffLine) ([]DiffLine, func(string) string) {
+	if len(lines) == 0 {
+		return lines, func(s string) string { return s }
+	}
+	out := make([]DiffLine, len(lines))
+	var quoted []string
+	for i, l := range lines {
+		if !l.Value {
+			out[i] = l
+			continue
+		}
+		if l.Op == Changed && l.From != "" && l.To != "" {
+			quoted = append(quoted, l.Path+" "+l.From+" → "+l.To, l.Path+" changed")
+		}
+		l.From, l.To, l.Value, l.Note = "", "", false, "hidden: you can't read ConfigMaps in this namespace"
+		out[i] = l
+	}
+	r := strings.NewReplacer(quoted...)
+	return out, r.Replace
 }
 
 // describe sums up a diff in a few words, for the feed line: "env
