@@ -2,6 +2,7 @@ import { type CSSProperties, type ReactNode, useCallback, useEffect, useMemo, us
 import type { Group, Incident } from "../gen/cause";
 import type { ClusterEvent } from "../lib/events";
 import { labelOf } from "../lib/eventlog";
+import { Helm, revisions } from "../lib/helm";
 import { clock } from "../lib/format";
 import type { ClusterState } from "../lib/state";
 import { searchView } from "../lib/feed";
@@ -198,28 +199,30 @@ export function Workspace(props: Props) {
       <p className="guide">
         Read each row left to right: requests come in, a load balancer spreads them across the app's pods, and the app reads its config and storage.
       </p>
-      <main className={`main${props.loading ? " loading" : ""}${logFull ? " log-full" : ""}`} style={{ "--aside": `${asideW}px` } as CSSProperties}>
-        <MapView view={mapView} open={open} highlight={highlight} causeOf={causeOf} onToggle={toggle} onSelect={setSelected} onHover={setHovered} />
-        <Splitter axis="col" label="Resize the side panel" value={asideW} min={300} max={900} pane="after" onChange={setAsideW} onReset={() => setAsideW(ASIDE_W)} />
-        <aside ref={asideRef}>
-          <DetailsPanel id={selected} state={state} view={view} incident={listed ?? props.why ?? null} onSelect={show} height={detailsH ? Math.min(detailsH, detailsMax) : undefined} />
-          <Splitter axis="row" label="Resize the details and the log" value={Math.min(detailsH || 260, detailsMax)} min={60} max={detailsMax} pane="before" onChange={setDetailsH} onReset={() => setDetailsH(0)} />
-          {base ? (
-            <DiffPanel from={base} to={{ at: shownAt, state }} onSelect={show} onClose={() => setBase(null)} />
-          ) : (
-            <EventLog
-              events={events}
-              at={at}
-              scope={scope}
-              scopeName={selectedApp ? labelOf(selectedApp).split(" ")[1] : undefined}
-              onPick={pick}
-              onHover={setGhost}
-              full={logFull}
-              onFull={setLogFull}
-            />
-          )}
-        </aside>
-      </main>
+      <Helm.Provider value={{ revisions: (release, ns) => revisions(state, release, ns), onRewind: props.onRewind }}>
+        <main className={`main${props.loading ? " loading" : ""}${logFull ? " log-full" : ""}`} style={{ "--aside": `${asideW}px` } as CSSProperties}>
+          <MapView view={mapView} open={open} highlight={highlight} causeOf={causeOf} onToggle={toggle} onSelect={setSelected} onHover={setHovered} />
+          <Splitter axis="col" label="Resize the side panel" value={asideW} min={300} max={900} pane="after" onChange={setAsideW} onReset={() => setAsideW(ASIDE_W)} />
+          <aside ref={asideRef}>
+            <DetailsPanel id={selected} state={state} view={view} incident={listed ?? props.why ?? null} onSelect={show} height={detailsH ? Math.min(detailsH, detailsMax) : undefined} />
+            <Splitter axis="row" label="Resize the details and the log" value={Math.min(detailsH || 260, detailsMax)} min={60} max={detailsMax} pane="before" onChange={setDetailsH} onReset={() => setDetailsH(0)} />
+            {base ? (
+              <DiffPanel from={base} to={{ at: shownAt, state }} onSelect={show} onClose={() => setBase(null)} />
+            ) : (
+              <EventLog
+                events={events}
+                at={at}
+                scope={scope}
+                scopeName={selectedApp ? labelOf(selectedApp).split(" ")[1] : undefined}
+                onPick={pick}
+                onHover={setGhost}
+                full={logFull}
+                onFull={setLogFull}
+              />
+            )}
+          </aside>
+        </main>
+      </Helm.Provider>
       {props.timeline(compare, ghost)}
     </div>
   );
