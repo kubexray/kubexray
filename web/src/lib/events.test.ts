@@ -35,6 +35,14 @@ describe("events", () => {
     expect(evs[0]).toMatchObject({ kind: "crit", text: "Pod api-x started" });
   });
 
+  it("credits a new pod's events to its app, through its ReplicaSet", () => {
+    const rs: Node = { id: "ReplicaSet/shop/api-1", kind: "ReplicaSet", ns: "shop", name: "api-1", created: T, status: { ready: true } };
+    const st = fromSnapshot({ v: 1, type: "snapshot", seq: 1, ts: T, nodes: [dep("nginx:1.27"), rs], edges: [{ id: "o1", type: "owns", from: "Deployment/shop/api", to: rs.id }] });
+    const pod: Node = { id: "Pod/shop/api-1-x", kind: "Pod", ns: "shop", name: "api-1-x", created: T, status: { ready: true } };
+    const evs = statusEvents(st, { v: 1, type: "delta", seq: 2, ts: T, ops: [{ op: "upsertNode", node: pod }, { op: "upsertEdge", edge: { id: "o2", type: "owns", from: rs.id, to: pod.id } }] });
+    expect(evs[0]).toMatchObject({ object: pod.id, label: "Pod api-1-x", what: "started", app: "Deployment/shop/api" });
+  });
+
   it("leaves out system namespaces and noise", () => {
     const sys: Node = { id: "Pod/kube-system/x", kind: "Pod", ns: "kube-system", name: "x", created: T, status: { ready: true } };
     expect(statusEvents(before, { v: 1, type: "delta", seq: 2, ts: T, ops: [{ op: "upsertNode", node: sys }] })).toEqual([]);

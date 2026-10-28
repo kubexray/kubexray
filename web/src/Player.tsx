@@ -277,9 +277,10 @@ export function Player() {
             Post-mortem draft
           </button>
         )}
-        timeline={(compare) => (
+        timeline={(compare, ghost) => (
           <Timeline
             compare={compare}
+            ghost={ghost}
             bounds={h}
             at={at}
             mode="replay"

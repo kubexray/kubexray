@@ -238,7 +238,7 @@ export function App() {
             </button>
           </>
         )}
-        timeline={(compare) => <Timeline bounds={history} at={at} mode="live" incidents={stream.incidents} onSeek={setAt} onFocus={(app, ts) => showOnMap(app, ts)} compare={compare} />}
+        timeline={(compare, ghost) => <Timeline bounds={history} at={at} mode="live" incidents={stream.incidents} onSeek={setAt} onFocus={(app, ts) => showOnMap(app, ts)} compare={compare} ghost={ghost} />}
       />
       {drafting && (
         <PostmortemDialog

@@ -96,15 +96,20 @@ export function model(sets: ChangeSet[], current: Incident[], from: number, to: 
       special.add(fix.id);
     }
   }
+  // One incident, one area: changes credited with the same incident (two
+  // edits at once, say) would draw it twice. The first cause names it; the
+  // others are ordinary activity.
+  merge(spans, marks);
   // Fixes of incidents whose cause isn't in the feed: one that began before
   // kubexray started recording, say. Drawn from when it began, which the
-  // fix noted.
+  // fix noted, unless an area already covers it.
   for (const f of fixes) {
     if (special.has(f.id)) continue;
-    for (const app of f.fixes ?? []) {
-      spans.push({ app, label: `${shortName(app)} was broken`, start: ms(f.broke) || ms(f.at), fix: ms(f.at), end: f.ended ? ms(f.ended) : undefined });
-    }
-    marks.push({ at: ms(f.at), kind: "fix", label: "fixed", set: f });
+    const at = ms(f.at);
+    const apps = (f.fixes ?? []).filter((app) => !spans.some((s) => s.app === app && s.start <= at && (s.end ?? Infinity) >= at));
+    if (!apps.length) continue;
+    for (const app of apps) spans.push({ app, label: `${shortName(app)} was broken`, start: ms(f.broke) || at, fix: at, end: f.ended ? ms(f.ended) : undefined });
+    marks.push({ at, kind: "fix", label: "fixed", set: f });
     special.add(f.id);
   }
   // Incidents going on now that no change in the feed explains.
@@ -133,6 +138,24 @@ export function model(sets: ChangeSet[], current: Incident[], from: number, to: 
     bars,
     bucket,
   };
+}
+
+/** Folds spans of one app that overlap into the first, in place, and drops
+ * the cause marks of the ones folded. */
+function merge(spans: Span[], marks: Mark[]) {
+  spans.sort((a, b) => a.start - b.start);
+  for (let i = 0; i < spans.length; i++) {
+    const a = spans[i] as Span;
+    for (let j = i + 1; j < spans.length; j++) {
+      const b = spans[j] as Span;
+      if (b.app !== a.app || b.start > (a.end ?? Infinity)) continue;
+      a.end = a.end === undefined || b.end === undefined ? undefined : Math.max(a.end, b.end);
+      a.fix = b.fix ?? a.fix;
+      const k = marks.findIndex((m) => m.kind === "cause" && m.set === b.cause);
+      if (k >= 0) marks.splice(k, 1);
+      spans.splice(j--, 1);
+    }
+  }
 }
 
 /** Moments to step between: every change and every incident's start. */
