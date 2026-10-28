@@ -1,10 +1,10 @@
-import { useContext, useRef, useState } from "react";
+import { useContext, useEffect, useRef, useState } from "react";
 import type { Incident } from "../gen/cause";
 import type { Compare } from "./Workspace";
 import { clock, duration, who } from "../lib/format";
 import { FeedSets } from "../lib/feedContext";
 import { verdictNote } from "../lib/feed";
-import { type Mark, model, moments, RANGES, type Range, type Span, step, ticks, windowFor } from "../lib/timeline";
+import { keepLabels, labelWidth, type Mark, model, moments, RANGES, type Range, type Span, step, ticks, windowFor } from "../lib/timeline";
 import { useNow } from "../lib/useNow";
 import { stateText } from "./IncidentCard";
 
@@ -42,6 +42,16 @@ export function Timeline({ bounds, at, mode, incidents, onSeek, onFocus, playing
   const [hover, setHover] = useState<Hover>(null);
   const plot = useRef<HTMLDivElement>(null);
   const dragging = useRef(false);
+  // The plot's width, to know which labels fit.
+  const [width, setWidth] = useState(1300);
+  const shown = bounds !== null;
+  useEffect(() => {
+    const el = plot.current;
+    if (!el) return;
+    const ro = new ResizeObserver(([e]) => e && setWidth(e.contentRect.width));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [shown]);
 
   const live = mode === "live";
   const first = bounds ? Date.parse(bounds.from) : 0;
@@ -53,6 +63,25 @@ export function Timeline({ bounds, at, mode, incidents, onSeek, onFocus, playing
 
   const m = model(sets, incidents, from, to, value);
   const all = moments(sets, m.spans);
+  // Labels that fit: newest first, the rest a hover away.
+  const spanEnd = (s: Span) => s.end ?? (s.fix !== undefined ? value : (s.fix ?? value));
+  const spanLabels = keepLabels(
+    m.spans.map((s) => {
+      const w = labelWidth(s.label.length, width);
+      return pct(s.start) > 80 ? { from: pct(spanEnd(s)) - w, to: pct(spanEnd(s)) } : { from: pct(s.start), to: pct(s.start) + w };
+    }),
+  );
+  const markLabels = (kind: Mark["kind"]) =>
+    keepLabels(
+      m.marks.map((mk) => {
+        if (mk.kind !== kind) return { from: -1e9, to: -1e9 };
+        const w = labelWidth(mk.label.length, width);
+        const x = pct(mk.at);
+        return x < 8 ? { from: x, to: x + w } : x > 92 ? { from: x - w, to: x } : { from: x - w / 2, to: x + w / 2 };
+      }),
+    );
+  const causeLabels = markLabels("cause");
+  const fixLabels = markLabels("fix");
   const peak = Math.max(1, ...m.bars.map((b) => b.count));
 
   if (!bounds) {
@@ -154,7 +183,7 @@ export function Timeline({ bounds, at, mode, incidents, onSeek, onFocus, playing
           </div>
         )}
 
-        {m.spans.map((s) => {
+        {m.spans.map((s, i) => {
           const fix = s.fix ?? s.end ?? value;
           const end = s.end ?? (s.fix !== undefined ? value : fix);
           return (
@@ -170,9 +199,11 @@ export function Timeline({ bounds, at, mode, incidents, onSeek, onFocus, playing
               {s.fix !== undefined && end > s.fix && (
                 <div className={`tl-recovering${s.end === undefined && ongoing ? " ongoing" : ""}`} style={{ left: `${pct(s.fix)}%`, width: `${pct(end) - pct(s.fix)}%` }} />
               )}
-              <span className={`tl-span-label${pct(s.start) > 80 ? " end" : ""}`} style={pct(s.start) > 80 ? { right: `${100 - pct(end)}%` } : { left: `${pct(s.start)}%` }}>
-                {s.label}
-              </span>
+              {spanLabels[i] && (
+                <span className={`tl-span-label${pct(s.start) > 80 ? " end" : ""}`} style={pct(s.start) > 80 ? { right: `${100 - pct(end)}%` } : { left: `${pct(s.start)}%` }}>
+                  {s.label}
+                </span>
+              )}
             </div>
           );
         })}
@@ -183,7 +214,7 @@ export function Timeline({ bounds, at, mode, incidents, onSeek, onFocus, playing
           ))}
         </div>
 
-        {m.marks.map((mk) => (
+        {m.marks.map((mk, i) => (
           <button
             key={`${mk.kind}-${mk.set.id}`}
             type="button"
@@ -193,7 +224,7 @@ export function Timeline({ bounds, at, mode, incidents, onSeek, onFocus, playing
             onClick={() => seek(mk.at - 1000)}
             onPointerEnter={() => setHover({ left: pct(mk.at), mark: mk })}
           >
-            <span>{mk.label}</span>
+            {(mk.kind === "cause" ? causeLabels[i] : fixLabels[i]) && <span>{mk.label}</span>}
           </button>
         ))}
 

@@ -33,10 +33,10 @@ test("each moment of the record opens the player there", async ({ page }) => {
 test("the site follows the theme chosen in the product", async ({ page }) => {
   await page.goto("/");
   await expect(page.locator("html")).not.toHaveAttribute("data-theme", "dark");
-  await expect(page.locator("#still-map .still-img img.on-light")).toBeVisible();
+  await expect(page.locator("#demo-video")).toHaveAttribute("src", "/media/demo-light.mp4");
   await page.getByRole("button", { name: "Switch to dark mode" }).click();
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
-  await expect(page.locator("#still-map .still-img img.on-dark")).toBeVisible();
+  await expect(page.locator("#demo-video")).toHaveAttribute("src", "/media/demo-dark.mp4"); // the video's dark take
   await page.goto("/play/"); // one choice for the site and the player
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
 });

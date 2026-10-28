@@ -53,12 +53,18 @@ const ms = (ts?: string) => (ts ? Date.parse(ts) : NaN);
 export function markLabel(s: ChangeSet): string {
   for (const e of s.entries) {
     const l = e.diff?.find((d) => d.to);
-    if (l?.to) {
-      const path = l.path.replace(/^env /, "").split(/[.[\]]+/).filter(Boolean).pop() ?? l.path;
-      return clip(`${path} → ${l.to}`);
-    }
+    if (l?.to) return clip(`${lastKey(l.path)} → ${l.to}`);
   }
   return clip(s.title);
+}
+
+/** The last key of a diff path, as people call it: "spec.ports[0].targetPort"
+ * → "targetPort", 'metadata.labels["app.kubernetes.io/version"]' →
+ * "version", "env LOG_LEVEL" → "LOG_LEVEL". */
+export function lastKey(path: string): string {
+  const quoted = /\["([^"]*)"\]$/.exec(path);
+  if (quoted?.[1]) return quoted[1].split(/[/.]/).pop() || quoted[1];
+  return path.replace(/^env /, "").split(/[.[\]]+/).filter(Boolean).pop() ?? path;
 }
 
 const clip = (s: string, n = 26) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
@@ -153,3 +159,22 @@ export function windowFor(range: number | null, first: number, last: number, val
   if (value >= from) return [from, last];
   return [value - range / 2, value + range / 2];
 }
+
+/** Which labels fit without overlapping, newest first: when they crowd, the
+ * latest wins, and the others are still a hover away. Each label is the
+ * span of the row it would cover, in percent of the width. */
+export function keepLabels(labels: { from: number; to: number }[]): boolean[] {
+  const order = labels.map((_, i) => i).sort((a, b) => (labels[b]?.from ?? 0) - (labels[a]?.from ?? 0));
+  const kept: { from: number; to: number }[] = [];
+  const out = labels.map(() => false);
+  for (const i of order) {
+    const l = labels[i];
+    if (!l || kept.some((k) => l.from < k.to + 0.5 && k.from < l.to + 0.5)) continue;
+    kept.push(l);
+    out[i] = true;
+  }
+  return out;
+}
+
+/** About how much of the width a label of n characters takes, in percent. */
+export const labelWidth = (n: number, px: number) => ((n * 6.6 + 14) / Math.max(px, 1)) * 100;

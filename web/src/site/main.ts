@@ -52,3 +52,28 @@ for (const [i, tab] of tabs.entries()) {
     next.focus();
   });
 }
+
+// The live video in the player section: the theme's take, playing only on
+// screen, and only on a click for people who'd rather not see motion.
+const video = document.querySelector<HTMLVideoElement>("#demo-video");
+if (video) {
+  const still = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  let onScreen = false;
+  const pick = () => {
+    const take = document.documentElement.dataset.theme === "dark" ? "dark" : "light";
+    if (video.dataset.take === take) return;
+    video.dataset.take = take;
+    video.poster = `/media/demo-${take}.jpg`;
+    video.src = `/media/demo-${take}.mp4`;
+    if (onScreen && !still) void video.play().catch(() => undefined);
+  };
+  pick();
+  new MutationObserver(pick).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+  if (still) video.controls = true;
+  else
+    new IntersectionObserver(([entry]) => {
+      onScreen = !!entry?.isIntersecting;
+      if (onScreen) void video.play().catch(() => undefined);
+      else video.pause();
+    }).observe(video);
+}
