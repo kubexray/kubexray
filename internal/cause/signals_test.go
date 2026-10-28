@@ -151,3 +151,33 @@ func TestFiringAlert(t *testing.T) {
 		t.Fatalf("incidents = %+v", incs)
 	}
 }
+
+// The Service edit that broke requests, fixed by another edit while errors
+// linger in Prometheus' window: the cause is still the first edit.
+func TestFixedServiceEditStaysTheCause(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 10, 28, 12, 0, 0, 0, time.UTC)
+	st := signalCluster(graph.Node{})
+	app := st.Nodes["Deployment/shop/reports"]
+	svc := graph.Node{
+		ID: "Service/shop/reports", Kind: "Service", Namespace: "shop", Name: "reports",
+		Change:  &graph.Change{At: now.Add(-30 * time.Second), By: "kubectl-patch", Tool: "kubectl", Via: "patch"},
+		Earlier: &graph.Change{At: now.Add(-4 * time.Minute), By: "kubectl-patch", Tool: "kubectl", Via: "patch"},
+	}
+	st.Nodes[svc.ID] = svc
+	e := graph.NewEdge(graph.EdgeSelects, svc.ID, "Pod/shop/reports-1")
+	st.Edges[e.ID] = e
+	tr := graph.Node{
+		ID: graph.TrafficID(app), Kind: graph.KindTraffic, Namespace: "shop", Name: "reports", Parent: app.ID,
+		Traffic: &graph.Traffic{Source: "Traefik", RPS: 5, ErrorPct: 40, ErrorsSince: now.Add(-3 * time.Minute)},
+	}
+	st.Nodes[tr.ID] = tr
+	incs := Analyze(st, DefaultOptions(now))
+	if len(incs) != 1 || len(incs[0].Causes) == 0 {
+		t.Fatalf("incidents = %+v", incs)
+	}
+	c := incs[0].Causes[0]
+	if c.Object != svc.ID || !c.At.Equal(svc.Earlier.At) || c.Confidence != Likely || !strings.Contains(strings.Join(c.Evidence, " "), "changed again after the incident began") {
+		t.Errorf("cause = %+v", c)
+	}
+}

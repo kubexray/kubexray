@@ -50,6 +50,11 @@ export interface Node {
   created: string /* RFC 3339 */;
   spec?: Spec; // workloads and pods (ADR-0005)
   change?: Change; // latest non-status write
+  /**
+   * Earlier is the write before Change, kept by the graph: a change that
+   * caused an incident, and has since been changed again to fix it.
+   */
+  earlier?: Change;
   origin?: Origin; // Helm, Argo CD or Flux
   selector?: { [key: string]: string}; // a Service's pod selector
   /**

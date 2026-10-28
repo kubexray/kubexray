@@ -32,9 +32,19 @@ type memUse struct {
 
 // noteRestarts records when a pod's containers restart, and returns its
 // recent restart times. Kubernetes keeps only a count, and the latest
-// finish time, so a pod seen for the first time has at most one. Called
-// with w.mu held.
+// finish time, so a pod seen for the first time has at most one.
+//
+// Only restarts of a pod that had been ready since its previous one count:
+// the signal is for apps that look fine between restarts. A crash loop
+// never gets ready, and is an incident of its own while it lasts; its
+// restarts mustn't keep the app broken for an hour after it's fixed.
+// Called with w.mu held.
 func (w *Watcher) noteRestarts(id string, old, pod *corev1.Pod) []time.Time {
+	defer func() {
+		if podReady(pod) {
+			w.wasReady[id] = true
+		}
+	}()
 	before := int32(0)
 	if old != nil {
 		before = restartCount(old)
@@ -48,18 +58,30 @@ func (w *Watcher) noteRestarts(id string, old, pod *corev1.Pod) []time.Time {
 			times = []time.Time{at}
 		}
 	}
-	for i := before; i < now && old != nil; i++ {
-		at := lastRestart(pod)
-		if at.IsZero() {
-			at = w.now()
+	if before < now && old != nil {
+		if w.wasReady[id] {
+			at := lastRestart(pod)
+			if at.IsZero() {
+				at = w.now()
+			}
+			times = append(times, at)
 		}
-		times = append(times, at)
+		w.wasReady[id] = false
 	}
 	if len(times) > graph.MaxRestartTimes {
 		times = times[len(times)-graph.MaxRestartTimes:]
 	}
 	w.restarts[id] = times
 	return slices.Clone(times)
+}
+
+func podReady(pod *corev1.Pod) bool {
+	for _, c := range pod.Status.Conditions {
+		if c.Type == corev1.PodReady {
+			return c.Status == corev1.ConditionTrue
+		}
+	}
+	return false
 }
 
 func restartCount(pod *corev1.Pod) int32 {
@@ -206,4 +228,5 @@ func memoryPct(item *unstructured.Unstructured, pod *corev1.Pod) (int32, bool) {
 func (w *Watcher) forgetPod(id string) {
 	delete(w.restarts, id)
 	delete(w.memory, id)
+	delete(w.wasReady, id)
 }
