@@ -1,6 +1,9 @@
 # syntax=docker/dockerfile:1
 
-FROM node:24-alpine@sha256:06d7adf3e0ef61a13f1d28682726366f97a15aa1888c934d3ecec86c33918b53 AS web
+# The UI and the binary build on the build machine, whatever the target: the
+# UI is the same for every platform, and Go cross-compiles. Only the last
+# stage is per platform, and it only copies, so no emulation is needed.
+FROM --platform=$BUILDPLATFORM node:24-alpine@sha256:06d7adf3e0ef61a13f1d28682726366f97a15aa1888c934d3ecec86c33918b53 AS web
 WORKDIR /src/web
 COPY web/package.json web/package-lock.json ./
 RUN npm ci --no-fund --no-audit
@@ -8,7 +11,7 @@ COPY web/ ./
 COPY internal/web/dist/.keep ../internal/web/dist/.keep
 RUN npm run build
 
-FROM golang:1.27-alpine@sha256:f2c872bcee949b7be9c490efd02b48a8a2fbf947cdf533f1c58525ec9d8170fd AS build
+FROM --platform=$BUILDPLATFORM golang:1.27-alpine@sha256:f2c872bcee949b7be9c490efd02b48a8a2fbf947cdf533f1c58525ec9d8170fd AS build
 WORKDIR /src
 COPY go.mod go.sum* ./
 RUN go mod download
@@ -17,7 +20,8 @@ COPY internal/ internal/
 COPY --from=web /src/internal/web/dist/ internal/web/dist/
 ARG VERSION=dev
 ARG COMMIT=none
-RUN CGO_ENABLED=0 go build -trimpath \
+ARG TARGETOS TARGETARCH
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath \
     -ldflags "-s -w -X github.com/kubexray/kubexray/internal/version.Version=${VERSION} -X github.com/kubexray/kubexray/internal/version.Commit=${COMMIT}" \
     -o /out/kubexray ./cmd/kubexray
 
