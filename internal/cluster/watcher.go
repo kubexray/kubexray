@@ -16,6 +16,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -48,6 +49,11 @@ type Watcher struct {
 
 	pods     corelisters.PodLister
 	services corelisters.ServiceLister
+
+	// Signals (ADR-0016): recent restart times and memory use, by pod ID.
+	restarts map[string][]time.Time
+	memory   map[string]memUse
+	now      func() time.Time
 
 	noSecrets bool // see WithoutSecrets
 	values    bool // see WithValues
@@ -88,6 +94,10 @@ func New(client kubernetes.Interface, metaClient metadata.Interface, g *graph.Gr
 		typed: informers.NewSharedInformerFactory(client, 0),
 		meta:  metadatainformer.NewSharedInformerFactory(metaClient, 0),
 		owned: map[string]map[string]graph.Edge{},
+
+		restarts: map[string][]time.Time{},
+		memory:   map[string]memUse{},
+		now:      time.Now,
 	}
 }
 
@@ -149,6 +159,7 @@ func (w *Watcher) Start(ctx context.Context) error {
 		return errors.New("informer caches did not sync")
 	}
 	w.log.Info("cluster caches synced")
+	w.watchMemory(ctx)
 	return nil
 }
 
@@ -324,7 +335,7 @@ func (w *Watcher) upsertPod(old, pod *corev1.Pod) {
 
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	w.graph.UpsertNode(w.kept(n))
+	w.graph.UpsertNode(w.kept(w.withSignals(n, old, pod)))
 	w.setEdges(n.ID, edges)
 
 	// Status updates are by far the most common pod event; selection only
@@ -351,6 +362,7 @@ func (w *Watcher) removePod(pod *corev1.Pod) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.removeNode(id)
+	w.forgetPod(id)
 	services, err := w.services.Services(pod.Namespace).List(labels.Everything())
 	if err != nil {
 		w.log.Error("listing services", "namespace", pod.Namespace, "err", err)

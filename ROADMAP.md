@@ -184,7 +184,7 @@ Diffs on every change, like Argo CD shows them, with values kept inside the clus
 
 kubexray notices what users feel, not only what crashes (ADR-0016).
 
-- [ ] Restarts and saturation from Kubernetes and metrics-server, with no setup.
+- [x] Restarts and memory close to its limit, from Kubernetes and metrics-server, with no setup.
 - [ ] Prometheus found automatically; adapters for Traefik, ingress-nginx, Envoy (Gateway API, Istio) and OpenTelemetry.
 - [ ] EKS Application Load Balancers through CloudWatch, mapped with TargetGroupBindings.
 - [ ] Baselines, breaks and sensitivity; signal incidents through the cause engine; charts with changes marked.

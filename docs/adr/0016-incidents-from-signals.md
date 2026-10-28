@@ -48,7 +48,9 @@ For each app and signal, kubexray keeps a baseline from the last 24 hours at 1-m
 
 A **break** is when a signal is clearly outside its range, and also above an absolute floor (no incident for 0.01% → 0.05% errors, or for an app with almost no traffic), for a sustained time. The sustained time comes from the sensitivity setting: Calm 5 minutes, Normal 2, Strict 1. The incident starts when the break began, not when it was confirmed.
 
-Restarts break on a rate (3 or more an hour), not on a baseline. Memory breaks at 90% of the limit when the trend says the limit will be reached within an hour.
+Restarts break on a rate (3 or more an hour), not on a baseline. Memory breaks at 90% of the limit held for 5 minutes; once baselines exist, a rising trend that reaches the limit within the hour will too.
+
+Kubernetes keeps only a restart count and the latest restart's time, so the watcher notes when each restart happens and keeps the last ten per pod. A pod first seen after restarting has one known time. Memory comes from metrics-server every 30 seconds, as a pod's highest container use against its limit, in steps of 5%, so the recording only grows when the step changes. Containers without a memory limit don't count.
 
 With less than an hour of history, only the floors and the fixed rules apply, so a fresh install doesn't fire on noise.
 

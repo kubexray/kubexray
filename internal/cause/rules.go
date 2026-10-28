@@ -494,6 +494,15 @@ func nextSteps(inc Incident, app graph.Node) []Step {
 	if len(inc.Symptom.BadPods) > 0 {
 		_, badPod = kindName(inc.Symptom.BadPods[0])
 	}
+	if s := inc.Signal; s != nil && badPod == "" && s.Pod != "" {
+		_, pod := kindName(s.Pod)
+		switch s.Kind {
+		case RestartsSignal:
+			steps = append(steps, Step{Command: fmt.Sprintf("kubectl -n %s logs %s --previous", ns, pod), Note: "why it last stopped"})
+		case MemorySignal:
+			steps = append(steps, Step{Command: fmt.Sprintf("kubectl -n %s top pod %s --containers", ns, pod), Note: "memory use now"})
+		}
+	}
 	switch r := inc.Symptom.Reason; {
 	case badPod == "":
 	case r == "CrashLoopBackOff" || r == "Error" || r == "OOMKilled" || strings.HasPrefix(r, "Init:"):

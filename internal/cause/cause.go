@@ -104,6 +104,8 @@ type Incident struct {
 	Next      []Step     `json:"next,omitempty"`
 	// LastChange is the app's most recent change, for context when it's healthy.
 	LastChange *graph.Change `json:"lastChange,omitempty"`
+	// Signal is what spotted it when its pods look healthy (ADR-0016).
+	Signal *Signal `json:"signal,omitempty"`
 }
 
 // Down reports whether the app has no ready pods at all: none of those it
@@ -119,6 +121,8 @@ func (i Incident) State() string {
 	switch {
 	case i.Healthy:
 		return "is healthy"
+	case i.Signal != nil && len(i.Symptom.BadPods) == 0:
+		return i.Signal.State
 	case i.Symptom.Desired == 0 && i.Symptom.Ready == 0 && len(i.Symptom.BadPods) == 0:
 		return "is scaled to zero"
 	case i.Down():
@@ -335,7 +339,20 @@ func (x *index) explain(app graph.Node, opts Options) Incident {
 	// reason survives anonymization; the message doesn't.
 	refused := app.Kind == "Deployment" && (app.Status.Reason == "FailedCreate" || app.Status.Message != "")
 	if (len(inc.Symptom.BadPods) == 0 && inc.Symptom.Ready >= inc.Symptom.Desired && !refused) || (app.Kind == "Job" && app.Status.Phase == "Complete") {
-		inc.Healthy = true
+		inc.Signal = signal(pods, opts.Now)
+		if inc.Signal == nil {
+			inc.Healthy = true
+			return inc
+		}
+		// Running and ready, but restarting or near its memory limit.
+		inc.Symptom.Summary = inc.Signal.Summary
+		inc.Since = inc.Signal.Since
+		a := &analysis{x: x, app: app, pods: pods, inc: &inc, opts: opts}
+		inc.Causes = a.causes()
+		if len(inc.Causes) == 0 {
+			inc.NoCause = fmt.Sprintf("nothing about %s or what it uses changed in the %s before it started", app.Name, duration(opts.Lookback))
+		}
+		inc.Next = nextSteps(inc, app)
 		return inc
 	}
 	if refused && len(inc.Symptom.BadPods) == 0 {

@@ -202,7 +202,23 @@ export interface Status {
   message?: string;
   exit?: number /* int32 */; // exit code behind the reason (pods)
   container?: string; // the container the reason comes from (pods)
+  /**
+   * Signals (ADR-0016), pods only: when the latest restarts happened (at
+   * most MaxRestartTimes), memory use as a percentage of the limit in steps
+   * of 5, and since when it has been at MemoryHighPct or more.
+   */
+  restarted?: string /* RFC 3339 */[];
+  memoryPct?: number /* int32 */;
+  memoryHigh?: string /* RFC 3339 */;
 }
+/**
+ * MaxRestartTimes is how many restart times a pod keeps.
+ */
+export const MaxRestartTimes = 10;
+/**
+ * MemoryHighPct is where memory use counts as close to the limit.
+ */
+export const MemoryHighPct = 90;
 /**
  * Replicas summarises a workload's scale.
  */

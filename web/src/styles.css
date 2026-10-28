@@ -65,6 +65,7 @@ code { font-family: var(--font-data); font-size: 12px; }
 .diff { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; font: 13px var(--font-data); }
 .diff .old { text-decoration: line-through; color: var(--muted); }
 .diff .new { color: var(--crit); font-weight: 500; }
+.signal-tag { display: inline-flex; padding: 1px 9px; border-radius: 999px; font: 600 12px var(--font-body); background: var(--accent-soft); color: var(--accent); white-space: nowrap; }
 .cause-values { flex-basis: 100%; list-style: none; margin: 0; padding: 0; display: grid; gap: 3px; font-size: 13px; }
 .cause-values code { font: 12.5px var(--font-data); color: var(--text); }
 .cause-values .note, .cause-values .more { color: var(--muted); }

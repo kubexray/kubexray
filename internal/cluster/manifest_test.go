@@ -127,7 +127,7 @@ func TestWatcherKeepsManifests(t *testing.T) {
 	roles := schema.GroupVersionResource{Group: "rbac.authorization.k8s.io", Version: "v1", Resource: "roles"}
 	apps := schema.GroupVersionResource{Group: "argoproj.io", Version: "v1alpha1", Resource: "applications"}
 	dyn := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), map[schema.GroupVersionResource]string{
-		hpas: "HorizontalPodAutoscalerList", roles: "RoleList", apps: "ApplicationList",
+		hpas: "HorizontalPodAutoscalerList", roles: "RoleList", apps: "ApplicationList", podMetrics: "PodMetricsList",
 	}, hpa(10))
 	dyn.PrependReactor("list", "roles", func(k8stesting.Action) (bool, runtime.Object, error) {
 		return true, nil, apierrors.NewForbidden(roles.GroupResource(), "", nil)
