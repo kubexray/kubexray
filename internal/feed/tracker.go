@@ -23,12 +23,12 @@ type Tracker struct {
 	sets    []*Set
 	limit   int
 	nextID  int
-	ongoing map[string]bool // apps with an incident at the last assessment
+	ongoing map[string]time.Time // apps with an incident at the last assessment, and when it began
 	// applied is each managed object as its tool last applied it (ADR-0019).
 	applied map[string]graph.Node
 }
 
 // New returns a tracker that keeps up to limit sets.
 func New(limit int) *Tracker {
-	return &Tracker{limit: limit, ongoing: map[string]bool{}, applied: map[string]graph.Node{}}
+	return &Tracker{limit: limit, ongoing: map[string]time.Time{}, applied: map[string]graph.Node{}}
 }

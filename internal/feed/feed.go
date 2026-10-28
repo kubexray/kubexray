@@ -73,8 +73,8 @@ type Set struct {
 	Verdict   Verdict       `json:"verdict"`
 	Note      string        `json:"note,omitempty"`     // e.g. "settled in 48s", "checkout is degraded 1m later"
 	Incident  string        `json:"incident,omitempty"` // the app it broke
-	Broke     time.Time     `json:"broke,omitzero"`     // when the incident it caused began
-	Ended     time.Time     `json:"ended,omitzero"`     // when the incident it caused ended
+	Broke     time.Time     `json:"broke,omitzero"`     // when the incident it caused, or fixed, began
+	Ended     time.Time     `json:"ended,omitzero"`     // when the incident it caused, or fixed, ended
 	Fixes     []string      `json:"fixes,omitempty"`    // the apps whose incidents it ended
 
 	during    map[string]bool // apps that had an incident when it was made
@@ -140,18 +140,28 @@ func (t *Tracker) made() int {
 // during notes, on the sets made since the count was since, which of their
 // apps had an incident when they were made.
 func (t *Tracker) during(since int, incidents []cause.Incident) {
-	sick := map[string]bool{}
+	sick := map[string]time.Time{}
 	for _, inc := range incidents {
-		sick[inc.App] = true
+		sick[inc.App] = inc.Since
 	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	for i := len(t.sets) - 1; i >= 0 && i >= len(t.sets)-(t.nextID-since); i-- {
 		for _, a := range t.sets[i].Apps {
-			if sick[a] {
+			if since, ok := sick[a]; ok {
 				t.sets[i].during[a] = true
+				t.sets[i].began(since)
 			}
 		}
+	}
+}
+
+// began notes when an incident going on as the set was made began: if
+// the set fixes it, the incident is drawn from there, even when what caused
+// it wasn't recorded.
+func (s *Set) began(since time.Time) {
+	if !since.IsZero() && (s.Broke.IsZero() || since.Before(s.Broke)) {
+		s.Broke = since
 	}
 }
 
@@ -178,8 +188,9 @@ func (t *Tracker) add(st *graph.State, e Entry) {
 		By: e.By, Origin: e.Origin, Entries: []Entry{e}, Apps: apps, during: map[string]bool{},
 	}
 	for _, a := range apps {
-		if t.ongoing[a] {
+		if since, ok := t.ongoing[a]; ok {
 			s.during[a] = true
+			s.began(since)
 		}
 	}
 	s.Title = title(s)

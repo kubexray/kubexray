@@ -33,9 +33,9 @@ func (t *Tracker) Assess(st *graph.State, incidents []cause.Incident, now time.T
 		}
 		assess(s, st, byApp, now)
 	}
-	t.ongoing = map[string]bool{}
-	for app := range byApp {
-		t.ongoing[app] = true
+	t.ongoing = map[string]time.Time{}
+	for app, inc := range byApp {
+		t.ongoing[app] = inc.Since
 	}
 }
 
@@ -78,7 +78,7 @@ func assess(s *Set, st *graph.State, incidents map[string]cause.Incident, now ti
 			}
 		}
 		if over && now.Sub(s.At) <= SettleWindow {
-			s.Verdict, s.Fixes = Fixed, slices.Sorted(maps.Keys(s.during))
+			s.Verdict, s.Fixes, s.Ended = Fixed, slices.Sorted(maps.Keys(s.during)), now
 			s.Note = fmt.Sprintf("%s healthy %s later", names(slices.Sorted(maps.Keys(s.during))), short(now.Sub(s.Last)))
 			return
 		}
@@ -134,6 +134,9 @@ func broke(s *Set, incidents map[string]cause.Incident) bool {
 		top := inc.Causes[0]
 		for _, e := range s.Entries {
 			if top.Object == e.Object && top.At.Sub(e.At).Abs() <= Window {
+				if s.Verdict != Broke {
+					s.Broke = time.Time{} // not an incident it was made during
+				}
 				s.Verdict, s.Incident = Broke, app
 				if s.Broke.IsZero() || inc.Since.Before(s.Broke) {
 					s.Broke = inc.Since

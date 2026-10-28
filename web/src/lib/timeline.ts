@@ -6,6 +6,7 @@
 import type { Incident } from "../gen/cause";
 import type { Set as ChangeSet } from "../gen/feed";
 import { stateText } from "../components/IncidentCard";
+import { shortName } from "./feed";
 
 /** An incident: broken from start, fixed at fix, healthy again at end. No
  * end: still going at the window's edge. */
@@ -94,6 +95,17 @@ export function model(sets: ChangeSet[], current: Incident[], from: number, to: 
       marks.push({ at: ms(fix.at), kind: "fix", label: "fixed", set: fix });
       special.add(fix.id);
     }
+  }
+  // Fixes of incidents whose cause isn't in the feed: one that began before
+  // kubexray started recording, say. Drawn from when it began, which the
+  // fix noted.
+  for (const f of fixes) {
+    if (special.has(f.id)) continue;
+    for (const app of f.fixes ?? []) {
+      spans.push({ app, label: `${shortName(app)} was broken`, start: ms(f.broke) || ms(f.at), fix: ms(f.at), end: f.ended ? ms(f.ended) : undefined });
+    }
+    marks.push({ at: ms(f.at), kind: "fix", label: "fixed", set: f });
+    special.add(f.id);
   }
   // Incidents going on now that no change in the feed explains.
   for (const inc of current) {

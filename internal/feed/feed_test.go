@@ -238,6 +238,28 @@ func TestTheConfigMapStory(t *testing.T) {
 	}
 }
 
+// An incident whose cause wasn't recorded (it began before kubexray
+// started): the change that fixes it still says when it began and ended,
+// so the timeline can draw it.
+func TestFixOfAnIncidentFromBeforeTheRecording(t *testing.T) {
+	t.Parallel()
+	st, tr := cluster(), New(MaxSets)
+	inc := incident("Deployment/shop/checkout", at(-600), at(-300)) // from before kubexray started
+	tr.Assess(st, []cause.Incident{inc}, at(0))
+
+	co := st.Nodes["Deployment/shop/checkout"]
+	co.Change = by("kubectl-set", "kubectl", "set", at(10))
+	co.Spec = &graph.Spec{Revision: "3", Containers: []graph.Container{{Name: "checkout", Image: "busybox:1.36"}}}
+	apply(t, tr, st, at(10), co)
+	tr.Assess(st, []cause.Incident{inc}, at(15))
+	tr.Assess(st, nil, at(40)) // checkout recovered
+
+	fix := only(t, tr)
+	if fix.Verdict != Fixed || !fix.Broke.Equal(at(-300)) || !fix.Ended.Equal(at(40)) {
+		t.Errorf("the fix = %q, incident from %v to %v; want fixed, from -5m0s to 40s", fix.Verdict, fix.Broke.Sub(t0), fix.Ended.Sub(t0))
+	}
+}
+
 func TestRolloutSettlesOrSticks(t *testing.T) {
 	t.Parallel()
 	st, tr := cluster(), New(MaxSets)

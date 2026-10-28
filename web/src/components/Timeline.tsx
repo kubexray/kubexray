@@ -70,10 +70,13 @@ export function Timeline({ bounds, at, mode, incidents, onSeek, onFocus, playing
   const span = Math.max(1, to - from);
   const pct = (t: number) => Math.min(100, Math.max(0, ((t - from) / span) * 100));
 
-  const m = model(sets, incidents, from, to, value);
+  // Where an incident still going is drawn to: live, now, wherever the
+  // moment shown is (the incidents are live ones); in a replay, the moment.
+  const edge = live ? last : value;
+  const m = model(sets, incidents, from, to, edge);
   const all = moments(sets, m.spans);
   // Labels that fit: newest first, the rest a hover away.
-  const spanEnd = (s: Span) => s.end ?? (s.fix !== undefined ? value : (s.fix ?? value));
+  const spanEnd = (s: Span) => s.end ?? edge;
   const spanLabels = keepLabels(
     m.spans.map((s) => {
       const w = labelWidth(s.label.length, width);
@@ -207,8 +210,8 @@ export function Timeline({ bounds, at, mode, incidents, onSeek, onFocus, playing
         </div>
 
         {m.spans.map((s, i) => {
-          const fix = s.fix ?? s.end ?? value;
-          const end = s.end ?? (s.fix !== undefined ? value : fix);
+          const fix = s.fix ?? s.end ?? edge;
+          const end = s.end ?? edge;
           return (
             <div key={`${s.app}@${s.start}`}>
               <button
@@ -223,9 +226,16 @@ export function Timeline({ bounds, at, mode, incidents, onSeek, onFocus, playing
                 <div className={`tl-recovering${s.end === undefined && ongoing ? " ongoing" : ""}`} style={{ left: `${pct(s.fix)}%`, width: `${pct(end) - pct(s.fix)}%` }} />
               )}
               {spanLabels[i] && (
-                <span className={`tl-span-label${pct(s.start) > 80 ? " end" : ""}`} style={pct(s.start) > 80 ? { right: `${100 - pct(end)}%` } : { left: `${pct(s.start)}%` }}>
+                <button
+                  type="button"
+                  tabIndex={-1}
+                  className={`tl-hit tl-span-label${pct(s.start) > 80 ? " end" : ""}`}
+                  style={pct(s.start) > 80 ? { right: `${100 - pct(end)}%` } : { left: `${pct(s.start)}%` }}
+                  onClick={() => toIncident(s)}
+                  onPointerEnter={() => setHover({ left: pct(s.start), span: s })}
+                >
                   {s.label}
-                </span>
+                </button>
               )}
             </div>
           );
@@ -264,7 +274,7 @@ export function Timeline({ bounds, at, mode, incidents, onSeek, onFocus, playing
             onClose={() => setPinned(null)}
           />
         ) : (
-          hover && <HoverCard hover={hover} value={value} />
+          hover && <HoverCard hover={hover} value={edge} />
         )}
       </div>
 
