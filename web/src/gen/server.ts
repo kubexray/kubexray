@@ -4,6 +4,22 @@ import type * as feed from "./feed";
 import type * as graph from "./graph";
 
 //////////
+// source: access.go
+
+/**
+ * ValuesAccess decides whose values a signed-in person may see (ADR-0020).
+ */
+export type ValuesAccess = any;
+/**
+ * KubeAccess asks Kubernetes: may this person get ConfigMaps in the
+ * namespace? The same question kubectl would answer for them, with the
+ * identity the cluster's API server gives them through the same OIDC
+ * provider.
+ */
+export interface KubeAccess {
+}
+
+//////////
 // source: api.go
 
 /**

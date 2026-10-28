@@ -51,7 +51,7 @@ Each masked value says why, and the diff shows it: "hidden: the name looks like 
 ## Consequences
 
 - "LOG_LEVEL info → verbose" is in kubexray itself, and a ConfigMap edit shows its diff, line by line for files.
-- Anyone who can sign in to kubexray can read non-Secret configuration in every namespace kubexray watches. Until access follows Kubernetes permissions (SubjectAccessReview, ROADMAP v0.7), teams that need that boundary turn values off or limit who can sign in.
+- Anyone who can sign in to kubexray can read non-Secret configuration in every namespace kubexray watches, unless values follow Kubernetes permissions (ADR-0020).
 - Masking is a heuristic. A credential under an ordinary name with an ordinary shape (`FOO=abc123`) shows. Credentials belong in Secrets, which are never read.
 - kubexray needs to read ConfigMaps in full, not only their metadata. Its ClusterRole already allows `list` on ConfigMaps, which RBAC can't limit to metadata.
 - Recordings grow with ConfigMap contents, bounded by the caps above.

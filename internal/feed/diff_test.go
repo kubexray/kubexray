@@ -105,9 +105,9 @@ func TestDiffWithValues(t *testing.T) {
 	}
 	want := []DiffLine{
 		{Path: "API_TOKEN", Op: Changed, Note: "hidden: the name looks like a credential"},
-		{Path: "LOG_LEVEL", Op: Changed, From: "info", To: "verbose"},
-		{Path: "NEW", Op: Added, To: "on"},
-		{Path: "OLD", Op: Removed, From: "x"},
+		{Path: "LOG_LEVEL", Op: Changed, From: "info", To: "verbose", Value: true},
+		{Path: "NEW", Op: Added, To: "on", Value: true},
+		{Path: "OLD", Op: Removed, From: "x", Value: true},
 	}
 	if !slices.Equal(e.Diff, want) {
 		t.Errorf("diff = %+v", e.Diff)
@@ -125,9 +125,9 @@ func TestEnvDiffWithValues(t *testing.T) {
 		c(graph.EnvVar{Name: "LOG_LEVEL", Value: "fp:c", Text: "debug"}, graph.EnvVar{Name: "DB_URL", Value: "fp:d", Text: "postgres://[redacted]@db2", Masked: "value"}, graph.EnvVar{Name: "NEW", Value: "fp:e", Text: "1"}),
 	)
 	want := []DiffLine{
-		{Path: "env LOG_LEVEL", Op: Changed, From: "info", To: "debug"},
-		{Path: "env DB_URL", Op: Changed, From: "postgres://[redacted]@db", To: "postgres://[redacted]@db2", Note: "parts that look like credentials are hidden"},
-		{Path: "env NEW", Op: Added, To: "1"},
+		{Path: "env LOG_LEVEL", Op: Changed, From: "info", To: "debug", Value: true},
+		{Path: "env DB_URL", Op: Changed, From: "postgres://[redacted]@db", To: "postgres://[redacted]@db2", Note: "parts that look like credentials are hidden", Value: true},
+		{Path: "env NEW", Op: Added, To: "1", Value: true},
 	}
 	if !slices.Equal(d.lines, want) {
 		t.Errorf("diff = %+v", d.lines)
@@ -152,7 +152,7 @@ func TestDiffOfAManifest(t *testing.T) {
 	if e.Summary != "changed (spec.maxReplicas 10 → 3)" {
 		t.Errorf("summary = %q", e.Summary)
 	}
-	if want := []DiffLine{{Path: "spec.maxReplicas", Op: Changed, From: "10", To: "3"}}; !slices.Equal(e.Diff, want) {
+	if want := []DiffLine{{Path: "spec.maxReplicas", Op: Changed, From: "10", To: "3", Value: true}}; !slices.Equal(e.Diff, want) {
 		t.Errorf("diff = %+v", e.Diff)
 	}
 }
@@ -171,7 +171,7 @@ func TestDiffOfARolloutStrategy(t *testing.T) {
 	if e.Summary != "changed (spec.strategy.rollingUpdate.maxSurge 25% → 50%)" {
 		t.Errorf("summary = %q", e.Summary)
 	}
-	if want := []DiffLine{{Path: "spec.strategy.rollingUpdate.maxSurge", Op: Changed, From: "25%", To: "50%"}}; !slices.Equal(e.Diff, want) {
+	if want := []DiffLine{{Path: "spec.strategy.rollingUpdate.maxSurge", Op: Changed, From: "25%", To: "50%", Value: true}}; !slices.Equal(e.Diff, want) {
 		t.Errorf("diff = %+v", e.Diff)
 	}
 }

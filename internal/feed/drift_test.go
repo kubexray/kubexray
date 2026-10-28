@@ -37,7 +37,7 @@ func TestDriftAgainstWhatHelmApplied(t *testing.T) {
 	apply(t, tr, st, at(5), cfg)
 
 	e := tr.Sets(at(-1))[0].Entries[0] // newest first
-	want := []DiffLine{{Path: "LOG_LEVEL", Op: Changed, From: "info", To: "verbose"}}
+	want := []DiffLine{{Path: "LOG_LEVEL", Op: Changed, From: "info", To: "verbose", Value: true}}
 	if !slices.Equal(e.DriftDiff, want) {
 		t.Errorf("drift diff = %+v", e.DriftDiff)
 	}
@@ -53,7 +53,7 @@ func TestDriftAgainstWhatHelmApplied(t *testing.T) {
 	cfg.Change = by("kubectl-edit", "kubectl", "edit", at(200))
 	apply(t, tr, st, at(200), cfg)
 	last := tr.Sets(at(-1))[0].Entries[0]
-	if want := []DiffLine{{Path: "LOG_LEVEL", Op: Changed, From: "warn", To: "error"}}; !slices.Equal(last.DriftDiff, want) {
+	if want := []DiffLine{{Path: "LOG_LEVEL", Op: Changed, From: "warn", To: "error", Value: true}}; !slices.Equal(last.DriftDiff, want) {
 		t.Errorf("after an upgrade, drift diff = %+v", last.DriftDiff)
 	}
 }

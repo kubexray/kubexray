@@ -340,6 +340,8 @@ func TestValuesOnlyWhenAsked(t *testing.T) {
 		{Options{}, false},
 		{Options{Values: true}, true},
 		{Options{Values: true, Anonymize: true}, false},
+		{Options{Values: true, Allow: func(ns string) bool { return ns != "payments-prod" }}, false}, // ADR-0020
+		{Options{Values: true, Allow: func(string) bool { return true }}, true},
 	} {
 		c.opts.From, c.opts.To = t0.Add(-time.Minute), t0.Add(3*time.Minute)
 		var buf bytes.Buffer

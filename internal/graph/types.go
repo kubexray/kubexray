@@ -151,11 +151,19 @@ func hashes(m map[string]Value) map[string]Value {
 
 // StripValues applies WithoutValues to every node in a message.
 func StripValues(m *Message) {
+	StripValuesWhere(m, func(Node) bool { return true })
+}
+
+// StripValuesWhere applies WithoutValues to the nodes in a message that
+// strip picks.
+func StripValuesWhere(m *Message, strip func(Node) bool) {
 	for i, n := range m.Nodes {
-		m.Nodes[i] = WithoutValues(n)
+		if strip(n) {
+			m.Nodes[i] = WithoutValues(n)
+		}
 	}
 	for i, op := range m.Ops {
-		if op.Node != nil {
+		if op.Node != nil && strip(*op.Node) {
 			n := WithoutValues(*op.Node)
 			m.Ops[i].Node = &n
 		}

@@ -19,6 +19,10 @@ import (
 type User struct {
 	Email string `json:"email"`
 	Name  string `json:"name,omitempty"`
+	// Who they are to Kubernetes, for checking what they may read
+	// (ADR-0020): the username claim, and their groups, unprefixed.
+	KubeUser string   `json:"kube,omitempty"`
+	Groups   []string `json:"groups,omitempty"`
 }
 
 // MinKeyLength is the shortest session key accepted.

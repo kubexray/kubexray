@@ -33,6 +33,9 @@ auth:
       key: client-secret
     scopes: []            # besides openid, email and profile; e.g. [groups]
     groupsClaim: groups   # the ID token claim listing someone's groups
+    # The claim your cluster's API server takes as the username (its
+    # --oidc-username-claim), for diffs.access: kubernetes.
+    usernameClaim: email
     # Email and domain rules need the provider to say the email is verified.
     # Microsoft Entra ID doesn't, so with Entra allow groups (object IDs).
     sessionTTL: 12h       # how long a sign-in lasts
@@ -67,6 +70,18 @@ diffs:
   #   - argoproj.io/v1alpha1/applications
   #   - gateway.networking.k8s.io/v1/httproutes
   extraResources: []
+  # Who sees values:
+  # all: everyone who can sign in.
+  # kubernetes: only people Kubernetes lets read ConfigMaps in the namespace,
+  #   asked with a SubjectAccessReview (ADR-0020). Needs auth.mode oidc, with
+  #   the same OpenID Connect provider your cluster's API server trusts, so
+  #   people are the same users and groups to both. The chart lets kubexray
+  #   create SubjectAccessReviews.
+  access: all
+  # What the API server puts before OIDC usernames and groups (its
+  # --oidc-username-prefix and --oidc-groups-prefix), with access kubernetes.
+  kubeUsernamePrefix: ""
+  kubeGroupsPrefix: ""
 
 signals:
   # Where to read request errors and latency (ADR-0016). Empty: kubexray
