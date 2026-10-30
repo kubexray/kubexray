@@ -150,6 +150,8 @@ details.ns > summary::before {
   transform: rotate(-45deg); align-self: center; transition: transform 0.15s;
 }
 details.ns[open] > summary::before { transform: rotate(45deg); }
+/* Focus drawn inside the card, not as lines across the page. */
+details.ns > summary:focus-visible { outline-offset: -2px; border-radius: 10px; }
 .ns-name { font: 600 16px var(--font-display); }
 .ns-meta { color: var(--muted); font-size: 13px; }
 .ns-meta.bad { color: var(--crit); }
@@ -203,33 +205,40 @@ svg.wires path.incident { stroke: var(--crit); stroke-width: 2.5; }
 .pods .group { display: inline-flex; align-items: center; gap: 6px; }
 .pods .sep { width: 1px; height: 14px; background: var(--border-strong); margin: 0 4px; }
 /* Who manages an app, and a hand edit its tool would undo. */
-.managed { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; }
-.owner { display: inline-flex; align-items: center; gap: 5px; padding: 2px 7px; border: 0; border-radius: 5px; background: var(--sunken); color: var(--muted); font: 500 11px var(--font-data); white-space: nowrap; }
-button.owner { cursor: pointer; }
-button.owner:hover, button.owner[aria-expanded="true"] { background: var(--text); color: var(--surface); }
 .drift-chip { display: inline-flex; align-items: center; gap: 5px; padding: 1px 7px; border: 1px solid color-mix(in srgb, var(--warn) 40%, var(--border)); border-radius: 5px; background: color-mix(in srgb, var(--warn) 12%, var(--surface)); color: color-mix(in srgb, var(--warn) 75%, var(--text)); font-size: 11px; font-weight: 600; white-space: nowrap; }
+.pods > .drift-chip { margin-left: auto; }
 .drift-chip i { width: 6px; height: 6px; border-radius: 50%; background: var(--warn); }
-/* The rows one release manages, outlined. */
-.release { position: absolute; border: 1.5px dashed color-mix(in srgb, var(--accent) 45%, var(--border)); border-radius: 12px; pointer-events: none; }
-.release span { position: absolute; top: 5px; left: 10px; color: var(--accent); font: 500 10.5px var(--font-data); white-space: nowrap; }
-/* The line a release's label sits on, above its rows. */
-.release-gap { grid-column: 1 / -1; height: 14px; margin-bottom: -4px; }
-/* A Helm release's history, from its badge. */
-.release-history { position: fixed; z-index: 30; width: 400px; max-width: calc(100vw - 16px); padding: 12px; background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 18px 40px -16px rgb(16 24 32 / 0.45); font-size: 13px; }
-.release-history:focus { outline: none; }
-.release-history h3 { margin: 0; font-size: 13px; }
-.release-history .sub { margin: 2px 0 8px; color: var(--muted); font-size: 12px; }
-.release-history ol { list-style: none; margin: 0; padding: 0; }
-.release-history li { display: grid; grid-template-columns: 30px minmax(0, 1fr) auto; gap: 2px 10px; align-items: start; padding: 8px 4px; border-top: 1px solid var(--border); }
-.release-history li.failed { background: color-mix(in srgb, var(--crit) 5%, var(--surface)); }
-.release-history b { font: 600 12px var(--font-data); color: var(--muted); }
-.release-history .what { display: grid; gap: 2px; min-width: 0; }
-.release-history .what > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.release-history small { color: var(--muted); font-size: 12px; }
-.release-history .status { padding: 1px 8px; border-radius: 999px; background: var(--sunken); color: var(--muted); font-size: 11.5px; font-weight: 600; }
-.release-history .status.ok { background: color-mix(in srgb, var(--ok) 14%, var(--surface)); color: var(--ok); }
-.release-history .status.bad { background: var(--crit-soft); color: var(--crit); }
-.release-history li button { grid-column: 2; justify-self: start; padding: 0; border: 0; background: none; color: var(--accent); font-size: 12px; font-weight: 600; cursor: pointer; }
+/* The rows one release manages, outlined: its label sits on the top line. */
+.grid { isolation: isolate; }
+.release { position: absolute; left: -10px; right: -10px; z-index: -1; border: 1.5px dashed var(--border-strong); border-radius: 12px; pointer-events: none; }
+.release.helm { border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); background: color-mix(in srgb, var(--accent) 4%, transparent); }
+.release-head { grid-column: 1 / -1; display: flex; margin-top: 8px; }
+.release-tag { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; padding: 2px 10px; border: 1px solid var(--border-strong); border-radius: 999px; background: var(--surface); color: var(--muted); font: 500 11.5px var(--font-data); white-space: nowrap; cursor: pointer; }
+.release-tag b { font-weight: 600; color: var(--text); }
+.release-tag span { overflow: hidden; text-overflow: ellipsis; }
+.release-head.helm .release-tag { border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); }
+.release-head.helm .release-tag b, .release-head.helm .release-tag svg { color: var(--accent); }
+.release-tag:hover { border-color: var(--accent); }
+.release-tag.selected { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.release-tag:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.release-head.loose { margin-top: 10px; color: var(--faint); font: 500 11px var(--font-data); }
+/* A release in the Selected panel. */
+.release-details .name { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.rel-status { padding: 1px 8px; border-radius: 999px; background: var(--sunken); color: var(--muted); font: 600 11.5px var(--font-body); }
+.rel-status.ok { background: color-mix(in srgb, var(--ok) 14%, var(--surface)); color: var(--ok); }
+.rel-status.bad { background: var(--crit-soft); color: var(--crit); }
+.rel-objects { display: flex; flex-wrap: wrap; gap: 5px; list-style: none; margin: 12px 0 0; padding: 0; }
+.rel-objects button { padding: 2px 8px; border: 0; border-radius: 5px; background: var(--sunken); color: var(--text); font: 500 11.5px var(--font-data); cursor: pointer; }
+.rel-objects button:hover { background: var(--accent-soft); color: var(--accent); }
+.rel-head { margin: 16px 0 4px; font: 500 11px var(--font-data); color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+.revisions { list-style: none; margin: 0; padding: 0; }
+.revisions li { display: grid; grid-template-columns: 30px minmax(0, 1fr) auto; gap: 2px 10px; align-items: start; padding: 8px 4px; border-top: 1px solid var(--border); font-size: 13px; }
+.revisions li.failed { background: color-mix(in srgb, var(--crit) 5%, var(--surface)); }
+.revisions b { font: 600 12px var(--font-data); color: var(--muted); }
+.revisions .what { display: grid; gap: 2px; min-width: 0; }
+.revisions .what > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.revisions small { color: var(--muted); font-size: 12px; }
+.revisions li button { grid-column: 2; justify-self: start; padding: 0; border: 0; background: none; color: var(--accent); font-size: 12px; font-weight: 600; cursor: pointer; }
 .pods .caption { font-size: 11px; color: var(--muted); margin-left: 4px; }
 .pod {
   width: 12px; height: 12px; border-radius: 50%; border: 0; padding: 0; cursor: pointer; background: var(--ok);
@@ -382,9 +391,9 @@ aside { display: flex; flex-direction: column; min-height: 0; min-width: 0; over
 .ongoing { animation: tl-pulse 1.6s ease-in-out infinite; }
 @keyframes tl-pulse { 50% { opacity: 0.55; } }
 @media (prefers-reduced-motion: reduce) { .ongoing { animation: none; } }
-.tl-span-label { position: absolute; z-index: 2; top: 74px; padding: 0 0 0 5px; border: 0; background: transparent; font: 600 11px var(--font-body); color: color-mix(in srgb, var(--crit) 75%, var(--text)); white-space: nowrap; cursor: pointer; }
+.tl-span-label { position: absolute; z-index: 2; top: 33px; padding: 0 0 0 5px; border: 0; background: transparent; font: 600 11px var(--font-body); color: color-mix(in srgb, var(--crit) 75%, var(--text)); white-space: nowrap; cursor: pointer; }
 .tl-span-label:hover { text-decoration: underline; }
-.tl-bars { position: absolute; left: 0; right: 0; top: 30px; height: 42px; display: flex; align-items: flex-end; gap: 2px; pointer-events: none; }
+.tl-bars { position: absolute; left: 0; right: 0; top: 30px; height: 60px; display: flex; align-items: flex-end; gap: 2px; pointer-events: none; }
 .tl-bars i.off { visibility: hidden; }
 .tl-span-label.end { padding: 0 5px 0 0; }
 .tl-bars i { flex: 1; min-width: 1px; border-radius: 2px 2px 0 0; background: color-mix(in srgb, var(--muted) 45%, var(--surface)); }

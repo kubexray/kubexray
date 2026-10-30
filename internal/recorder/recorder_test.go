@@ -14,7 +14,9 @@ import (
 	"github.com/kubexray/kubexray/internal/graph"
 )
 
-var t0 = time.Date(2026, 10, 22, 14, 0, 0, 0, time.UTC)
+// t0 is recent: opening a recording drops what's older than its window,
+// measured from now, so a fixed date would expire.
+var t0 = time.Now().UTC().Truncate(time.Second).Add(-time.Hour)
 
 func at(s float64) time.Time { return t0.Add(time.Duration(s * float64(time.Second))) }
 
