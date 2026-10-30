@@ -35,15 +35,37 @@ const nsId = (name: string) => `ns-${name}`;
 export const MapView = memo(function MapView(props: Props) {
   const apps = props.view.filter((ns) => !ns.system);
   const system = props.view.filter((ns) => ns.system);
+  // The namespace in view, marked in the bar: the first whose card still
+  // shows below the bar. After a jump, the one jumped to, while it scrolls.
+  const map = useRef<HTMLDivElement>(null);
+  const [current, setCurrent] = useState<string>();
+  const settling = useRef(0);
+  useEffect(() => {
+    const el = map.current;
+    if (!el) return;
+    const spy = () => {
+      if (performance.now() < settling.current) return;
+      const top = el.getBoundingClientRect().top + (el.querySelector(".ns-bar")?.getBoundingClientRect().height ?? 0) + 16;
+      const shown = [...el.querySelectorAll<HTMLElement>("details.ns[id^='ns-']")].find((ns) => ns.getBoundingClientRect().bottom > top);
+      setCurrent(shown?.id.slice(3));
+    };
+    const frame = requestAnimationFrame(spy);
+    el.addEventListener("scroll", spy, { passive: true });
+    return () => {
+      cancelAnimationFrame(frame);
+      el.removeEventListener("scroll", spy);
+    };
+  }, []);
   // A namespace from the bar: opened, and scrolled to.
   const jump = (name: string) => {
     if (system.some((ns) => ns.name === name)) props.onToggle(SYSTEM, true);
     props.onToggle(name, true);
+    setCurrent(name);
+    settling.current = performance.now() + 900;
     requestAnimationFrame(() => document.getElementById(nsId(name))?.scrollIntoView({ block: "start", behavior: "smooth" }));
   };
-  const current = props.highlight.selected?.split("/")[1]; // "Kind/namespace/name"
   return (
-    <div className="map" aria-label="Cluster map">
+    <div className="map" aria-label="Cluster map" ref={map}>
       {props.view.length > 1 && <NamespaceBar apps={apps} system={system} current={current} onJump={jump} />}
       {apps.map((ns) => (
         <Namespace key={ns.name} ns={ns} {...props} />

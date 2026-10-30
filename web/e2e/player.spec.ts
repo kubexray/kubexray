@@ -207,6 +207,10 @@ test("the namespace bar jumps to any namespace, Kubernetes' own in a menu", asyn
   await openDemo(page);
   const bar = page.getByRole("navigation", { name: "Namespaces" });
   await expect(bar.getByRole("button", { name: /^shop \d/ })).toBeVisible();
+  // The chip clicked is marked as the namespace in view.
+  const other = bar.locator(".ns-bar-list .ns-chip").nth(1);
+  await other.click();
+  await expect(other).toHaveAttribute("aria-current", "true");
   await bar.getByRole("button", { name: /^System/ }).click();
   const item = page.getByRole("menuitem").first();
   const name = ((await item.innerText()).split("\n")[0] ?? "").trim();
