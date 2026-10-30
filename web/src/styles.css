@@ -20,7 +20,7 @@ code { font-family: var(--font-data); font-size: 12px; }
 /* Header */
 .header { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 20px; }
 .brand { display: flex; align-items: center; gap: 12px; }
-.header .counts { margin-left: auto; }
+.header .health { margin-left: auto; }
 .views { display: flex; gap: 3px; background: var(--sunken); padding: 3px; border-radius: 8px; }
 .views button { border: 0; background: transparent; padding: 5px 14px; border-radius: 6px; font-weight: 500; color: var(--muted); cursor: pointer; display: inline-flex; align-items: center; gap: 6px; }
 .views button.on { background: var(--surface); color: var(--text); font-weight: 600; box-shadow: 0 1px 2px rgb(0 0 0 / 0.08); }
@@ -42,9 +42,10 @@ code { font-family: var(--font-data); font-size: 12px; }
 .status { font-size: 12px; font-weight: 500; padding: 2px 8px; border-radius: 999px; background: var(--sunken); color: var(--muted); }
 .status.rewound { background: var(--accent-soft); color: var(--accent); }
 .status.reconnecting { color: var(--warn); }
-.counts { display: flex; flex-wrap: wrap; gap: 16px; font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
-.counts b { color: var(--text); font-weight: 600; }
-.counts .bad b { color: var(--crit); }
+.health { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 500; color: var(--ok); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.health.bad { color: var(--crit); }
+.health .dot { margin: 0; }
+.health .updating { color: var(--muted); font-weight: 400; }
 .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 6px; vertical-align: 1px; }
 .dot.ok { background: var(--ok); }
 .dot.crit { background: var(--crit); }
@@ -89,7 +90,6 @@ code { font-family: var(--font-data); font-size: 12px; }
 .chip-btn span { color: var(--muted); font: 12px var(--font-data); }
 .chip-btn.link { border-style: dashed; color: var(--accent); }
 .affected { display: flex; flex-wrap: wrap; gap: 6px; }
-.allclear { border: 1px solid var(--border); background: var(--surface); border-radius: 10px; padding: 10px 14px; color: var(--ok); font-weight: 500; }
 .guide { margin: -4px 0 0; color: var(--muted); font-size: 13px; }
 
 /* Main area */

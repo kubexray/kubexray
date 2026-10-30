@@ -195,7 +195,6 @@ export function Workspace(props: Props) {
       {props.header(view)}
       {props.notice}
       <IncidentCard list={list} at={at} canRewindTo={props.canRewindTo} onShow={show} onRewind={props.onRewind} actions={props.actions} />
-      {incidents.length === 0 && !props.loading && <div className="allclear">No incidents{at ? " at this moment" : ""}. Every app is running as expected.</div>}
       <p className="guide">
         Read each row left to right: requests come in, a load balancer spreads them across the app's pods, and the app reads its config and storage.
       </p>
