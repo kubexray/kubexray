@@ -295,11 +295,7 @@ func literal(name, value string) (text, masked string) {
 	case redact.SensitiveName(name):
 		return "", "name"
 	case len(value) > maxValue:
-		cut := value[:maxValue]
-		for len(cut) > 0 && !utf8.RuneStart(value[len(cut)]) {
-			cut = cut[:len(cut)-1]
-		}
-		t, _ := redact.Text(cut)
+		t, _ := redact.Text(cutValue(value))
 		return t, "size"
 	}
 	if t, hid := redact.Text(value); hid {
@@ -308,12 +304,31 @@ func literal(name, value string) (text, masked string) {
 	return value, ""
 }
 
+// configValue is a ConfigMap value as a diff shows it: in full, since
+// anyone who may read the ConfigMap can read it with kubectl, and cut when
+// it's long (ADR-0021). Replays mask it again before it leaves the cluster.
+func configValue(value string) (text, masked string) {
+	if len(value) > maxValue {
+		return cutValue(value), "size"
+	}
+	return value, ""
+}
+
+// cutValue is a long value's first maxValue bytes, on a character boundary.
+func cutValue(value string) string {
+	cut := value[:maxValue]
+	for len(cut) > 0 && !utf8.RuneStart(value[len(cut)]) {
+		cut = cut[:len(cut)-1]
+	}
+	return cut
+}
+
 // systemNamespaces hold the cluster's own configuration: kubexray keeps no
 // values from them.
 var systemNamespaces = map[string]bool{"kube-system": true, "kube-public": true, "kube-node-lease": true}
 
-// configData is a ConfigMap's contents for diffs: each key's text (masked
-// and capped like any value) and fingerprint. Binary data and keys past the
+// configData is a ConfigMap's contents for diffs: each key's text (in
+// full, capped by size) and fingerprint. Binary data and keys past the
 // size budget keep only a fingerprint.
 func configData(cm *corev1.ConfigMap) map[string]graph.Value {
 	if systemNamespaces[cm.Namespace] || len(cm.Data)+len(cm.BinaryData) == 0 {
@@ -328,7 +343,7 @@ func configData(cm *corev1.ConfigMap) map[string]graph.Value {
 		if budget -= len(v); budget < 0 {
 			val.Masked = "size"
 		} else {
-			val.Text, val.Masked = literal(k, v)
+			val.Text, val.Masked = configValue(v)
 		}
 		out[capped(k)] = val
 		if len(out) == maxListed {

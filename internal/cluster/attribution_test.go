@@ -327,10 +327,11 @@ func TestConfigMapContents(t *testing.T) {
 	}
 	n, _ := mapConfigMap(cm)
 	d := n.Data
-	if d["LOG_LEVEL"].Text != "info" || d["API_TOKEN"].Text != "" || d["API_TOKEN"].Masked != "name" {
+	// Shown in full, whatever the name or contents (ADR-0021).
+	if d["LOG_LEVEL"].Text != "info" || d["API_TOKEN"].Text != "abc" || d["API_TOKEN"].Masked != "" {
 		t.Errorf("data = %+v", d)
 	}
-	if d["DATABASE_URL"].Text != "postgres://[redacted]@db/shop" || d["DATABASE_URL"].Masked != "value" {
+	if d["DATABASE_URL"].Text != cm.Data["DATABASE_URL"] || d["DATABASE_URL"].Masked != "" {
 		t.Errorf("url = %+v", d["DATABASE_URL"])
 	}
 	if d["BIG"].Masked != "size" || len(d["BIG"].Text) != maxValue || d["logo.png"].Masked != "binary" || !strings.HasPrefix(d["logo.png"].Hash, "fp:") {
