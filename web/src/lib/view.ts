@@ -123,7 +123,7 @@ export function buildView(state: ClusterState): NamespaceView[] {
       }
     } else if (APP_KINDS.has(n.kind) && appOf(n.id) === n.id && n.kind !== "ReplicaSet") {
       workload(ns(n.ns), n);
-    } else if (n.kind === "Service") ns(n.ns).services.push(n);
+    } else if (n.kind === "Service" && n.id !== API_SERVICE) ns(n.ns).services.push(n);
     else if (n.kind === "Ingress") ns(n.ns).ingresses.push(n);
   }
 
@@ -184,6 +184,10 @@ export function buildView(state: ClusterState): NamespaceView[] {
 }
 
 /** Every app in the view, with its namespace. */
+/** The Service every cluster has for its own API: plumbing, never part of
+ * an app's path, so it isn't drawn. */
+const API_SERVICE = "Service/default/kubernetes";
+
 export function allWorkloads(view: NamespaceView[]): { ns: string; w: Workload }[] {
   return view.flatMap((ns) => ns.rows.flatMap((r) => (r.workload ? [{ ns: ns.name, w: r.workload }] : [])));
 }

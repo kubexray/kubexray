@@ -321,7 +321,7 @@ function Namespace({ ns, open, highlight, causeOf, onToggle, onSelect, onHover }
                   {row.services.map((s) => (
                     <div key={s.id} className="svc">
                       {card(s, "Service")}
-                      {!ns.serviceTargets.get(s.id)?.size && s.name !== "kubernetes" && <span className="warn-note">selects no pods</span>}
+                      {!ns.serviceTargets.get(s.id)?.size && <span className="warn-note">selects no pods</span>}
                     </div>
                   ))}
                 </div>
