@@ -7,6 +7,7 @@ import type { Incident } from "../gen/cause";
 import type { Set as ChangeSet } from "../gen/feed";
 import { stateText } from "../components/IncidentCard";
 import { shortName } from "./feed";
+import { chartChange, type ReleaseRevision, revisionSet } from "./helm";
 
 /** An incident: broken from start, fixed at fix, healthy again at end. No
  * end: still going at the window's edge. */
@@ -19,12 +20,33 @@ export interface Span {
   cause?: ChangeSet;
 }
 
-/** A change that broke something, or fixed it. */
+/** A Helm revision: which, its chart move, and the earlier revision whose
+ * chart it went back to, which a rollback does. */
+export interface RevisionInfo {
+  release: string;
+  ns: string;
+  version: number;
+  status: string;
+  chart?: { from?: string; to?: string };
+  back?: number;
+}
+
+/** A change that broke something, or fixed it; a Helm revision's, if one. */
 export interface Mark {
   at: number;
   kind: "cause" | "fix";
   label: string;
   set: ChangeSet;
+  helm?: RevisionInfo;
+}
+
+/** A Helm install, upgrade or rollback that broke and fixed nothing. Set is
+ * what it changed, when kubexray was recording. */
+export interface HelmMark {
+  at: number;
+  label: string;
+  rev: RevisionInfo;
+  set?: ChangeSet;
 }
 
 /** How many objects changed in a slice of time, the marks' changes included. */
@@ -36,6 +58,7 @@ export interface Bar {
 export interface Model {
   spans: Span[];
   marks: Mark[];
+  helm: HelmMark[];
   bars: Bar[];
   bucket: number; // ms per bar
 }
@@ -76,7 +99,7 @@ const incidentLabel = (s: ChangeSet) => (s.note ?? s.incident ?? "").replace(/(?
 
 /** The window's model: from and to in ms, edge the time incidents still
  * going are drawn to (now, or the moment shown). */
-export function model(sets: ChangeSet[], current: Incident[], from: number, to: number, edge: number): Model {
+export function model(sets: ChangeSet[], current: Incident[], from: number, to: number, edge: number, revs: ReleaseRevision[] = []): Model {
   const bucket = bucketFor(to - from);
   const spans: Span[] = [];
   const marks: Mark[] = [];
@@ -120,6 +143,30 @@ export function model(sets: ChangeSet[], current: Incident[], from: number, to: 
     spans.push({ app: inc.app, label: `${inc.name} ${stateText(inc)}`, start: since });
   }
 
+  // Helm revisions: on the mark of the change they made when it broke or
+  // fixed something, else marks of their own.
+  const helm: HelmMark[] = [];
+  const charts = new Map<string, Map<string, number>>(); // release → chart version → first revision
+  const before = new Map<string, ChangeSet | undefined>(); // release → its previous revision's change
+  for (const r of revs) {
+    const set = revisionSet(sets, { tool: "helm", name: r.release }, r);
+    const chart = set && chartChange(set);
+    const key = `${r.ns}/${r.release}`;
+    const seen = charts.get(key) ?? new Map<string, number>();
+    charts.set(key, seen);
+    // Back to an earlier revision: its chart again, or the previous
+    // revision's change undone, which rolling back the last upgrade does.
+    const prev = before.get(key);
+    before.set(key, set);
+    const back = chart?.to && chart.to !== chart.from ? seen.get(chart.to) : set && prev && r.version > 2 && undoes(set, prev) ? r.version - 2 : undefined;
+    if (chart?.from && !seen.has(chart.from)) seen.set(chart.from, r.version - 1);
+    if (chart?.to && !seen.has(chart.to)) seen.set(chart.to, r.version);
+    const rev: RevisionInfo = { release: r.release, ns: r.ns, version: r.version, status: r.status, chart, back };
+    const mark = set && marks.find((m) => m.set.id === set.id);
+    if (mark) mark.helm = rev;
+    else helm.push({ at: ms(r.at), label: `${r.release} #${r.version}`, rev, set });
+  }
+
   const counts = new Map<number, number>();
   for (const s of sets) {
     const at = ms(s.at);
@@ -135,9 +182,22 @@ export function model(sets: ChangeSet[], current: Incident[], from: number, to: 
   return {
     spans: spans.filter((s) => (s.end ?? edge) >= from && s.start <= to),
     marks: marks.filter((m) => m.at >= from && m.at <= to),
+    helm: helm.filter((h) => h.at >= from && h.at <= to),
     bars,
     bucket,
   };
+}
+
+/** Whether change s puts back every value change prev made, and nothing else. */
+function undoes(s: ChangeSet, prev: ChangeSet): boolean {
+  const lines = (c: ChangeSet) => c.entries.flatMap((e) => (e.diff ?? []).map((d) => ({ ...d, object: e.object })));
+  const mine = lines(s);
+  const theirs = lines(prev);
+  return (
+    mine.some((l) => l.from !== undefined || l.to !== undefined) &&
+    mine.length === theirs.length &&
+    mine.every((l) => theirs.some((t) => t.object === l.object && t.path === l.path && t.from === l.to && t.to === l.from))
+  );
 }
 
 /** Folds spans of one app that overlap into the first, in place, and drops

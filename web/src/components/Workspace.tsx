@@ -2,7 +2,7 @@ import { type CSSProperties, type ReactNode, useCallback, useEffect, useMemo, us
 import type { Group, Incident } from "../gen/cause";
 import type { ClusterEvent } from "../lib/events";
 import { labelOf } from "../lib/eventlog";
-import { Helm, parseReleaseId, revisions } from "../lib/helm";
+import { allRevisions, Helm, parseReleaseId, revisions } from "../lib/helm";
 import { clock } from "../lib/format";
 import type { ClusterState } from "../lib/state";
 import { searchView } from "../lib/feed";
@@ -205,7 +205,7 @@ export function Workspace(props: Props) {
       {props.header(view)}
       {props.notice}
       <IncidentCard list={list} at={at} canRewindTo={props.canRewindTo} onShow={show} onRewind={props.onRewind} actions={props.actions} />
-      <Helm.Provider value={{ revisions: (release, ns) => revisions(state, release, ns), onRewind: props.onRewind }}>
+      <Helm.Provider value={{ revisions: (release, ns) => revisions(state, release, ns), all: () => allRevisions(state), onRewind: props.onRewind }}>
         <main className={`main${props.loading ? " loading" : ""}${logFull ? " log-full" : ""}`} style={{ "--aside": `${asideW}px` } as CSSProperties}>
           <MapView view={mapView} open={open} highlight={highlight} causeOf={causeOf} onToggle={toggle} onSelect={setSelected} onHover={setHovered} />
           <Splitter axis="col" label="Resize the side panel" value={asideW} min={300} max={900} pane="after" onChange={setAsideW} onReset={() => setAsideW(ASIDE_W)} />
@@ -232,8 +232,8 @@ export function Workspace(props: Props) {
             )}
           </aside>
         </main>
+        {props.timeline(compare, ghost)}
       </Helm.Provider>
-      {props.timeline(compare, ghost)}
     </div>
   );
 }

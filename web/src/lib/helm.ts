@@ -77,10 +77,43 @@ export function revisions(state: ClusterState, release: string, ns: string): Rev
   return out.sort((a, b) => b.version - a.version);
 }
 
-/** What the map needs from the moment shown: a release's revisions, and a
- * way to rewind to one. */
+/** A revision of any release in the cluster. */
+export interface ReleaseRevision extends Revision {
+  release: string;
+  ns: string;
+}
+
+const RECORD = /^sh\.helm\.release\.v1\.(.+)\.v(\d+)$/;
+
+/** Every Helm revision in the cluster, oldest first, from the labels of the
+ * Secrets Helm keeps them in. */
+export function allRevisions(state: ClusterState): ReleaseRevision[] {
+  const out: ReleaseRevision[] = [];
+  for (const n of state.nodes.values()) {
+    const m = n.kind === "Secret" && n.labels?.owner === "helm" ? RECORD.exec(n.name) : null;
+    if (!m || !n.ns) continue;
+    out.push({ release: n.labels?.name ?? (m[1] as string), ns: n.ns, version: Number(n.labels?.version ?? m[2]), status: n.labels?.status ?? "", at: n.created });
+  }
+  return out.sort((a, b) => Date.parse(a.at) - Date.parse(b.at) || a.version - b.version);
+}
+
+/** The chart version a change moved from and to, from its helm.sh/chart
+ * label: "storefront-1.2.0" → "storefront-1.2.1" is 1.2.0 → 1.2.1. */
+export function chartChange(s: ChangeSet): { from?: string; to?: string } | undefined {
+  for (const e of s.entries) {
+    const l = e.diff?.find((d) => d.path.includes("helm.sh/chart"));
+    if (!l) continue;
+    const v = (x?: string) => x?.match(/-(v?\d[\w.+-]*)$/)?.[1];
+    return { from: v(l.from), to: v(l.to) };
+  }
+  return undefined;
+}
+
+/** What the map and the timeline need from the moment shown: a release's
+ * revisions, every revision, and a way to rewind to one. */
 export interface HelmInfo {
   revisions: (release: string, ns: string) => Revision[];
+  all?: () => ReleaseRevision[];
   onRewind?: (ts: string) => void;
 }
 export const Helm = createContext<HelmInfo>({ revisions: () => [] });

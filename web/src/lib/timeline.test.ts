@@ -27,6 +27,30 @@ describe("timeline model", () => {
     expect(m.bars.reduce((n, b) => n + b.count, 0)).toBe(3);
   });
 
+  it("marks Helm revisions: on the change they broke with, else on their own", () => {
+    const chart = (from: string, to: string) => [{ at: T(0), object: "Deployment/shop/web", kind: "Deployment", name: "web", what: "template", summary: "template", diff: [{ path: 'metadata.labels["helm.sh/chart"]', op: "changed", from: `web-${from}`, to: `web-${to}` }] }];
+    const helm = { tool: "helm", name: "web" };
+    const up2 = set({ id: "u2", at: T(5), origin: helm, entries: chart("1.0.0", "1.1.0") });
+    const up3 = set({ ...broke, id: "u3", origin: helm, entries: [...broke.entries, ...chart("1.1.0", "1.2.0")] });
+    const up4 = set({ id: "u4", at: T(20), origin: helm, entries: chart("1.2.0", "1.1.0") });
+    const rev = (version: number, m: number) => ({ release: "web", ns: "shop", version, status: "superseded", at: T(m) });
+    const m = model([up2, up3, up4], [], T0 - 10 * 60_000, T0 + 30 * 60_000, T0 + 30 * 60_000, [rev(1, -5), rev(2, 5), rev(3, 10), rev(4, 20)]);
+    // Revision 3 broke something: its mark says which revision it was.
+    expect(m.marks.find((k) => k.kind === "cause")?.helm).toMatchObject({ version: 3, chart: { from: "1.1.0", to: "1.2.0" } });
+    expect(m.helm.map((h) => [h.label, !!h.set])).toEqual([["web #1", false], ["web #2", true], ["web #4", true]]);
+    // 4 went back to the chart revision 2 installed: a rollback.
+    expect(m.helm.find((h) => h.rev.version === 4)?.rev.back).toBe(2);
+    expect(m.helm.find((h) => h.rev.version === 2)?.rev.back).toBeUndefined();
+  });
+
+  it("knows a rollback of the last upgrade by its change undone", () => {
+    const helm = { tool: "helm", name: "web" };
+    const replicas = (from: string, to: string, m: number) => set({ id: `r${m}`, at: T(m), origin: helm, entries: [{ at: T(m), object: "Deployment/shop/web", kind: "Deployment", name: "web", what: "replicas", summary: "replicas", diff: [{ path: "replicas", op: "changed", from, to }] }] });
+    const rev = (version: number, m: number) => ({ release: "web", ns: "shop", version, status: "superseded", at: T(m) });
+    const m = model([replicas("1", "2", 5), replicas("2", "1", 10), replicas("1", "3", 15)], [], T0, T0 + 30 * 60_000, T0 + 30 * 60_000, [rev(2, 5), rev(3, 10), rev(4, 15)]);
+    expect(m.helm.map((h) => h.rev.back)).toEqual([undefined, 1, undefined]);
+  });
+
   it("draws one incident once, however many changes are credited with it", () => {
     const also = set({ ...broke, id: "b2", at: T(10.5), title: "another edit" });
     const late = set({ id: "f2", at: T(14.2), verdict: "fixed", fixes: ["Deployment/shop/checkout"], broke: T(11), ended: T(15) });
