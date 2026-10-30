@@ -408,6 +408,14 @@ aside { display: flex; flex-direction: column; min-height: 0; min-width: 0; over
 .tl-mark.fix span { bottom: 0; background: var(--ok); }
 /* Marks whose label didn't fit: a short tick in the plot, still a hover away. */
 .tl-mark.cause.bare::before { top: 26px; }
+/* A Helm revision: a dashed line and an outlined label, filled when open. */
+.tl-mark.helm { top: 4px; height: 86px; }
+.tl-mark.helm::before { top: 14px; width: 0; background: none; border-left: 1.5px dashed color-mix(in srgb, var(--accent) 60%, var(--border)); }
+.tl-mark.helm span, .tl-mark.cause span { display: inline-flex; align-items: center; gap: 4px; }
+.tl-mark.helm span { top: 0; background: var(--surface); color: var(--accent); border: 1px solid color-mix(in srgb, var(--accent) 55%, var(--border)); padding: 0 6px; }
+.tl-mark.helm.on span, .tl-mark.helm:hover span { background: var(--accent); color: var(--surface); }
+.tl-mark.helm.unrecorded span { border-style: dashed; color: var(--muted); }
+.tl-mark.helm.bare::before { top: 26px; }
 .tl-mark:focus-visible, .tl-broken:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 /* The moment of the event pointed at in the log. */
 .tl-ghost { position: absolute; z-index: 4; top: 24px; height: 72px; margin-left: -1px; border-left: 2px dashed var(--accent); pointer-events: none; }
@@ -433,6 +441,7 @@ aside { display: flex; flex-direction: column; min-height: 0; min-width: 0; over
 .tl-close:hover { color: var(--text); }
 .tl-card-actions { display: flex; gap: 8px; margin-top: 4px; }
 .tl-card-actions button { padding: 6px 12px; border-radius: 8px; border: 1px solid var(--text); background: var(--text); color: var(--surface); font-size: 12.5px; font-weight: 600; cursor: pointer; }
+.tl-card-actions button.secondary { background: var(--surface); color: var(--text); border-color: var(--border-strong); }
 /* The range input: there for the keyboard and screen readers, out of sight. */
 .track { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
 .compare { border: 1px solid var(--border-strong); background: transparent; border-radius: 6px; padding: 5px 12px; cursor: pointer; font-size: 13px; white-space: nowrap; }
