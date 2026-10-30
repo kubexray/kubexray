@@ -67,6 +67,12 @@ describe("buildView", () => {
     expect(ns.serviceTargets.get("Service/shop/orphan")?.size).toBe(0);
   });
 
+  it("leaves out the Service for the cluster's own API", () => {
+    const v = buildView(cluster([n("Service/default/kubernetes"), n("Pod/default/nginx")], []));
+    expect(v[0]?.rows.flatMap((r) => r.services)).toEqual([]);
+    expect(v[0]?.serviceCount).toBe(0);
+  });
+
   it("wires the chain together", () => {
     expect(ns.wires).toContainEqual(["Ingress/shop/web", "Service/shop/api"]);
     expect(ns.wires).toContainEqual(["Service/shop/api", "Deployment/shop/api"]);
