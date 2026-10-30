@@ -24,6 +24,7 @@ Short documents capturing significant decisions, their context and consequences.
 | [0018](0018-manifest-history.md) | A manifest history for every kind | Accepted |
 | [0019](0019-drift.md) | Drift: against what the tool applied, with a way back | Accepted |
 | [0020](0020-values-follow-kubernetes-permissions.md) | Values follow Kubernetes permissions | Accepted |
+| [0021](0021-configmaps-in-full.md) | ConfigMaps in full | Accepted |
 
 ## Template
 

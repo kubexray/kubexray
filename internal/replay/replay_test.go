@@ -363,6 +363,27 @@ func TestValuesOnlyWhenAsked(t *testing.T) {
 	}
 }
 
+func TestReplaysMaskConfigMapCredentials(t *testing.T) {
+	t.Parallel()
+	url := "postgres://app:" + "s3cret@db/shop" // a fake credential, split so scanners skip it
+	cm := graph.Node{ID: "ConfigMap/shop/app", Kind: "ConfigMap", Namespace: "shop", Name: "app", Data: map[string]graph.Value{
+		"LOG_LEVEL":    {Text: "info", Hash: "fp:1"},
+		"API_TOKEN":    {Text: "abc", Hash: "fp:2"},
+		"DATABASE_URL": {Text: url, Hash: "fp:3"},
+	}}
+	m := graph.Message{Nodes: []graph.Node{cm}, Ops: []graph.Op{{Node: &cm}}}
+	maskConfig(&m)
+	for _, n := range []graph.Node{m.Nodes[0], *m.Ops[0].Node} {
+		d := n.Data
+		if d["LOG_LEVEL"].Text != "info" || d["API_TOKEN"].Text != "" || d["API_TOKEN"].Masked != "name" || d["DATABASE_URL"].Text != "postgres://[redacted]@db/shop" {
+			t.Errorf("masked = %+v", d)
+		}
+	}
+	if cm.Data["API_TOKEN"].Text != "abc" {
+		t.Error("masking changed the recorded node")
+	}
+}
+
 func TestAnonymizedTrafficStaysWithItsApp(t *testing.T) {
 	t.Parallel()
 	app := graph.Node{ID: "Deployment/payments-prod/checkout", Kind: "Deployment", Namespace: "payments-prod", Name: "checkout"}

@@ -207,6 +207,10 @@ test("the namespace bar jumps to any namespace, Kubernetes' own in a menu", asyn
   await openDemo(page);
   const bar = page.getByRole("navigation", { name: "Namespaces" });
   await expect(bar.getByRole("button", { name: /^shop \d/ })).toBeVisible();
+  // The chip clicked is marked as the namespace in view.
+  const other = bar.locator(".ns-bar-list .ns-chip").nth(1);
+  await other.click();
+  await expect(other).toHaveAttribute("aria-current", "true");
   await bar.getByRole("button", { name: /^System/ }).click();
   const item = page.getByRole("menuitem").first();
   const name = ((await item.innerText()).split("\n")[0] ?? "").trim();
@@ -216,15 +220,34 @@ test("the namespace bar jumps to any namespace, Kubernetes' own in a menu", asyn
   await expect(page.locator(`details#ns-${name} > summary`)).toBeInViewport();
 });
 
-test("helm on the map: who manages an app, and the release's history", async ({ page }) => {
+test("helm on the map: a release's outline, and the release when selected", async ({ page }) => {
   await openDemo(page);
-  const badge = page.getByRole("button", { name: /^Helm release / }).first();
-  await expect(badge).toBeVisible();
-  await badge.click();
-  const history = page.getByRole("dialog", { name: /^Helm release / });
-  await expect(history).toBeVisible();
-  await expect(history.locator("li").first()).toContainText(/#\d/);
-  await page.keyboard.press("Escape");
-  await expect(history).toHaveCount(0);
-  await expect(page.locator(".release").first()).toContainText("helm ·");
+  const tag = page.locator(".release-head.helm .release-tag").first();
+  await expect(tag).toContainText("helm ·");
+  await expect(page.locator(".release.helm").first()).toBeVisible();
+  await tag.click();
+  const details = page.locator(".release-details");
+  await expect(details.locator(".kind")).toHaveText("Helm release");
+  await expect(details.locator(".revisions li").first()).toContainText(/#\d/);
+  // An object it manages opens from the release.
+  await details.locator(".rel-objects button").first().click();
+  await expect(page.locator(".release-details")).toHaveCount(0);
+});
+
+test("closing a namespace closes what was selected in it", async ({ page }) => {
+  await openDemo(page);
+  const ns = page.locator("details.ns[open]:has(.workload)").first();
+  await ns.locator(".workload").first().click();
+  await expect(page.locator(".details .name")).toBeVisible();
+  await ns.locator("> summary").click();
+  await expect(page.locator(".details .empty")).toHaveText(/Select an app/);
+});
+
+test("the side panel still resizes after visiting another page", async ({ page }) => {
+  await openDemo(page);
+  const handle = page.getByRole("separator", { name: "Resize the details and the log" });
+  const max = Number(await handle.getAttribute("aria-valuemax"));
+  await page.getByRole("button", { name: "Changes", exact: true }).click();
+  await page.getByRole("button", { name: "Map", exact: true }).click();
+  await expect(handle).toHaveAttribute("aria-valuemax", String(max));
 });

@@ -109,7 +109,7 @@ export function DetailsPanel({ id, state, view, incident, onSelect, height }: Pr
         <details className="manifest">
           <summary>{n.manifest ? "Manifest" : "Contents"}</summary>
           <pre>{toYaml(n.manifest ?? n.data)}</pre>
-          <p className="note">{n.manifest ? "Status and most metadata left out. " : ""}Values that look like credentials are hidden.</p>
+          {n.manifest && <p className="note">Status and most metadata left out. Values that look like credentials are hidden.</p>}
         </details>
       )}
       {isApp && wl && wl.w.pods.length > 0 && (
