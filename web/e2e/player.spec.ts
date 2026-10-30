@@ -229,3 +229,12 @@ test("helm on the map: a release's outline, and the release when selected", asyn
   await details.locator(".rel-objects button").first().click();
   await expect(page.locator(".release-details")).toHaveCount(0);
 });
+
+test("closing a namespace closes what was selected in it", async ({ page }) => {
+  await openDemo(page);
+  const ns = page.locator("details.ns[open]:has(.workload)").first();
+  await ns.locator(".workload").first().click();
+  await expect(page.locator(".details .name")).toBeVisible();
+  await ns.locator("> summary").click();
+  await expect(page.locator(".details .empty")).toHaveText(/Select an app/);
+});

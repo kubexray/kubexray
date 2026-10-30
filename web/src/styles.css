@@ -153,6 +153,8 @@ details.ns > summary::before {
   transform: rotate(-45deg); align-self: center; transition: transform 0.15s;
 }
 details.ns[open] > summary::before { transform: rotate(45deg); }
+/* Focus drawn inside the card, not as lines across the page. */
+details.ns > summary:focus-visible { outline-offset: -2px; border-radius: 10px; }
 .ns-name { font: 600 16px var(--font-display); }
 .ns-meta { color: var(--muted); font-size: 13px; }
 .ns-meta.bad { color: var(--crit); }

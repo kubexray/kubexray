@@ -29,7 +29,7 @@ interface Props {
 }
 
 /** The open-state key of the group holding Kubernetes' own namespaces. */
-const SYSTEM = "_system";
+export const SYSTEM = "_system";
 const nsId = (name: string) => `ns-${name}`;
 
 export const MapView = memo(function MapView(props: Props) {

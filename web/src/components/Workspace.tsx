@@ -11,7 +11,7 @@ import { DetailsPanel } from "./DetailsPanel";
 import { DiffPanel } from "./DiffPanel";
 import { EventLog } from "./EventLog";
 import { type Entry, entries, IncidentCard } from "./IncidentCard";
-import { MapView } from "./MapView";
+import { MapView, SYSTEM } from "./MapView";
 import { ReleaseDetails } from "./ReleaseDetails";
 import { Splitter, useStoredSize } from "./Splitter";
 
@@ -122,7 +122,15 @@ export function Workspace(props: Props) {
     },
     [state, setSelected],
   );
-  const toggle = useCallback((ns: string, isOpen: boolean) => setOpen((o) => new Map(o).set(ns, isOpen)), []);
+  const toggle = useCallback(
+    (ns: string, isOpen: boolean) => {
+      setOpen((o) => new Map(o).set(ns, isOpen));
+      // Closing a namespace closes what was selected in it.
+      const at = parseReleaseId(selected)?.ns ?? selected?.split("/")[1];
+      if (!isOpen && at && (at === ns || (ns === SYSTEM && view.some((v) => v.system && v.name === at)))) setSelected(null);
+    },
+    [selected, view, setSelected],
+  );
 
   const selectedApp = appOf(selected);
   // The side panel's width, and the details' height above the log (0: as
