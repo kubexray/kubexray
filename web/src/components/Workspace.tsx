@@ -195,7 +195,7 @@ export function Workspace(props: Props) {
       <div className="app page">
         {props.header(view)}
         {props.notice}
-        {props.page}
+        <Helm.Provider value={{ revisions: (release, ns) => revisions(state, release, ns), all: () => allRevisions(state), onRewind: props.onRewind }}>{props.page}</Helm.Provider>
       </div>
     );
   }

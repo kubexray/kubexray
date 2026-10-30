@@ -150,7 +150,10 @@ export function buildView(state: ClusterState): NamespaceView[] {
       }
       serviceTargets.set(svc.id, targets);
       const first = [...targets].sort()[0];
-      let row = first ? rowOf.get(first) : undefined;
+      // One that selects nothing (a broken selector, say) sits beside the app
+      // it was meant for, unwired: the app of its name, else of its release.
+      const meant = first ? undefined : rows.find((r) => r.workload && !r.services.length && r.workload.node.name === svc.name) ?? rows.find((r) => r.workload && !r.services.length && sameOrigin(r.workload.node, svc));
+      let row = first ? rowOf.get(first) : meant;
       if (!row) rows.push((row = { key: svc.id, services: [], ingresses: [] }));
       row.services.push(svc);
       rowOf.set(svc.id, row);
@@ -184,6 +187,9 @@ export function buildView(state: ClusterState): NamespaceView[] {
 }
 
 /** Every app in the view, with its namespace. */
+/** Whether two objects come from the same Helm release or GitOps app. */
+const sameOrigin = (a: Node, b: Node) => !!a.origin?.name && a.origin.tool === b.origin?.tool && a.origin.name === b.origin.name;
+
 export function allWorkloads(view: NamespaceView[]): { ns: string; w: Workload }[] {
   return view.flatMap((ns) => ns.rows.flatMap((r) => (r.workload ? [{ ns: ns.name, w: r.workload }] : [])));
 }

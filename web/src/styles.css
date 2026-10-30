@@ -64,6 +64,51 @@ code { font-family: var(--font-data); font-size: 12px; }
 .diff { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; font: 13px var(--font-data); }
 .diff .old { text-decoration: line-through; color: var(--muted); }
 .diff .new { color: var(--crit); font-weight: 500; }
+/* Releases: every Helm release, and the one selected beside it. */
+.releases { width: 100%; max-width: 1400px; margin: 0 auto; display: flex; flex-direction: column; gap: 12px; padding-bottom: 48px; }
+.rel-tiles { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+.rel-tile { display: grid; gap: 4px; padding: 12px 16px; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; }
+.rel-tile span { color: var(--muted); font-size: 12.5px; }
+.rel-tile b { font: 600 24px var(--font-display); font-variant-numeric: tabular-nums; }
+.rel-tile.bad b { color: var(--crit); }
+.rel-tile.warn b { color: var(--warn); }
+.rel-body { display: grid; grid-template-columns: minmax(0, 1fr) 400px; gap: 12px; align-items: start; }
+.rel-table { width: 100%; border-collapse: collapse; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; font-size: 13px; font-variant-numeric: tabular-nums; }
+.rel-table th, .rel-table td { text-align: left; padding: 11px 14px; border-top: 1px solid var(--border); vertical-align: middle; }
+.rel-table thead th { border-top: 0; font-weight: 600; font-size: 12px; color: var(--muted); }
+.rel-table tbody tr { cursor: pointer; }
+.rel-table tbody tr:hover td, .rel-table tbody tr:hover th { background: var(--sunken); }
+.rel-table tr.sel td, .rel-table tr.sel th { background: var(--accent-soft); }
+.rel-table tr.sel th { box-shadow: inset 3px 0 0 var(--accent); }
+.rel-table tbody th button { all: unset; cursor: pointer; font-weight: 600; }
+.rel-table tbody th button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.rel-table small { display: block; margin-top: 2px; color: var(--faint); font-size: 12px; font-weight: 400; }
+.rel-table .mono { font-family: var(--font-data); font-size: 12.5px; }
+.rel-table .muted { color: var(--faint); }
+.rel-apps { display: inline-flex; gap: 4px; }
+.rel-apps i { width: 10px; height: 10px; border-radius: 50%; background: var(--ok); }
+.rel-apps i.warn { background: var(--warn); }
+.rel-apps i.crit { background: var(--crit); }
+.rel-status.warn { background: color-mix(in srgb, var(--warn) 14%, var(--surface)); color: color-mix(in srgb, var(--warn) 80%, var(--text)); }
+.rel-edits-chip { border: 0; cursor: pointer; font: 600 11.5px var(--font-body); }
+.rel-edits-chip:hover { text-decoration: underline; }
+.rel-edits { display: grid; gap: 8px; margin-top: 12px; padding: 10px 12px; border: 1px solid color-mix(in srgb, var(--warn) 35%, var(--border)); border-radius: 8px; background: color-mix(in srgb, var(--warn) 5%, var(--surface)); scroll-margin-top: 12px; }
+.rel-edits .rel-head { margin: 0; color: color-mix(in srgb, var(--warn) 80%, var(--text)); }
+.rel-edit { display: grid; gap: 6px; padding-top: 8px; border-top: 1px solid var(--border); }
+.rel-edit-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; font-size: 13px; }
+.rel-edit-head button, .rel-edit-map { all: unset; cursor: pointer; color: var(--accent); font-weight: 600; }
+.rel-edit-head button { font-family: var(--font-data); font-size: 12.5px; }
+.rel-edit-head span { color: var(--muted); font-size: 12px; }
+.rel-edit-map { justify-self: start; font-size: 12.5px; }
+.rel-edit-head button:focus-visible, .rel-edit-map:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.rel-aside { display: flex; flex-direction: column; gap: 8px; position: sticky; top: 12px; }
+.rel-aside .details { max-height: none; }
+.rel-show { align-self: flex-start; padding: 6px 12px; border-radius: 8px; border: 1px solid var(--border-strong); background: var(--surface); color: var(--text); font-weight: 600; font-size: 12.5px; cursor: pointer; }
+@media (max-width: 900px) {
+  .rel-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .rel-body { grid-template-columns: minmax(0, 1fr); }
+  .rel-table { display: block; overflow-x: auto; }
+}
 .sources-intro { margin: 0 0 14px; color: var(--muted); font-size: 14px; }
 .sources-table { width: 100%; border-collapse: collapse; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; font-size: 14px; }
 .sources-table th, .sources-table td { text-align: left; padding: 11px 16px; border-top: 1px solid var(--border); vertical-align: top; }

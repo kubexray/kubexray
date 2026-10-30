@@ -3,6 +3,8 @@ import { FeedSets } from "./lib/feedContext";
 import { ChangesView } from "./components/ChangesView";
 import { Header, type View } from "./components/Header";
 import { IncidentsView } from "./components/IncidentsView";
+import { ReleasesView } from "./components/ReleasesView";
+import { hasReleases } from "./lib/helm";
 import { SourcesView } from "./components/SourcesView";
 import type { Entry } from "./components/IncidentCard";
 import { PostmortemDialog } from "./components/PostmortemDialog";
@@ -196,6 +198,8 @@ export function App() {
       <ChangesView sets={sets} now={now} query={query} live canRewindTo={canRewindTo} onRewind={(ts, id) => showOnMap(id, ts)} recommend={history?.recommend} />
     ) : view === "incidents" ? (
       <IncidentsView incidents={incidents} groups={groups} sets={sets} now={at ? Date.parse(at) : now} onShow={(id) => showOnMap(id, at)} />
+    ) : view === "releases" ? (
+      <ReleasesView state={state} sets={sets} now={now} onShow={(id) => showOnMap(id, at)} onRewind={(id, ts) => showOnMap(id, ts)} />
     ) : view === "sources" ? (
       <SourcesView sources={sources} now={now} />
     ) : undefined;
@@ -211,7 +215,7 @@ export function App() {
             view={v}
             status={stream.status}
             rewound={!!at}
-            nav={{ active: view, onChange: setView, incidents: incidents.length, sources: true, incidentApps: incidents.map((i) => i.app) }}
+            nav={{ active: view, onChange: setView, incidents: incidents.length, releases: hasReleases(state), sources: true, incidentApps: incidents.map((i) => i.app) }}
             search={{ value: query, onChange: setQuery }}
             me={me}
           />

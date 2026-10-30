@@ -97,6 +97,9 @@ export function allRevisions(state: ClusterState): ReleaseRevision[] {
   return out.sort((a, b) => Date.parse(a.at) - Date.parse(b.at) || a.version - b.version);
 }
 
+/** Whether the cluster has any Helm release kubexray can see. */
+export const hasReleases = (state: ClusterState) => [...state.nodes.values()].some((n) => n.origin?.tool === "helm" || (n.kind === "Secret" && n.labels?.owner === "helm"));
+
 /** The chart version a change moved from and to, from its helm.sh/chart
  * label: "storefront-1.2.0" → "storefront-1.2.1" is 1.2.0 → 1.2.1. */
 export function chartChange(s: ChangeSet): { from?: string; to?: string } | undefined {
