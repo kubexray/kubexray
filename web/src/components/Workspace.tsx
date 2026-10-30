@@ -2,7 +2,7 @@ import { type CSSProperties, type ReactNode, useCallback, useEffect, useMemo, us
 import type { Group, Incident } from "../gen/cause";
 import type { ClusterEvent } from "../lib/events";
 import { labelOf } from "../lib/eventlog";
-import { Helm, revisions } from "../lib/helm";
+import { Helm, parseReleaseId, revisions } from "../lib/helm";
 import { clock } from "../lib/format";
 import type { ClusterState } from "../lib/state";
 import { searchView } from "../lib/feed";
@@ -11,7 +11,8 @@ import { DetailsPanel } from "./DetailsPanel";
 import { DiffPanel } from "./DiffPanel";
 import { EventLog } from "./EventLog";
 import { type Entry, entries, IncidentCard } from "./IncidentCard";
-import { MapView } from "./MapView";
+import { MapView, SYSTEM } from "./MapView";
+import { ReleaseDetails } from "./ReleaseDetails";
 import { Splitter, useStoredSize } from "./Splitter";
 
 interface Props {
@@ -90,7 +91,7 @@ export function Workspace(props: Props) {
     const id = initial.current;
     if (id) requestAnimationFrame(() => document.querySelector(`[data-key="${CSS.escape(id)}"]`)?.scrollIntoView({ block: "center" }));
   }, []);
-  const appOf = useCallback((id: string | null) => (id ? (allWorkloads(view).find(({ w }) => w.pods.some((p) => p.id === id))?.w.node.id ?? id) : null), [view]);
+  const appOf = useCallback((id: string | null) => (id && !parseReleaseId(id) ? (allWorkloads(view).find(({ w }) => w.pods.some((p) => p.id === id))?.w.node.id ?? id) : null), [view]);
   const setSelected = useCallback(
     (id: string | null) => {
       setSelectedState(id);
@@ -121,7 +122,15 @@ export function Workspace(props: Props) {
     },
     [state, setSelected],
   );
-  const toggle = useCallback((ns: string, isOpen: boolean) => setOpen((o) => new Map(o).set(ns, isOpen)), []);
+  const toggle = useCallback(
+    (ns: string, isOpen: boolean) => {
+      setOpen((o) => new Map(o).set(ns, isOpen));
+      // Closing a namespace closes what was selected in it.
+      const at = parseReleaseId(selected)?.ns ?? selected?.split("/")[1];
+      if (!isOpen && at && (at === ns || (ns === SYSTEM && view.some((v) => v.system && v.name === at)))) setSelected(null);
+    },
+    [selected, view, setSelected],
+  );
 
   const selectedApp = appOf(selected);
   // The side panel's width, and the details' height above the log (0: as
@@ -131,15 +140,16 @@ export function Workspace(props: Props) {
   const [logFull, setLogFull] = useState(false);
   // The side panel's height, so the details never leave the log less than
   // its minimum.
-  const asideRef = useRef<HTMLElement>(null);
+  // Watched afresh each time the map comes back from another page, which
+  // replaces the panel; a panel taken off the page measures 0 and is ignored.
+  const [aside, setAside] = useState<HTMLElement | null>(null);
   const [asideH, setAsideH] = useState(700);
   useEffect(() => {
-    const el = asideRef.current;
-    if (!el) return;
-    const ro = new ResizeObserver(([e]) => e && setAsideH(e.contentRect.height));
-    ro.observe(el);
+    if (!aside) return;
+    const ro = new ResizeObserver(([e]) => e && e.contentRect.height > 0 && setAsideH(e.contentRect.height));
+    ro.observe(aside);
     return () => ro.disconnect();
-  }, []);
+  }, [aside]);
   const detailsMax = Math.max(60, asideH - LOG_MIN);
   const [ghost, setGhost] = useState<string | null>(null);
   const scope = useMemo(() => (selectedApp ? { app: selectedApp, related: chainOf(view, selectedApp) } : null), [view, selectedApp]);
@@ -203,8 +213,12 @@ export function Workspace(props: Props) {
         <main className={`main${props.loading ? " loading" : ""}${logFull ? " log-full" : ""}`} style={{ "--aside": `${asideW}px` } as CSSProperties}>
           <MapView view={mapView} open={open} highlight={highlight} causeOf={causeOf} onToggle={toggle} onSelect={setSelected} onHover={setHovered} />
           <Splitter axis="col" label="Resize the side panel" value={asideW} min={300} max={900} pane="after" onChange={setAsideW} onReset={() => setAsideW(ASIDE_W)} />
-          <aside ref={asideRef}>
-            <DetailsPanel id={selected} state={state} view={view} incident={listed ?? props.why ?? null} onSelect={show} height={detailsH ? Math.min(detailsH, detailsMax) : undefined} />
+          <aside ref={setAside}>
+            {parseReleaseId(selected) && selected ? (
+              <ReleaseDetails id={selected} state={state} onSelect={show} height={detailsH ? Math.min(detailsH, detailsMax) : undefined} />
+            ) : (
+              <DetailsPanel id={selected} state={state} view={view} incident={listed ?? props.why ?? null} onSelect={show} height={detailsH ? Math.min(detailsH, detailsMax) : undefined} />
+            )}
             <Splitter axis="row" label="Resize the details and the log" value={Math.min(detailsH || 260, detailsMax)} min={60} max={detailsMax} pane="before" onChange={setDetailsH} onReset={() => setDetailsH(0)} />
             {base ? (
               <DiffPanel from={base} to={{ at: shownAt, state }} onSelect={show} onClose={() => setBase(null)} />
