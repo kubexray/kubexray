@@ -17,12 +17,15 @@ async function seek(page: Page, to: "min" | "max") {
 async function openDemo(page: Page) {
   await page.goto("/play/");
   await page.getByRole("button", { name: "Watch a demo incident" }).click();
-  await expect(page.locator("section.incident h2")).toHaveText("checkout is degraded");
+  await expect(page.locator(".tl-now")).toContainText("checkout is degraded");
+  await expect(page.locator(".details .name")).toHaveText("checkout");
 }
 
 test("the demo incident explains itself", async ({ page }) => {
   await openDemo(page);
-  await expect(page.locator("section.incident")).toContainText("ConfigMap checkout-config was edited by kubectl patch");
+  await expect(page.locator(".details")).toContainText("ConfigMap checkout-config was edited by kubectl patch");
+  await expect(page.locator(".details .inc-line .badge")).toHaveText("Incident");
+  await expect(page.locator("section.incident")).toHaveCount(0); // no banner: Selected explains it
   await expect(page.getByText("Replay", { exact: true })).toBeVisible();
   await expect(page.locator(".pod").first()).toBeVisible();
   await shot(page, "incident");
@@ -64,7 +67,8 @@ test("a post-mortem draft is one click away", async ({ page }) => {
 
 test("a link opens the replay with the app selected", async ({ page }) => {
   await page.goto("/play/?replay=demo.kxr&app=Deployment%2Fshop%2Fcheckout");
-  await expect(page.locator("section.incident h2")).toHaveText("checkout is degraded");
+  await expect(page.locator(".tl-now")).toContainText("checkout is degraded");
+  await expect(page.locator(".details .name")).toHaveText("checkout");
   await expect(page.locator(".details .name")).toHaveText("checkout");
 });
 
@@ -250,4 +254,10 @@ test("the side panel still resizes after visiting another page", async ({ page }
   await page.getByRole("button", { name: "Changes", exact: true }).click();
   await page.getByRole("button", { name: "Map", exact: true }).click();
   await expect(handle).toHaveAttribute("aria-valuemax", String(max));
+});
+
+test("needs attention in the header opens the incidents", async ({ page }) => {
+  await openDemo(page);
+  await page.getByRole("button", { name: /needs? attention/ }).click();
+  await expect(page.getByRole("heading", { name: "Broken now" })).toBeVisible();
 });

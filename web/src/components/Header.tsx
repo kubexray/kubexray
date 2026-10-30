@@ -75,12 +75,12 @@ export function Header({ view, status, rewound = false, label, nav, search, me }
       {/* How the cluster is doing, in one line: the map shows the rest. */}
       <div className={`health${bad ? " bad" : ""}`} aria-live="polite">
         {bad ? (
-          <>
+          <button type="button" className="health-link" onClick={() => nav?.onChange("incidents")} disabled={!nav} title="See the incidents">
             <i className="dot crit" aria-hidden="true" />
             <span>
               <b>{bad}</b> need{bad === 1 ? "s" : ""} attention
             </span>
-          </>
+          </button>
         ) : (
           <>
             <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">

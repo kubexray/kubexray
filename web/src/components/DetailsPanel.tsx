@@ -2,7 +2,7 @@ import { useContext, useState } from "react";
 import { useNow } from "../lib/useNow";
 import type { Incident } from "../gen/cause";
 import type { Node } from "../gen/graph";
-import { ago, who } from "../lib/format";
+import { ago, clock, duration, who } from "../lib/format";
 import { nodeSummary, podHealth, podText } from "../lib/health";
 import { hasText, toYaml } from "../lib/manifest";
 import type { ClusterState } from "../lib/state";
@@ -10,7 +10,7 @@ import { allWorkloads, type NamespaceView, workloadHealth, workloadProblem } fro
 import { FeedSets } from "../lib/feedContext";
 import { driftOf, ownerOf, TOOL_NAME } from "../lib/helm";
 import { DriftView } from "./DiffView";
-import { CauseLine, DiagnosisLine } from "./IncidentCard";
+import { CauseLine, DiagnosisLine, SignalTag } from "./IncidentCard";
 
 interface Props {
   id: string | null;
@@ -21,9 +21,13 @@ interface Props {
   onSelect: (id: string) => void;
   /** A height set by dragging the handle below; none, as tall as needed. */
   height?: number;
+  /** What can be done about the incident shown: rewind, share, a post-mortem. */
+  actions?: React.ReactNode;
+  /** The moment shown, when rewound. */
+  at?: string | null;
 }
 
-export function DetailsPanel({ id, state, view, incident, onSelect, height }: Props) {
+export function DetailsPanel({ id, state, view, incident, onSelect, height, actions, at }: Props) {
   const sized = height ? { height, maxHeight: "none", flex: "none" } : undefined;
   const sets = useContext(FeedSets);
   const now = useNow();
@@ -95,7 +99,21 @@ export function DetailsPanel({ id, state, view, incident, onSelect, height }: Pr
       <div className="kind">{n.kind}</div>
       <div className="name">{n.name}</div>
       <div className={`state ${health}`}>{stateText}</div>
-      {incident && !incident.healthy && <Explanation incident={incident} pod={n.kind === "Pod" ? n : null} />}
+      {incident && !incident.healthy && (
+        <>
+          <div className="inc-line">
+            <span className="badge">Incident</span>
+            {incident.since && (
+              <span>
+                for {duration(incident.since, at ? Date.parse(at) : now)} · since {clock(incident.since)}
+              </span>
+            )}
+            <SignalTag inc={incident} />
+          </div>
+          {actions && <div className="inc-actions">{actions}</div>}
+          <Explanation incident={incident} pod={n.kind === "Pod" ? n : null} />
+        </>
+      )}
       {drift && <DriftView entry={drift} label />}
       <dl className="facts">
         {facts.map(([k, v]) => (

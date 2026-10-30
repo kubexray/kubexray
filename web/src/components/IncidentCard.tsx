@@ -1,10 +1,9 @@
-import { useContext, useState } from "react";
+import { useContext } from "react";
 import type { Cause, Diagnosis, Group, Incident } from "../gen/cause";
 import type { DiffLine } from "../gen/feed";
 import { causeDiff } from "../lib/feed";
 import { FeedSets } from "../lib/feedContext";
-import { affected, clock, duration, who } from "../lib/format";
-import { useNow } from "../lib/useNow";
+import { clock, who } from "../lib/format";
 
 /** Mirrors cause.Incident.Down: no ready pods, of those it wants or at all
  * while traffic is routed to it (scaled to zero). */
@@ -145,100 +144,3 @@ export function DiagnosisLine({ diagnosis }: { diagnosis: Diagnosis }) {
   );
 }
 
-interface Props {
-  /** From entries(): the first is shown in full, the rest as chips. */
-  list: Entry[];
-  /** Pinned time when rewound; otherwise the card ticks with the clock. */
-  at: string | null;
-  canRewindTo: (ts: string) => boolean;
-  onShow: (id: string) => void;
-  onRewind: (ts: string) => void;
-  /** Extra buttons for the shown entry (share, post-mortem). */
-  actions?: (entry: Entry) => React.ReactNode;
-}
-
-/** How many other incidents to list before "+N more". */
-const MORE_SHOWN = 4;
-
-export function IncidentCard({ list, at, canRewindTo, onShow, onRewind, actions }: Props) {
-  const live = useNow();
-  const [allShown, setAllShown] = useState(false);
-  const now = at ? Date.parse(at) : live;
-  const [top, ...rest] = list;
-  const first = top?.incidents[0];
-  if (!top || !first) return null;
-
-  const cause = top.group ? top.group.cause : first.causes?.[0];
-  const since = top.incidents.map((i) => i.since).filter((s): s is string => !!s).sort()[0];
-  const changedAt = cause?.at;
-  const more = rest.flatMap((e) => e.incidents);
-
-  return (
-    <section className="incident" aria-live="polite">
-      <div className="inc-head">
-        <span className="badge">Incident</span>
-        {top.group ? (
-          <h2>
-            {top.group.cause.summary}: {affected(top.incidents.length)}
-          </h2>
-        ) : (
-          <h2>
-            {first.name} {stateText(first)}
-          </h2>
-        )}
-        {!top.group && <SignalTag inc={first} />}
-        <span className="since">
-          {top.group ? "" : `in ${first.namespace} · `}
-          {since && <>for {duration(since, now)} · since {clock(since)}</>}
-          {!top.group && <> · {first.symptom.summary}</>}
-        </span>
-      </div>
-      {top.group && (
-        <div className="affected">
-          {top.incidents.map((i) => (
-            <button type="button" key={i.app} className="chip-btn" onClick={() => onShow(i.app)}>
-              {i.namespace}/{i.name} <span>{stateText(i)}: {i.symptom.summary}</span>
-            </button>
-          ))}
-        </div>
-      )}
-      {!top.group && first.diagnosis && <DiagnosisLine diagnosis={first.diagnosis} />}
-      {cause ? (
-        <CauseLine cause={cause} />
-      ) : (
-        <div className="cause">
-          <span className="lbl">No cause found</span>
-          <span>
-            {first.noCause}.{!first.diagnosis && " It may be outside the cluster: a dependency, the network, or traffic."}
-          </span>
-        </div>
-      )}
-      <div className="inc-actions">
-        <button type="button" className="primary" onClick={() => onShow(first.app)}>
-          Show on map
-        </button>
-        {changedAt && canRewindTo(changedAt) && (
-          <button type="button" onClick={() => onRewind(changedAt)}>
-            Rewind to the change
-          </button>
-        )}
-        {actions?.(top)}
-        {more.length > 0 && (
-          <span className="more">
-            {more.length === 1 ? "Also:" : `${more.length} more incidents:`}{" "}
-            {(allShown ? more : more.slice(0, MORE_SHOWN)).map((m) => (
-              <button type="button" key={m.app} className="chip-btn" onClick={() => onShow(m.app)}>
-                {m.namespace}/{m.name} <span>{m.symptom.summary}</span>
-              </button>
-            ))}
-            {more.length > MORE_SHOWN && (
-              <button type="button" className="chip-btn link" onClick={() => setAllShown(!allShown)}>
-                {allShown ? "Show fewer" : `+${more.length - MORE_SHOWN} more`}
-              </button>
-            )}
-          </span>
-        )}
-      </div>
-    </section>
-  );
-}
