@@ -44,13 +44,13 @@ export function Header({ view, status, rewound = false, label, nav, search, me }
   const incidentApps = new Set(nav?.incidentApps ?? []);
   const crit = ws.filter(({ w }) => workloadHealth(w) === "crit").map(({ w }) => w.node.id);
   const bad = new Set([...crit, ...incidentApps]).size;
-  const healthy = ws.filter(({ w }) => workloadHealth(w) === "ok" && !incidentApps.has(w.node.id)).length;
   const updating = count("warn");
   return (
     <header className="header">
       <div className="brand">
         <Wordmark />
-        <span className={`status ${rewound ? "rewound" : status}`}>{rewound ? "Rewound" : STATUS[status]}</span>
+        {/* Live is the normal state, and the timeline says so: only the others show. */}
+        {(rewound || status !== "live") && <span className={`status ${rewound ? "rewound" : status}`}>{rewound ? "Rewound" : STATUS[status]}</span>}
         {label && <span className="label">{label}</span>}
       </div>
       {nav && (
@@ -75,18 +75,19 @@ export function Header({ view, status, rewound = false, label, nav, search, me }
       )}
       <div className="counts" aria-live="polite">
         <span>
-          <i className="dot ok" />
-          <b>{healthy}</b> healthy apps
+          <b>{ws.length}</b> app{ws.length === 1 ? "" : "s"}
         </span>
         {updating > 0 && (
           <span>
             <b>{updating}</b> updating
           </span>
         )}
-        <span className={bad ? "bad" : ""}>
-          <i className="dot crit" />
-          <b>{bad}</b> need attention
-        </span>
+        {bad > 0 && (
+          <span className="bad">
+            <i className="dot crit" />
+            <b>{bad}</b> need{bad === 1 ? "s" : ""} attention
+          </span>
+        )}
         <span>
           <b>{pods}</b> pods
         </span>

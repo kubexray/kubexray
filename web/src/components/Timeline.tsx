@@ -153,12 +153,13 @@ export function Timeline({ bounds, at, mode, incidents, onSeek, onFocus, playing
           </button>
         </div>
         <span className="tl-time">{clock(iso(value))}</span>
-        <span className={`tl-now ${current ? "bad" : "ok"}`}>
-          <i aria-hidden="true" />
-          {current
-            ? `${current.name} ${stateText(current)}${current.since ? ` · ${duration(current.since, value)} in` : ""}${current.causes?.[0] ? ` · likely ${current.causes[0].summary}` : ""}`
-            : "All apps healthy"}
-        </span>
+        {/* Only what's wrong at this moment: the header already counts the apps. */}
+        {current && (
+          <span className="tl-now bad">
+            <i aria-hidden="true" />
+            {`${current.name} ${stateText(current)}${current.since ? ` · ${duration(current.since, value)} in` : ""}${current.causes?.[0] ? ` · likely ${current.causes[0].summary}` : ""}`}
+          </span>
+        )}
         <span className="tl-spacer" />
         <span className="clock">
           {live ? (at ? "rewound" : "live") : `${duration(bounds.from, value)} of ${duration(bounds.from, last)}`}
