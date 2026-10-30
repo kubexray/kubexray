@@ -10,7 +10,7 @@ import { allWorkloads, buildView, chainOf } from "../lib/view";
 import { DetailsPanel } from "./DetailsPanel";
 import { DiffPanel } from "./DiffPanel";
 import { EventLog } from "./EventLog";
-import { type Entry, entries, IncidentCard } from "./IncidentCard";
+import { type Entry, entries } from "./IncidentCard";
 import { MapView, SYSTEM } from "./MapView";
 import { ReleaseDetails } from "./ReleaseDetails";
 import { Splitter, useStoredSize } from "./Splitter";
@@ -160,6 +160,20 @@ export function Workspace(props: Props) {
     props.onRewind(ts);
   };
   const listed = incidents.find((i) => i.app === selectedApp) ?? null;
+  // The banner's buttons, beside the incident's explanation: rewind to the
+  // change behind it, and the props' own (share, post-mortem).
+  const entry = list.find((e) => e.incidents.some((i) => i.app === selectedApp));
+  const changedAt = entry && (entry.group ? entry.group.cause : entry.incidents[0]?.causes?.[0])?.at;
+  const incidentActions = entry && (
+    <>
+      {changedAt && props.canRewindTo(changedAt) && (
+        <button type="button" className="primary" onClick={() => props.onRewind(changedAt)}>
+          Rewind to the change
+        </button>
+      )}
+      {props.actions?.(entry)}
+    </>
+  );
 
   // The broken paths of the top incident, or of every app in its group.
   const broken = useMemo(() => {
@@ -204,7 +218,6 @@ export function Workspace(props: Props) {
     <div className="app">
       {props.header(view)}
       {props.notice}
-      <IncidentCard list={list} at={at} canRewindTo={props.canRewindTo} onShow={show} onRewind={props.onRewind} actions={props.actions} />
       <Helm.Provider value={{ revisions: (release, ns) => revisions(state, release, ns), all: () => allRevisions(state), onRewind: props.onRewind }}>
         <main className={`main${props.loading ? " loading" : ""}${logFull ? " log-full" : ""}`} style={{ "--aside": `${asideW}px` } as CSSProperties}>
           <MapView view={mapView} open={open} highlight={highlight} causeOf={causeOf} onToggle={toggle} onSelect={setSelected} onHover={setHovered} />
@@ -213,7 +226,16 @@ export function Workspace(props: Props) {
             {parseReleaseId(selected) && selected ? (
               <ReleaseDetails id={selected} state={state} onSelect={show} height={detailsH ? Math.min(detailsH, detailsMax) : undefined} />
             ) : (
-              <DetailsPanel id={selected} state={state} view={view} incident={listed ?? props.why ?? null} onSelect={show} height={detailsH ? Math.min(detailsH, detailsMax) : undefined} />
+              <DetailsPanel
+                id={selected}
+                state={state}
+                view={view}
+                incident={listed ?? props.why ?? null}
+                onSelect={show}
+                height={detailsH ? Math.min(detailsH, detailsMax) : undefined}
+                actions={incidentActions}
+                at={at}
+              />
             )}
             <Splitter axis="row" label="Resize the details and the log" value={Math.min(detailsH || 260, detailsMax)} min={60} max={detailsMax} pane="before" onChange={setDetailsH} onReset={() => setDetailsH(0)} />
             {base ? (

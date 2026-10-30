@@ -26,7 +26,8 @@ test("the demo button opens the incident in the player", async ({ page }) => {
 test("each moment of the record opens the player there", async ({ page }) => {
   await page.goto("/");
   await page.locator(".tape li.incident a").click();
-  await expect(page.locator("section.incident h2")).toHaveText("checkout is degraded");
+  await expect(page.locator(".tl-now")).toContainText("checkout is degraded");
+  await expect(page.locator(".details .name")).toHaveText("checkout");
   await expect(page.getByText(/13m 1\ds of 37m/)).toBeVisible(); // T+13:13, where the link points
 });
 
