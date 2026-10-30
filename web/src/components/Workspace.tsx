@@ -195,9 +195,6 @@ export function Workspace(props: Props) {
       {props.header(view)}
       {props.notice}
       <IncidentCard list={list} at={at} canRewindTo={props.canRewindTo} onShow={show} onRewind={props.onRewind} actions={props.actions} />
-      <p className="guide">
-        Read each row left to right: requests come in, a load balancer spreads them across the app's pods, and the app reads its config and storage.
-      </p>
       <Helm.Provider value={{ revisions: (release, ns) => revisions(state, release, ns), onRewind: props.onRewind }}>
         <main className={`main${props.loading ? " loading" : ""}${logFull ? " log-full" : ""}`} style={{ "--aside": `${asideW}px` } as CSSProperties}>
           <MapView view={mapView} open={open} highlight={highlight} causeOf={causeOf} onToggle={toggle} onSelect={setSelected} onHover={setHovered} />
