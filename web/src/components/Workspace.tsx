@@ -140,15 +140,16 @@ export function Workspace(props: Props) {
   const [logFull, setLogFull] = useState(false);
   // The side panel's height, so the details never leave the log less than
   // its minimum.
-  const asideRef = useRef<HTMLElement>(null);
+  // Watched afresh each time the map comes back from another page, which
+  // replaces the panel; a panel taken off the page measures 0 and is ignored.
+  const [aside, setAside] = useState<HTMLElement | null>(null);
   const [asideH, setAsideH] = useState(700);
   useEffect(() => {
-    const el = asideRef.current;
-    if (!el) return;
-    const ro = new ResizeObserver(([e]) => e && setAsideH(e.contentRect.height));
-    ro.observe(el);
+    if (!aside) return;
+    const ro = new ResizeObserver(([e]) => e && e.contentRect.height > 0 && setAsideH(e.contentRect.height));
+    ro.observe(aside);
     return () => ro.disconnect();
-  }, []);
+  }, [aside]);
   const detailsMax = Math.max(60, asideH - LOG_MIN);
   const [ghost, setGhost] = useState<string | null>(null);
   const scope = useMemo(() => (selectedApp ? { app: selectedApp, related: chainOf(view, selectedApp) } : null), [view, selectedApp]);
@@ -212,7 +213,7 @@ export function Workspace(props: Props) {
         <main className={`main${props.loading ? " loading" : ""}${logFull ? " log-full" : ""}`} style={{ "--aside": `${asideW}px` } as CSSProperties}>
           <MapView view={mapView} open={open} highlight={highlight} causeOf={causeOf} onToggle={toggle} onSelect={setSelected} onHover={setHovered} />
           <Splitter axis="col" label="Resize the side panel" value={asideW} min={300} max={900} pane="after" onChange={setAsideW} onReset={() => setAsideW(ASIDE_W)} />
-          <aside ref={asideRef}>
+          <aside ref={setAside}>
             {parseReleaseId(selected) && selected ? (
               <ReleaseDetails id={selected} state={state} onSelect={show} height={detailsH ? Math.min(detailsH, detailsMax) : undefined} />
             ) : (

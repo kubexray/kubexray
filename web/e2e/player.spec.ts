@@ -242,3 +242,12 @@ test("closing a namespace closes what was selected in it", async ({ page }) => {
   await ns.locator("> summary").click();
   await expect(page.locator(".details .empty")).toHaveText(/Select an app/);
 });
+
+test("the side panel still resizes after visiting another page", async ({ page }) => {
+  await openDemo(page);
+  const handle = page.getByRole("separator", { name: "Resize the details and the log" });
+  const max = Number(await handle.getAttribute("aria-valuemax"));
+  await page.getByRole("button", { name: "Changes", exact: true }).click();
+  await page.getByRole("button", { name: "Map", exact: true }).click();
+  await expect(handle).toHaveAttribute("aria-valuemax", String(max));
+});
