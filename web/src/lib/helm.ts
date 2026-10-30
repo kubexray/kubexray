@@ -35,6 +35,29 @@ export function ownerText(o: Owner): string {
 
 export const TOOL_NAME: Record<Owner["tool"], string> = { helm: "Helm", argocd: "Argo CD", flux: "Flux" };
 
+/** A release (or GitOps app) as something to select, by the namespace it's
+ * drawn in: "release:helm/shop/storefront". */
+export const releaseId = (o: Owner, ns: string) => `release:${o.tool}/${ns}/${o.name}`;
+
+export function parseReleaseId(id: string | null): { tool: Owner["tool"]; ns: string; name: string } | undefined {
+  const m = id?.match(/^release:(helm|argocd|flux)\/([^/]+)\/(.+)$/);
+  return m ? { tool: m[1] as Owner["tool"], ns: m[2] as string, name: m[3] as string } : undefined;
+}
+
+// What the map draws: a release's pods and ReplicaSets show inside its apps.
+const DRAWN = new Set(["Ingress", "Service", "Deployment", "StatefulSet", "DaemonSet", "Job", "CronJob", "ConfigMap", "Secret", "PersistentVolumeClaim"]);
+
+/** The objects a release manages in a namespace. */
+export function releaseObjects(state: ClusterState, tool: Owner["tool"], ns: string, name: string): Node[] {
+  const out: Node[] = [];
+  for (const n of state.nodes.values()) {
+    if (n.ns !== ns || !DRAWN.has(n.kind)) continue;
+    const o = ownerOf(n);
+    if (o?.tool === tool && o.name === name) out.push(n);
+  }
+  return out;
+}
+
 export interface Revision {
   version: number;
   status: string; // deployed, superseded, failed, pending-upgrade…

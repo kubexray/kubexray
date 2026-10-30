@@ -1,12 +1,10 @@
 import { memo, useContext, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { createPortal } from "react-dom";
 import type { Node } from "../gen/graph";
 import { FeedSets } from "../lib/feedContext";
-import { verdictNote } from "../lib/feed";
-import { ago, clock } from "../lib/format";
+import { ago } from "../lib/format";
 import { podHealth, podText } from "../lib/health";
 import { useNow } from "../lib/useNow";
-import { driftOf, Helm, type Owner, ownerOf, ownerText, revisionSet, TOOL_NAME } from "../lib/helm";
+import { driftOf, Helm, type Owner, ownerOf, releaseId, TOOL_NAME } from "../lib/helm";
 import { type NamespaceView, type Row as ViewRow, type Workload, wireTarget, workloadHealth, workloadProblem } from "../lib/view";
 
 const KIND_LABEL: Record<string, string> = { PersistentVolumeClaim: "Volume" };
@@ -31,21 +29,43 @@ interface Props {
 }
 
 /** The open-state key of the group holding Kubernetes' own namespaces. */
-const SYSTEM = "_system";
+export const SYSTEM = "_system";
 const nsId = (name: string) => `ns-${name}`;
 
 export const MapView = memo(function MapView(props: Props) {
   const apps = props.view.filter((ns) => !ns.system);
   const system = props.view.filter((ns) => ns.system);
+  // The namespace in view, marked in the bar: the first whose card still
+  // shows below the bar. After a jump, the one jumped to, while it scrolls.
+  const map = useRef<HTMLDivElement>(null);
+  const [current, setCurrent] = useState<string>();
+  const settling = useRef(0);
+  useEffect(() => {
+    const el = map.current;
+    if (!el) return;
+    const spy = () => {
+      if (performance.now() < settling.current) return;
+      const top = el.getBoundingClientRect().top + (el.querySelector(".ns-bar")?.getBoundingClientRect().height ?? 0) + 16;
+      const shown = [...el.querySelectorAll<HTMLElement>("details.ns[id^='ns-']")].find((ns) => ns.getBoundingClientRect().bottom > top);
+      setCurrent(shown?.id.slice(3));
+    };
+    const frame = requestAnimationFrame(spy);
+    el.addEventListener("scroll", spy, { passive: true });
+    return () => {
+      cancelAnimationFrame(frame);
+      el.removeEventListener("scroll", spy);
+    };
+  }, []);
   // A namespace from the bar: opened, and scrolled to.
   const jump = (name: string) => {
     if (system.some((ns) => ns.name === name)) props.onToggle(SYSTEM, true);
     props.onToggle(name, true);
+    setCurrent(name);
+    settling.current = performance.now() + 900;
     requestAnimationFrame(() => document.getElementById(nsId(name))?.scrollIntoView({ block: "start", behavior: "smooth" }));
   };
-  const current = props.highlight.selected?.split("/")[1]; // "Kind/namespace/name"
   return (
-    <div className="map" aria-label="Cluster map">
+    <div className="map" aria-label="Cluster map" ref={map}>
       {props.view.length > 1 && <NamespaceBar apps={apps} system={system} current={current} onJump={jump} />}
       {apps.map((ns) => (
         <Namespace key={ns.name} ns={ns} {...props} />
@@ -201,23 +221,29 @@ function groupRows(rows: ViewRow[]): ViewRow[] {
   return rows.map((r, i) => ({ r, i })).sort((a, b) => rank(a.r) - rank(b.r) || a.i - b.i).map(({ r }) => r);
 }
 
-/** Whether a row is the first of a release's: a line for its label goes
- * before it. */
-function startsRelease(rows: ViewRow[], i: number): boolean {
+/** The heading line a row starts, if any: a release's label before its
+ * first row, and "not managed" before the first row no tool manages. */
+function startsGroup(rows: ViewRow[], i: number): "release" | "loose" | null {
   const o = rows[i] && rowOwner(rows[i]);
   const prev = i > 0 && rows[i - 1] ? rowOwner(rows[i - 1] as ViewRow) : undefined;
-  return !!o && (!prev || ownerKey(prev) !== ownerKey(o));
+  if (o) return !prev || ownerKey(prev) !== ownerKey(o) ? "release" : null;
+  return prev ? "loose" : null;
 }
 
 /** An outline around the rows a release (or a GitOps app) manages. */
 export interface Release {
   key: string;
-  label: string;
+  /** What selecting its label selects. */
+  id: string;
+  tool: Owner["tool"];
+  /** "helm · storefront", then "chart 1.2.1 · revision 4 · 2d ago". */
+  name: string;
+  detail: string;
   /** The cards inside it, by their data-key. */
   cards: string[];
 }
 
-function releases(rows: ViewRow[], revisionsOf: (release: string, ns: string) => { version: number; status: string; at: string }[], now: number): Release[] {
+function releases(ns: string, rows: ViewRow[], revisionsOf: (release: string, ns: string) => { version: number; status: string; at: string }[], now: number): Release[] {
   const out = new Map<string, Release>();
   for (const row of rows) {
     const o = rowOwner(row);
@@ -225,10 +251,10 @@ function releases(rows: ViewRow[], revisionsOf: (release: string, ns: string) =>
     let rel = out.get(ownerKey(o));
     if (!rel) {
       const deployed = o.tool === "helm" ? revisionsOf(o.name, o.ns ?? "").find((r) => r.status === "deployed") : undefined;
-      const parts = [o.tool === "helm" ? `helm · ${o.name}` : `${TOOL_NAME[o.tool].toLowerCase()} · ${o.name}`];
-      if (o.chart) parts.push(`chart ${o.chart}`);
-      if (deployed) parts.push(`revision ${deployed.version}`, ago(deployed.at, now));
-      rel = { key: ownerKey(o), label: parts.join(" · "), cards: [] };
+      const detail: string[] = [];
+      if (o.chart) detail.push(`chart ${o.chart}`);
+      if (deployed) detail.push(`revision ${deployed.version}`, ago(deployed.at, now));
+      rel = { key: ownerKey(o), id: releaseId(o, ns), tool: o.tool, name: `${TOOL_NAME[o.tool].toLowerCase()} · ${o.name}`, detail: detail.join(" · "), cards: [] };
       out.set(rel.key, rel);
     }
     rel.cards.push(...row.ingresses.map((n) => n.id), ...row.services.map((n) => n.id));
@@ -241,11 +267,14 @@ function Namespace({ ns, open, highlight, causeOf, onToggle, onSelect, onHover }
   const { revisions } = useContext(Helm);
   const now = useNow();
   const rows = groupRows(ns.rows);
+  const rels = releases(ns.name, rows, revisions, now);
+  const relOf = new Map(rels.map((r) => [r.key, r]));
   const isOpen = open.get(ns.name) ?? (!ns.system || !ns.allHealthy);
+  const released = rels.length ? ` · ${rels.length} release${rels.length === 1 ? "" : "s"}` : "";
   const meta = ns.problems
-    ? `${ns.workloadCount} apps · ${ns.problems} need${ns.problems === 1 ? "s" : ""} attention`
+    ? `${ns.workloadCount} apps${released} · ${ns.problems} need${ns.problems === 1 ? "s" : ""} attention`
     : ns.workloadCount
-      ? `${ns.workloadCount} app${ns.workloadCount === 1 ? "" : "s"} · all healthy`
+      ? `${ns.workloadCount} app${ns.workloadCount === 1 ? "" : "s"}${released} · all healthy`
       : `${ns.serviceCount} service${ns.serviceCount === 1 ? "" : "s"}`;
   const card = (n: Node, kind: string, key = n.id, extra = "") => (
     <NodeCard key={key} n={n} kind={kind} dataKey={key} extra={extra} highlight={highlight} onSelect={onSelect} onHover={onHover} />
@@ -267,14 +296,26 @@ function Namespace({ ns, open, highlight, causeOf, onToggle, onSelect, onHover }
       </summary>
       {isOpen && (
         <div className="lanes">
-          <Grid ns={ns} highlight={highlight} releases={releases(rows, revisions, now)}>
+          <Grid ns={ns} highlight={highlight} releases={rels}>
             <ColHead title="Way in" sub="Ingress" />
             <ColHead title="Load balancer" sub="Service" />
             <ColHead title="App" sub="Deployment · StatefulSet · DaemonSet · Job. Each dot is a pod, one running copy." />
             <ColHead title="Config & storage" sub="ConfigMap · Secret · Volume" />
-            {rows.map((row, i) => (
+            {rows.map((row, i) => {
+              const starts = startsGroup(rows, i);
+              const rel = starts === "release" ? relOf.get(ownerKey(rowOwner(row) as Owner)) : undefined;
+              return (
               <Row key={row.key}>
-                {startsRelease(rows, i) && <div className="release-gap" data-key={`release|${ownerKey(rowOwner(row) as Owner)}`} aria-hidden="true" />}
+                {rel && (
+                  <div className={`release-head ${rel.tool}`} data-key={`release|${rel.key}`}>
+                    <button type="button" className={`release-tag${highlight.selected === rel.id ? " selected" : ""}`} onClick={() => onSelect(rel.id)}>
+                      {rel.tool === "helm" && <HelmIcon />}
+                      <b>{rel.name}</b>
+                      {rel.detail && <span>{rel.detail}</span>}
+                    </button>
+                  </div>
+                )}
+                {starts === "loose" && <div className="release-head loose">Not managed by a tool</div>}
                 <div className="cell">{row.ingresses.map((i) => card(i, "Ingress"))}</div>
                 <div className="cell">
                   {row.services.map((s) => (
@@ -296,7 +337,8 @@ function Namespace({ ns, open, highlight, causeOf, onToggle, onSelect, onHover }
                     )}
                 </div>
               </Row>
-            ))}
+              );
+            })}
           </Grid>
         </div>
       )}
@@ -421,7 +463,7 @@ function WorkloadCard({ w, cause, highlight, onSelect, onHover }: WorkloadProps)
           </span>
         ))}
         {rolling && <span className="caption">rolling out: old → new</span>}
-        <Managed n={w.node} />
+        <Drift n={w.node} />
       </div>
       {problem && <div className="problem">{problem}</div>}
       {cause && <div className="caused">{cause}</div>}
@@ -429,55 +471,17 @@ function WorkloadCard({ w, cause, highlight, onSelect, onHover }: WorkloadProps)
   );
 }
 
-/** Who manages an app (a Helm release, an Argo CD app, a Flux object), and
- * a hand edit its next sync would undo. A Helm badge opens the release's
- * history. */
-function Managed({ n }: { n: Node }) {
+/** A hand edit the next sync of the tool managing an app would undo. Who
+ * manages it shows on its release's outline. */
+function Drift({ n }: { n: Node }) {
   const sets = useContext(FeedSets);
-  const [anchor, setAnchor] = useState<DOMRect | null>(null);
-  const badge = useRef<HTMLButtonElement>(null);
   const owner = ownerOf(n);
-  if (!owner) return null;
-  const drift = driftOf(sets, n.id);
-  const stop = (e: React.SyntheticEvent) => e.stopPropagation(); // not the card's click
+  const drift = owner && driftOf(sets, n.id);
+  if (!owner || !drift) return null;
   return (
-    <span className="managed">
-      {drift && (
-        <span className="drift-chip" title={drift.drift}>
-          <i aria-hidden="true" />
-          edited outside {TOOL_NAME[owner.tool]}
-        </span>
-      )}
-      {owner.tool === "helm" ? (
-        <button
-          type="button"
-          ref={badge}
-          className="owner helm"
-          aria-haspopup="dialog"
-          aria-expanded={!!anchor}
-          aria-label={`Helm release ${owner.name}${owner.chart ? `, chart ${owner.chart}` : ""}: show its history`}
-          onClick={(e) => {
-            stop(e);
-            setAnchor(anchor ? null : e.currentTarget.getBoundingClientRect());
-          }}
-          onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && stop(e)}
-        >
-          <HelmIcon />
-          {ownerText(owner)}
-        </button>
-      ) : (
-        <span className="owner">{ownerText(owner)}</span>
-      )}
-      {anchor && (
-        <ReleaseHistory
-          owner={owner}
-          anchor={anchor}
-          onClose={() => {
-            setAnchor(null);
-            badge.current?.focus();
-          }}
-        />
-      )}
+    <span className="drift-chip" title={drift.drift}>
+      <i aria-hidden="true" />
+      edited outside {TOOL_NAME[owner.tool]}
     </span>
   );
 }
@@ -489,81 +493,12 @@ const HelmIcon = () => (
   </svg>
 );
 
-/** A Helm release's revisions, from the records Helm keeps: what each did
- * when kubexray saw it, and a way back to just before it. */
-function ReleaseHistory({ owner, anchor, onClose }: { owner: Owner; anchor: DOMRect; onClose: () => void }) {
-  const { revisions, onRewind } = useContext(Helm);
-  const sets = useContext(FeedSets);
-  const box = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    box.current?.focus(); // Escape, and Tab through its buttons, from here
-    const away = (e: PointerEvent) => !box.current?.contains(e.target as globalThis.Node) && onClose();
-    addEventListener("pointerdown", away);
-    return () => removeEventListener("pointerdown", away);
-  }, [onClose]);
-  const revs = revisions(owner.name, owner.ns ?? "").slice(0, 6);
-  const right = Math.max(8, innerWidth - anchor.right);
-  return createPortal(
-    <div
-      className="release-history"
-      role="dialog"
-      aria-label={`Helm release ${owner.name}`}
-      ref={box}
-      tabIndex={-1}
-      style={{ top: anchor.bottom + 6, right }}
-      onKeyDown={(e) => {
-        if (e.key !== "Escape") return;
-        e.stopPropagation(); // closes this, not the map's selection
-        onClose();
-      }}
-    >
-      <h3>Helm release {owner.name}</h3>
-      <p className="sub">{owner.chart ? `Chart ${owner.chart} · ` : ""}revisions, newest first</p>
-      {revs.length === 0 ? (
-        <p className="empty">Helm&apos;s revision records aren&apos;t visible to kubexray.</p>
-      ) : (
-        <ol>
-          {revs.map((r) => {
-            const set = revisionSet(sets, owner, r);
-            const note = set && (set.verdict === "broke" || set.verdict === "fixed") ? verdictNote(set) : "";
-            return (
-              <li key={r.version} className={r.status === "failed" ? "failed" : undefined}>
-                <b>#{r.version}</b>
-                <span className="what">
-                  <span>{set ? (r.version === 1 ? set.title.replace(/^Helm upgrade/, "Helm install") : set.title) : `revision ${r.version}`}</span>
-                  <small>
-                    {clock(r.at)}
-                    {note && ` · ${note}`}
-                  </small>
-                </span>
-                <span className={`status ${r.status === "deployed" ? "ok" : r.status === "failed" ? "bad" : ""}`}>{r.status}</span>
-                {onRewind && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      onRewind(new Date(Date.parse(r.at) - 2000).toISOString());
-                      onClose();
-                    }}
-                  >
-                    Rewind to just before ›
-                  </button>
-                )}
-              </li>
-            );
-          })}
-        </ol>
-      )}
-    </div>,
-    document.body,
-  );
-}
-
 // The grid of cards, with orthogonal wires drawn between them once laid out.
 function Grid({ ns, highlight, releases = [], children }: { ns: NamespaceView; highlight: Highlight; releases?: Release[]; children: React.ReactNode }) {
   const ref = useRef<HTMLDivElement>(null);
   const [paths, setPaths] = useState<{ d: string; from: string; to: string }[]>([]);
-  const [boxes, setBoxes] = useState<{ key: string; label: string; top: number; left: number; width: number; height: number }[]>([]);
-  const wiresKey = ns.wires.map((w) => w.join(">")).join(",") + releases.map((r) => r.label + r.cards.join()).join(";");
+  const [boxes, setBoxes] = useState<{ key: string; tool: string; top: number; height: number }[]>([]);
+  const wiresKey = ns.wires.map((w) => w.join(">")).join(",") + releases.map((r) => r.key + r.cards.join()).join(";");
 
   useLayoutEffect(() => {
     const grid = ref.current;
@@ -590,20 +525,16 @@ function Grid({ ns, highlight, releases = [], children }: { ns: NamespaceView; h
         out.push({ d, from: wireTarget(from), to: wireTarget(to) });
       }
       setPaths(out);
-      // Each release: the box around its cards, a little outside them.
-      const pad = 5;
+      // Each release: an outline across the rows, from the middle of its
+      // label down to just below its cards.
       setBoxes(
         releases.flatMap((r) => {
-          // Tight around its cards; its label on the line reserved above them.
-          const rects = r.cards.map(box).filter((b): b is DOMRect => !!b);
           const head = box(`release|${r.key}`);
-          if (!rects.length) return [];
-          const top = (head?.top ?? Math.min(...rects.map((b) => b.top)) - pad) - g.top;
-          const bottom = Math.max(...rects.map((b) => b.bottom)) - g.top + pad;
-          const left = Math.min(...rects.map((b) => b.left)) - g.left - 10;
-          const right = Math.max(...rects.map((b) => b.right)) - g.left + 10;
-          const fits = r.label.length * 6.6 + 24; // never narrower than its label
-          return [{ key: r.key, label: r.label, top, left, width: Math.max(right - left, fits), height: bottom - top }];
+          const rects = r.cards.map(box).filter((b): b is DOMRect => !!b);
+          if (!head || !rects.length) return [];
+          const top = head.top + head.height / 2 - g.top;
+          const bottom = Math.max(...rects.map((b) => b.bottom)) - g.top + 10;
+          return [{ key: r.key, tool: r.tool, top, height: bottom - top }];
         }),
       );
     };
@@ -623,9 +554,7 @@ function Grid({ ns, highlight, releases = [], children }: { ns: NamespaceView; h
   return (
     <div className="grid" ref={ref}>
       {boxes.map((b) => (
-        <div key={b.key} className="release" style={{ top: b.top, left: b.left, width: b.width, height: b.height }} aria-hidden="true">
-          <span>{b.label}</span>
-        </div>
+        <div key={b.key} className={`release ${b.tool}`} style={{ top: b.top, height: b.height }} aria-hidden="true" />
       ))}
       {children}
       <svg className="wires" aria-hidden="true">
