@@ -40,17 +40,16 @@ const VIEWS: { id: View; label: string }[] = [
 export function Header({ view, status, rewound = false, label, nav, search, me }: Props) {
   const ws = allWorkloads(view);
   const count = (h: string) => ws.filter(({ w }) => workloadHealth(w) === h).length;
-  const pods = ws.reduce((n, { w }) => n + w.pods.length, 0);
   const incidentApps = new Set(nav?.incidentApps ?? []);
   const crit = ws.filter(({ w }) => workloadHealth(w) === "crit").map(({ w }) => w.node.id);
   const bad = new Set([...crit, ...incidentApps]).size;
-  const healthy = ws.filter(({ w }) => workloadHealth(w) === "ok" && !incidentApps.has(w.node.id)).length;
   const updating = count("warn");
   return (
     <header className="header">
       <div className="brand">
         <Wordmark />
-        <span className={`status ${rewound ? "rewound" : status}`}>{rewound ? "Rewound" : STATUS[status]}</span>
+        {/* Live is the normal state, and the timeline says so: only the others show. */}
+        {(rewound || status !== "live") && <span className={`status ${rewound ? "rewound" : status}`}>{rewound ? "Rewound" : STATUS[status]}</span>}
         {label && <span className="label">{label}</span>}
       </div>
       {nav && (
@@ -73,23 +72,24 @@ export function Header({ view, status, rewound = false, label, nav, search, me }
           <input type="search" value={search.value} placeholder="Search apps, people, images…" onChange={(e) => search.onChange(e.target.value)} />
         </label>
       )}
-      <div className="counts" aria-live="polite">
-        <span>
-          <i className="dot ok" />
-          <b>{healthy}</b> healthy apps
-        </span>
-        {updating > 0 && (
-          <span>
-            <b>{updating}</b> updating
-          </span>
+      {/* How the cluster is doing, in one line: the map shows the rest. */}
+      <div className={`health${bad ? " bad" : ""}`} aria-live="polite">
+        {bad ? (
+          <>
+            <i className="dot crit" aria-hidden="true" />
+            <span>
+              <b>{bad}</b> need{bad === 1 ? "s" : ""} attention
+            </span>
+          </>
+        ) : (
+          <>
+            <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <path d="m5 12.5 4.5 4.5L19 7.5" />
+            </svg>
+            No incidents{rewound || status === "replay" ? " at this moment" : ""}
+          </>
         )}
-        <span className={bad ? "bad" : ""}>
-          <i className="dot crit" />
-          <b>{bad}</b> need attention
-        </span>
-        <span>
-          <b>{pods}</b> pods
-        </span>
+        {updating > 0 && <span className="updating">· {updating} updating</span>}
       </div>
       <ThemeToggle />
       {me?.email && <Account me={me} />}
