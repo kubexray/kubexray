@@ -5,6 +5,7 @@ import { ago } from "../lib/format";
 import { podHealth, podText } from "../lib/health";
 import { useNow } from "../lib/useNow";
 import { driftOf, Helm, type Owner, ownerOf, releaseId, TOOL_NAME } from "../lib/helm";
+import { byRelease, type ReleaseSection, rowOwner } from "../lib/releases";
 import { type NamespaceView, type Row as ViewRow, type Workload, wireTarget, workloadHealth, workloadProblem } from "../lib/view";
 
 const KIND_LABEL: Record<string, string> = { PersistentVolumeClaim: "Volume" };
@@ -33,8 +34,27 @@ export const SYSTEM = "_system";
 const nsId = (name: string) => `ns-${name}`;
 
 export const MapView = memo(function MapView(props: Props) {
-  const apps = props.view.filter((ns) => !ns.system);
   const system = props.view.filter((ns) => ns.system);
+  // By namespace, or by Helm release (and Argo CD / Flux app), remembered.
+  const [group, setGroup] = useState<Group>(() => {
+    try {
+      return localStorage.getItem(GROUP_KEY) === "release" ? "release" : "namespace";
+    } catch {
+      return "namespace";
+    }
+  });
+  const choose = (g: Group) => {
+    setGroup(g);
+    try {
+      localStorage.setItem(GROUP_KEY, g);
+    } catch {
+      // storage blocked: the choice lasts until reload
+    }
+  };
+  const grouped = byRelease(props.view);
+  const canGroup = grouped.releases.length > 0;
+  const byRel = group === "release" && canGroup;
+  const apps = byRel ? [...grouped.releases.map((r) => r.view), ...grouped.rest] : props.view.filter((ns) => !ns.system);
   // The namespace in view, marked in the bar: the first whose card still
   // shows below the bar. After a jump, the one jumped to, while it scrolls.
   const map = useRef<HTMLDivElement>(null);
@@ -66,21 +86,48 @@ export const MapView = memo(function MapView(props: Props) {
   };
   return (
     <div className="map" aria-label="Cluster map" ref={map}>
-      {props.view.length > 1 && <NamespaceBar apps={apps} system={system} current={current} onJump={jump} />}
-      {apps.map((ns) => (
-        <Namespace key={ns.name} ns={ns} {...props} />
-      ))}
+      {(props.view.length > 1 || canGroup) && (
+        <NamespaceBar apps={apps} system={system} current={current} onJump={jump} group={canGroup ? { value: byRel ? "release" : "namespace", onChange: choose } : undefined} />
+      )}
+      {byRel ? (
+        <>
+          {grouped.releases.map((r) => (
+            <Namespace key={r.id} ns={r.view} head={r} {...props} />
+          ))}
+          {grouped.rest.length > 0 && <h3 className="map-group">Not in a release</h3>}
+          {grouped.rest.map((ns) => (
+            <Namespace key={`rest/${ns.name}`} ns={ns} {...props} />
+          ))}
+        </>
+      ) : (
+        apps.map((ns) => <Namespace key={ns.name} ns={ns} {...props} />)
+      )}
       {system.length > 0 && <SystemGroup system={system} {...props} />}
     </div>
   );
 });
+
+type Group = "namespace" | "release";
+const GROUP_KEY = "kubexray.map.group";
 
 const chipCount = (ns: NamespaceView) =>
   ns.problems ? `${ns.problems} failing` : ns.workloadCount ? String(ns.workloadCount) : ns.serviceCount ? `${ns.serviceCount} svc` : "empty";
 
 /** Every namespace at a glance, always in view: a click opens one and
  * scrolls to it. Kubernetes' own namespaces sit in a menu. */
-function NamespaceBar({ apps, system, current, onJump }: { apps: NamespaceView[]; system: NamespaceView[]; current?: string; onJump: (ns: string) => void }) {
+function NamespaceBar({
+  apps,
+  system,
+  current,
+  onJump,
+  group,
+}: {
+  apps: NamespaceView[];
+  system: NamespaceView[];
+  current?: string;
+  onJump: (ns: string) => void;
+  group?: { value: Group; onChange: (g: Group) => void };
+}) {
   const [menu, setMenu] = useState(false);
   const box = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -96,7 +143,7 @@ function NamespaceBar({ apps, system, current, onJump }: { apps: NamespaceView[]
   }, [menu]);
   const sysProblems = system.reduce((n, ns) => n + ns.problems, 0);
   return (
-    <nav className="ns-bar" aria-label="Namespaces">
+    <nav className="ns-bar" aria-label={group?.value === "release" ? "Releases" : "Namespaces"}>
       <div className="ns-bar-list">
         {apps.map((ns) => (
           <button
@@ -147,6 +194,16 @@ function NamespaceBar({ apps, system, current, onJump }: { apps: NamespaceView[]
             )}
           </div>
         </>
+      )}
+      {group && (
+        <div className="group-by" role="group" aria-label="Group the map by">
+          <span>Group by</span>
+          {(["namespace", "release"] as const).map((g) => (
+            <button key={g} type="button" aria-pressed={group.value === g} className={group.value === g ? "on" : ""} onClick={() => group.onChange(g)}>
+              {g === "namespace" ? "Namespace" : "Release"}
+            </button>
+          ))}
+        </div>
       )}
     </nav>
   );
@@ -199,11 +256,6 @@ function PodDots({ ns }: { ns: NamespaceView }) {
   );
 }
 
-/** The tool managing a row: its app's, else its Service's or Ingress's. */
-function rowOwner(row: ViewRow): Owner | undefined {
-  const n = row.workload?.node ?? row.services[0] ?? row.ingresses[0];
-  return n ? ownerOf(n) : undefined;
-}
 const ownerKey = (o: Owner) => `${o.tool}/${o.name}`;
 
 /** Rows grouped by what manages them, in the order each first appears;
@@ -263,13 +315,15 @@ function releases(ns: string, rows: ViewRow[], revisionsOf: (release: string, ns
   return [...out.values()];
 }
 
-function Namespace({ ns, open, highlight, causeOf, onToggle, onSelect, onHover }: Props & { ns: NamespaceView }) {
+function Namespace({ ns, head, open, highlight, causeOf, onToggle, onSelect, onHover }: Props & { ns: NamespaceView; head?: ReleaseSection }) {
   const { revisions } = useContext(Helm);
   const now = useNow();
   const rows = groupRows(ns.rows);
-  const rels = releases(ns.name, rows, revisions, now);
+  // A release's own section needs no outline inside it.
+  const rels = head ? [] : releases(ns.name, rows, revisions, now);
   const relOf = new Map(rels.map((r) => [r.key, r]));
-  const isOpen = open.get(ns.name) ?? (!ns.system || !ns.allHealthy);
+  const openKey = head ? head.id : ns.name;
+  const isOpen = open.get(openKey) ?? (!ns.system || !ns.allHealthy);
   const released = rels.length ? ` · ${rels.length} release${rels.length === 1 ? "" : "s"}` : "";
   const meta = ns.problems
     ? `${ns.workloadCount} apps${released} · ${ns.problems} need${ns.problems === 1 ? "s" : ""} attention`
@@ -286,12 +340,18 @@ function Namespace({ ns, open, highlight, causeOf, onToggle, onSelect, onHover }
       open={isOpen}
       onToggle={(e) => {
         // React setting `open` fires toggle too; only remember what the user did.
-        if (e.currentTarget.open !== isOpen) onToggle(ns.name, e.currentTarget.open);
+        if (e.currentTarget.open !== isOpen) onToggle(openKey, e.currentTarget.open);
       }}
     >
       <summary>
-        <span className="ns-name">{ns.name}</span>
-        <span className={`ns-meta ${ns.problems ? "bad" : ""}`}>{meta}</span>
+        {head ? (
+          <ReleaseHead head={head} health={meta.replace(/ · \d+ releases?/, "")} selected={highlight.selected === head.id} onSelect={onSelect} />
+        ) : (
+          <>
+            <span className="ns-name">{ns.name}</span>
+            <span className={`ns-meta ${ns.problems ? "bad" : ""}`}>{meta}</span>
+          </>
+        )}
         {!isOpen && <PodDots ns={ns} />}
       </summary>
       {isOpen && (
@@ -468,6 +528,40 @@ function WorkloadCard({ w, cause, highlight, onSelect, onHover }: WorkloadProps)
       {problem && <div className="problem">{problem}</div>}
       {cause && <div className="caused">{cause}</div>}
     </div>
+  );
+}
+
+/** A release section's heading: who it is, the revision running, where it
+ * lives, and its details in the side panel. */
+function ReleaseHead({ head, health, selected, onSelect }: { head: ReleaseSection; health: string; selected: boolean; onSelect: (id: string) => void }) {
+  const { revisions } = useContext(Helm);
+  const now = useNow();
+  const o = head.owner;
+  const deployed = o.tool === "helm" ? revisions(o.name, o.ns ?? head.ns).find((r) => r.status === "deployed") : undefined;
+  const detail = [o.chart && `chart ${o.chart}`, deployed && `revision ${deployed.version}`, deployed && ago(deployed.at, now)].filter(Boolean).join(" · ");
+  return (
+    <>
+      {o.tool === "helm" && (
+        <span className="rel-icon">
+          <HelmIcon />
+        </span>
+      )}
+      <span className="ns-name">{o.tool === "helm" ? o.name : `${TOOL_NAME[o.tool]} · ${o.name}`}</span>
+      {detail && <span className="rel-detail">{detail}</span>}
+      <span className="rel-ns">{head.ns}</span>
+      {deployed && deployed.status !== "deployed" && <span className="rel-status bad">{deployed.status}</span>}
+      <span className={`ns-meta ${head.view.problems ? "bad" : ""}`}>{health}</span>
+      <button
+        type="button"
+        className={`rel-more${selected ? " on" : ""}`}
+        onClick={(e) => {
+          e.preventDefault(); // not the section's open and close
+          onSelect(head.id);
+        }}
+      >
+        History ›
+      </button>
+    </>
   );
 }
 

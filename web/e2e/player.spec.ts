@@ -251,3 +251,18 @@ test("the side panel still resizes after visiting another page", async ({ page }
   await page.getByRole("button", { name: "Map", exact: true }).click();
   await expect(handle).toHaveAttribute("aria-valuemax", String(max));
 });
+
+test("the map grouped by release, and back by namespace", async ({ page }) => {
+  await openDemo(page);
+  const toggle = page.getByRole("group", { name: "Group the map by" });
+  await toggle.getByRole("button", { name: "Release" }).click();
+  await expect(page.getByRole("navigation", { name: "Releases" })).toBeVisible();
+  const head = page.locator("details.ns .rel-icon").first();
+  await expect(head).toBeVisible();
+  await expect(page.locator(".release.helm")).toHaveCount(0); // a release's section has no outline inside it
+  await expect(page.getByRole("heading", { name: "Not in a release" })).toBeVisible();
+  await page.locator(".rel-more").first().click();
+  await expect(page.locator(".release-details .kind")).toHaveText("Helm release");
+  await toggle.getByRole("button", { name: "Namespace" }).click();
+  await expect(page.locator(".release.helm").first()).toBeVisible();
+});
