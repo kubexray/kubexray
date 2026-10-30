@@ -387,9 +387,9 @@ aside { display: flex; flex-direction: column; min-height: 0; min-width: 0; over
 .ongoing { animation: tl-pulse 1.6s ease-in-out infinite; }
 @keyframes tl-pulse { 50% { opacity: 0.55; } }
 @media (prefers-reduced-motion: reduce) { .ongoing { animation: none; } }
-.tl-span-label { position: absolute; z-index: 2; top: 74px; padding: 0 0 0 5px; border: 0; background: transparent; font: 600 11px var(--font-body); color: color-mix(in srgb, var(--crit) 75%, var(--text)); white-space: nowrap; cursor: pointer; }
+.tl-span-label { position: absolute; z-index: 2; top: 33px; padding: 0 0 0 5px; border: 0; background: transparent; font: 600 11px var(--font-body); color: color-mix(in srgb, var(--crit) 75%, var(--text)); white-space: nowrap; cursor: pointer; }
 .tl-span-label:hover { text-decoration: underline; }
-.tl-bars { position: absolute; left: 0; right: 0; top: 30px; height: 42px; display: flex; align-items: flex-end; gap: 2px; pointer-events: none; }
+.tl-bars { position: absolute; left: 0; right: 0; top: 30px; height: 60px; display: flex; align-items: flex-end; gap: 2px; pointer-events: none; }
 .tl-bars i.off { visibility: hidden; }
 .tl-span-label.end { padding: 0 5px 0 0; }
 .tl-bars i { flex: 1; min-width: 1px; border-radius: 2px 2px 0 0; background: color-mix(in srgb, var(--muted) 45%, var(--surface)); }
