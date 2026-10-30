@@ -13,6 +13,7 @@ import (
 	"github.com/kubexray/kubexray/internal/cause"
 	"github.com/kubexray/kubexray/internal/feed"
 	"github.com/kubexray/kubexray/internal/graph"
+	"github.com/kubexray/kubexray/internal/redact"
 )
 
 // Options for writing a replay.
@@ -114,6 +115,7 @@ func Write(ctx context.Context, w io.Writer, msgs [][]byte, opts Options) error 
 		case opts.Allow != nil:
 			graph.StripValuesWhere(&m, func(n graph.Node) bool { return !opts.Allow(n.Namespace) })
 		}
+		maskConfig(&m)
 		if anon != nil {
 			anon.message(&m)
 		}
@@ -167,4 +169,43 @@ func (c *countingWriter) Write(p []byte) (int, error) {
 	n, err := c.w.Write(p)
 	c.n += int64(n)
 	return n, err
+}
+
+// maskConfig hides ConfigMap values that look like credentials. kubexray
+// shows ConfigMaps in full inside the cluster; a replay leaves it, so it
+// masks them as it does every other value (ADR-0021).
+func maskConfig(m *graph.Message) {
+	for i := range m.Nodes {
+		maskData(&m.Nodes[i])
+	}
+	for i, op := range m.Ops {
+		if op.Node != nil && op.Node.Kind == "ConfigMap" {
+			n := *op.Node
+			maskData(&n)
+			m.Ops[i].Node = &n
+		}
+	}
+}
+
+func maskData(n *graph.Node) {
+	if n.Kind != "ConfigMap" || len(n.Data) == 0 {
+		return
+	}
+	data := make(map[string]graph.Value, len(n.Data))
+	for k, v := range n.Data {
+		switch {
+		case v.Text == "":
+		case redact.SensitiveName(k):
+			v.Text, v.Masked = "", "name"
+		default:
+			if t, hid := redact.Text(v.Text); hid {
+				v.Text = t
+				if v.Masked == "" {
+					v.Masked = "value"
+				}
+			}
+		}
+		data[k] = v
+	}
+	n.Data = data
 }
