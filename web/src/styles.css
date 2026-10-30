@@ -90,6 +90,18 @@ code { font-family: var(--font-data); font-size: 12px; }
 .rel-apps i.warn { background: var(--warn); }
 .rel-apps i.crit { background: var(--crit); }
 .rel-status.warn { background: color-mix(in srgb, var(--warn) 14%, var(--surface)); color: color-mix(in srgb, var(--warn) 80%, var(--text)); }
+.rel-edits-chip { border: 0; cursor: pointer; font: 600 11.5px var(--font-body); }
+.rel-edits-chip:hover { text-decoration: underline; }
+.rel-edits { display: grid; gap: 8px; margin-top: 12px; padding: 10px 12px; border: 1px solid color-mix(in srgb, var(--warn) 35%, var(--border)); border-radius: 8px; background: color-mix(in srgb, var(--warn) 5%, var(--surface)); scroll-margin-top: 12px; }
+.rel-edits .rel-head { margin: 0; color: color-mix(in srgb, var(--warn) 80%, var(--text)); }
+.rel-edits-note { margin: 0; color: var(--muted); font-size: 12.5px; }
+.rel-edit { display: grid; gap: 6px; padding-top: 8px; border-top: 1px solid var(--border); }
+.rel-edit-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; font-size: 13px; }
+.rel-edit-head button, .rel-edit-map { all: unset; cursor: pointer; color: var(--accent); font-weight: 600; }
+.rel-edit-head button { font-family: var(--font-data); font-size: 12.5px; }
+.rel-edit-head span { color: var(--muted); font-size: 12px; }
+.rel-edit-map { justify-self: start; font-size: 12.5px; }
+.rel-edit-head button:focus-visible, .rel-edit-map:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .rel-aside { display: flex; flex-direction: column; gap: 8px; position: sticky; top: 12px; }
 .rel-aside .details { max-height: none; }
 .rel-show { align-self: flex-start; padding: 6px 12px; border-radius: 8px; border: 1px solid var(--border-strong); background: var(--surface); color: var(--text); font-weight: 600; font-size: 12.5px; cursor: pointer; }

@@ -36,6 +36,7 @@ const OK = new Set(["deployed", "superseded", "uninstalled"]);
 export function ReleasesView({ state, sets, now, onShow, onRewind }: Props) {
   const releases = useMemo(() => list(state, sets), [state, sets]);
   const [picked, setPicked] = useState<string | null>(null);
+  const [showEdits, setShowEdits] = useState(0);
   const selected = releases.find((r) => r.id === picked) ?? releases[0];
   const helm = useContext(Helm);
 
@@ -108,7 +109,24 @@ export function ReleasesView({ state, sets, now, onShow, onRewind }: Props) {
                     ))}
                   </span>
                 </td>
-                <td>{r.edits ? <span className="rel-status warn">{r.edits === 1 ? "1 edit" : `${r.edits} edits`}</span> : <span className="muted">none</span>}</td>
+                <td>
+                  {r.edits ? (
+                    <button
+                      type="button"
+                      className="rel-status warn rel-edits-chip"
+                      aria-label={`${r.name}: see ${r.edits === 1 ? "the hand edit" : `the ${r.edits} hand edits`}`}
+                      onClick={(e) => {
+                        e.stopPropagation(); // the row would select it too, without scrolling
+                        setPicked(r.id);
+                        setShowEdits((n) => n + 1);
+                      }}
+                    >
+                      {r.edits === 1 ? "1 edit" : `${r.edits} edits`} ›
+                    </button>
+                  ) : (
+                    <span className="muted">none</span>
+                  )}
+                </td>
               </tr>
             ))}
           </tbody>
@@ -116,7 +134,7 @@ export function ReleasesView({ state, sets, now, onShow, onRewind }: Props) {
         {selected && (
           <aside className="rel-aside">
             <Helm.Provider value={{ ...helm, onRewind: (ts) => onRewind(selected.id, ts) }}>
-              <ReleaseDetails id={selected.id} state={state} onSelect={onShow} at={now} />
+              <ReleaseDetails id={selected.id} state={state} onSelect={onShow} at={now} showEdits={showEdits} />
             </Helm.Provider>
             <button type="button" className="rel-show" onClick={() => onShow(selected.id)}>
               Show on map

@@ -1,8 +1,9 @@
-import { useContext } from "react";
+import { useContext, useEffect, useRef } from "react";
 import { FeedSets } from "../lib/feedContext";
 import { verdictNote } from "../lib/feed";
 import { ago, clock, who } from "../lib/format";
-import { Helm, ownerOf, parseReleaseId, releaseObjects, revisionSet, TOOL_NAME } from "../lib/helm";
+import { driftOf, Helm, ownerOf, parseReleaseId, releaseObjects, revisionSet, TOOL_NAME } from "../lib/helm";
+import { DriftView } from "./DiffView";
 import type { ClusterState } from "../lib/state";
 import { useNow } from "../lib/useNow";
 
@@ -11,11 +12,30 @@ const KIND: Record<string, string> = { PersistentVolumeClaim: "Volume" };
 /** The Selected panel for a release outlined on the map: its chart, the
  * revision running and who made it, what it manages, and (for Helm) its
  * revisions with a way back to just before each. */
-export function ReleaseDetails({ id, state, onSelect, height, at }: { id: string; state: ClusterState; onSelect: (id: string) => void; height?: number; at?: number }) {
+export function ReleaseDetails({
+  id,
+  state,
+  onSelect,
+  height,
+  at,
+  showEdits = 0,
+}: {
+  id: string;
+  state: ClusterState;
+  onSelect: (id: string) => void;
+  height?: number;
+  at?: number;
+  /** Bumped to scroll to the hand edits. */
+  showEdits?: number;
+}) {
   const { revisions, onRewind } = useContext(Helm);
   const sets = useContext(FeedSets);
   const clockNow = useNow();
   const now = at ?? clockNow; // a replay's moment, when one is shown
+  const editsRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    if (showEdits) editsRef.current?.scrollIntoView({ block: "start", behavior: "smooth" });
+  }, [showEdits, id]);
   const sized = height ? { height, maxHeight: "none", flex: "none" } : undefined;
   const rel = parseReleaseId(id);
   const objects = rel ? releaseObjects(state, rel.tool, rel.ns, rel.name) : [];
@@ -35,6 +55,13 @@ export function ReleaseDetails({ id, state, onSelect, height, at }: { id: string
   const chart = objects.map((n) => n.labels?.["helm.sh/chart"]).find(Boolean);
   const app = objects.map((n) => n.labels?.["app.kubernetes.io/version"]).find(Boolean);
   const madeBy = current && revisionSet(sets, owner, current)?.by;
+  // Hand edits its next upgrade would undo: each object's, with who and when.
+  const edits = objects.flatMap((n) => {
+    const e = driftOf(sets, n.id);
+    if (!e) return [];
+    const set = sets.find((s) => s.entries.includes(e));
+    return [{ n, e, by: set?.by }];
+  });
 
   const facts: [string, string][] = [];
   if (chart) facts.push(["Chart", `${owner.chart ? `${chart.slice(0, -owner.chart.length - 1)} ${owner.chart}` : chart}${app ? ` · app ${app}` : ""}`]);
@@ -57,6 +84,31 @@ export function ReleaseDetails({ id, state, onSelect, height, at }: { id: string
           </div>
         ))}
       </dl>
+      {edits.length > 0 && (
+        <section className="rel-edits" ref={editsRef} aria-label="Hand edits">
+          <h3 className="rel-head">Hand edits</h3>
+          <p className="rel-edits-note">
+            Changed by hand, outside {TOOL_NAME[owner.tool]}, so {helm ? "the chart" : "Git"} doesn&apos;t have {edits.length === 1 ? "it" : "them"}.
+          </p>
+          {edits.map(({ n, e, by }) => (
+            <div key={n.id} className="rel-edit">
+              <div className="rel-edit-head">
+                <button type="button" onClick={() => onSelect(n.id)}>
+                  {KIND[n.kind] ?? n.kind} {n.name}
+                </button>
+                <span>
+                  {by ? `${who(by)}, ` : ""}
+                  {ago(e.at, now)}
+                </span>
+              </div>
+              <DriftView entry={e} />
+              <button type="button" className="rel-edit-map" onClick={() => onSelect(n.id)}>
+                Show on map ›
+              </button>
+            </div>
+          ))}
+        </section>
+      )}
       <ul className="rel-objects" aria-label="What it manages">
         {objects.map((n) => (
           <li key={n.id}>
