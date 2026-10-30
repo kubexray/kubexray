@@ -94,6 +94,34 @@ func TestCrashLoopRestartsDontCount(t *testing.T) {
 	}
 }
 
+// Docker or the node restarting stops every container with reason Unknown:
+// the apps didn't restart themselves, so it's no pattern of restarts.
+func TestRestartsWhenTheNodeWentAwayDontCount(t *testing.T) {
+	t.Parallel()
+	w := newSignalWatcher()
+	t0 := time.Date(2026, 10, 30, 21, 11, 0, 0, time.UTC)
+	const id = "Pod/kube-system/kindnet-1"
+	unknown := func(count int32, finished time.Time, ready bool) *corev1.Pod {
+		p := restartingPod(count, finished, ready)
+		p.Status.ContainerStatuses[0].LastTerminationState.Terminated.Reason = "Unknown"
+		return p
+	}
+	// First seen after the node came back.
+	if got := w.noteRestarts(id, nil, unknown(2, t0, true)); len(got) != 0 {
+		t.Errorf("first seen: %v", got)
+	}
+	// Ready, then the node went away again.
+	if got := w.noteRestarts(id, unknown(2, t0, true), unknown(3, t0.Add(time.Minute), false)); len(got) != 0 {
+		t.Errorf("node restart counted: %v", got)
+	}
+	// A real restart afterwards still counts.
+	up := unknown(3, t0.Add(time.Minute), true)
+	w.noteRestarts(id, unknown(3, t0.Add(time.Minute), false), up)
+	if got := w.noteRestarts(id, up, restartingPod(4, t0.Add(2*time.Minute), false)); len(got) != 1 {
+		t.Errorf("an OOM kill after it: %v", got)
+	}
+}
+
 func TestMemoryPct(t *testing.T) {
 	t.Parallel()
 	pod := &corev1.Pod{Spec: corev1.PodSpec{Containers: []corev1.Container{
