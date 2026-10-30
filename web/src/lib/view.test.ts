@@ -67,6 +67,27 @@ describe("buildView", () => {
     expect(ns.serviceTargets.get("Service/shop/orphan")?.size).toBe(0);
   });
 
+  it("puts a service that selects nothing beside the app it was meant for, unwired", () => {
+    const helm = { tool: "helm", name: "smoke", namespace: "shop" };
+    const v = buildView(
+      cluster(
+        [
+          n("Service/shop/web", { origin: helm }), // its selector was edited to match nothing
+          n("Deployment/shop/storefront", { origin: helm, status: { ready: true, replicas: { desired: 1, ready: 1, updated: 1 } } }),
+          n("Service/shop/reports"),
+          n("Deployment/shop/reports", { status: { ready: true, replicas: { desired: 1, ready: 1, updated: 1 } } }),
+        ],
+        [],
+      ),
+    )[0]!;
+    expect(v.rows.map((r) => [r.workload?.node.name, r.services.map((x) => x.name)])).toEqual([
+      ["reports", ["reports"]], // by its name
+      ["storefront", ["web"]], // by its release
+    ]);
+    expect(v.wires).toEqual([]);
+    expect(v.serviceTargets.get("Service/shop/web")?.size).toBe(0); // still "selects no pods"
+  });
+
   it("wires the chain together", () => {
     expect(ns.wires).toContainEqual(["Ingress/shop/web", "Service/shop/api"]);
     expect(ns.wires).toContainEqual(["Service/shop/api", "Deployment/shop/api"]);

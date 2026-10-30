@@ -87,9 +87,6 @@ export function ReleaseDetails({
       {edits.length > 0 && (
         <section className="rel-edits" ref={editsRef} aria-label="Hand edits">
           <h3 className="rel-head">Hand edits</h3>
-          <p className="rel-edits-note">
-            Changed by hand, outside {TOOL_NAME[owner.tool]}, so {helm ? "the chart" : "Git"} doesn&apos;t have {edits.length === 1 ? "it" : "them"}.
-          </p>
           {edits.map(({ n, e, by }) => (
             <div key={n.id} className="rel-edit">
               <div className="rel-edit-head">
@@ -101,7 +98,7 @@ export function ReleaseDetails({
                   {ago(e.at, now)}
                 </span>
               </div>
-              <DriftView entry={e} />
+              <DriftView entry={e} compact />
               <button type="button" className="rel-edit-map" onClick={() => onSelect(n.id)}>
                 Show on map ›
               </button>

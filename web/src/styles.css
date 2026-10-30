@@ -94,7 +94,6 @@ code { font-family: var(--font-data); font-size: 12px; }
 .rel-edits-chip:hover { text-decoration: underline; }
 .rel-edits { display: grid; gap: 8px; margin-top: 12px; padding: 10px 12px; border: 1px solid color-mix(in srgb, var(--warn) 35%, var(--border)); border-radius: 8px; background: color-mix(in srgb, var(--warn) 5%, var(--surface)); scroll-margin-top: 12px; }
 .rel-edits .rel-head { margin: 0; color: color-mix(in srgb, var(--warn) 80%, var(--text)); }
-.rel-edits-note { margin: 0; color: var(--muted); font-size: 12.5px; }
 .rel-edit { display: grid; gap: 6px; padding-top: 8px; border-top: 1px solid var(--border); }
 .rel-edit-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; font-size: 13px; }
 .rel-edit-head button, .rel-edit-map { all: unset; cursor: pointer; color: var(--accent); font-weight: 600; }

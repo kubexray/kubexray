@@ -44,7 +44,7 @@ const TOOL: Record<string, string> = { helm: "Helm", argocd: "Argo CD", flux: "F
 /** A hand edit to a managed object (ADR-0019): what it says, how the object
  * differs from what its tool last applied, and the command that puts it
  * back. */
-export function DriftView({ entry: e, label }: { entry: Entry; label?: boolean }) {
+export function DriftView({ entry: e, label, compact }: { entry: Entry; label?: boolean; compact?: boolean }) {
   const [copied, setCopied] = useState(false);
   const tool = TOOL[e.origin?.tool ?? ""] ?? e.origin?.tool ?? "its tool";
   const copy = () => {
@@ -54,6 +54,17 @@ export function DriftView({ entry: e, label }: { entry: Entry; label?: boolean }
       () => setCopied(false),
     );
   };
+  // Compact: only how it differs, where the heading already says it's a hand edit.
+  if (compact && e.driftDiff?.length) {
+    return (
+      <div className="diff-view" role="group" aria-label={`How it differs from what ${tool} applied`}>
+        <div className="diff-head">against what {tool} applied</div>
+        {e.driftDiff.map((l, i) => (
+          <Lines key={`${l.path}-${i}`} l={l} />
+        ))}
+      </div>
+    );
+  }
   return (
     <div className="feed-drift">
       <div>
