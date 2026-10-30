@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Set as ChangeSet } from "../gen/feed";
 import type { Node } from "../gen/graph";
-import { chartVersion, driftOf, ownerOf, ownerText, revisions, revisionSet } from "./helm";
+import { chartVersion, driftOf, ownerOf, ownerText, parseReleaseId, releaseId, releaseObjects, revisions, revisionSet } from "./helm";
 import { fromSnapshot } from "./state";
 
 const T = (m: number) => new Date(Date.UTC(2026, 9, 28, 20, m)).toISOString();
@@ -29,6 +29,15 @@ describe("helm on the map", () => {
       [2, "failed"],
       [1, "superseded"],
     ]);
+  });
+
+  it("selects a release, and lists what it manages", () => {
+    const pod: Node = { ...dep, id: "Pod/shop/storefront-1", kind: "Pod", name: "storefront-1" };
+    const st = fromSnapshot({ v: 1, type: "snapshot", seq: 1, ts: T(9), nodes: [dep, pod, secret(1, "deployed", 1)], edges: [] });
+    const id = releaseId({ tool: "helm", name: "storefront" }, "shop");
+    expect(parseReleaseId(id)).toEqual({ tool: "helm", ns: "shop", name: "storefront" });
+    expect(parseReleaseId("Deployment/shop/storefront")).toBeUndefined();
+    expect(releaseObjects(st, "helm", "shop", "storefront").map((n) => n.id)).toEqual([dep.id]);
   });
 
   it("finds what a revision did, and a hand edit still in place", () => {

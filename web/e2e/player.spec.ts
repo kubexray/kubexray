@@ -216,15 +216,16 @@ test("the namespace bar jumps to any namespace, Kubernetes' own in a menu", asyn
   await expect(page.locator(`details#ns-${name} > summary`)).toBeInViewport();
 });
 
-test("helm on the map: who manages an app, and the release's history", async ({ page }) => {
+test("helm on the map: a release's outline, and the release when selected", async ({ page }) => {
   await openDemo(page);
-  const badge = page.getByRole("button", { name: /^Helm release / }).first();
-  await expect(badge).toBeVisible();
-  await badge.click();
-  const history = page.getByRole("dialog", { name: /^Helm release / });
-  await expect(history).toBeVisible();
-  await expect(history.locator("li").first()).toContainText(/#\d/);
-  await page.keyboard.press("Escape");
-  await expect(history).toHaveCount(0);
-  await expect(page.locator(".release").first()).toContainText("helm ·");
+  const tag = page.locator(".release-head.helm .release-tag").first();
+  await expect(tag).toContainText("helm ·");
+  await expect(page.locator(".release.helm").first()).toBeVisible();
+  await tag.click();
+  const details = page.locator(".release-details");
+  await expect(details.locator(".kind")).toHaveText("Helm release");
+  await expect(details.locator(".revisions li").first()).toContainText(/#\d/);
+  // An object it manages opens from the release.
+  await details.locator(".rel-objects button").first().click();
+  await expect(page.locator(".release-details")).toHaveCount(0);
 });
