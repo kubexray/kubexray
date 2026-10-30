@@ -203,21 +203,23 @@ test("what happened: resized, filtered, and a way back to any moment", async ({ 
   await shot(page, "what-happened");
 });
 
-test("the namespace bar jumps to any namespace, Kubernetes' own in a menu", async ({ page }) => {
+test("namespaces: failing ones as chips, every one in a menu that jumps", async ({ page }) => {
   await openDemo(page);
   const bar = page.getByRole("navigation", { name: "Namespaces" });
-  await expect(bar.getByRole("button", { name: /^shop \d/ })).toBeVisible();
-  // The chip clicked is marked as the namespace in view.
-  const other = bar.locator(".ns-bar-list .ns-chip").nth(1);
-  await other.click();
-  await expect(other).toHaveAttribute("aria-current", "true");
-  await bar.getByRole("button", { name: /^System/ }).click();
-  const item = page.getByRole("menuitem").first();
-  const name = ((await item.innerText()).split("\n")[0] ?? "").trim();
-  await item.click();
-  await expect(page.getByRole("menu")).toHaveCount(0);
-  await expect(page.locator(`details#ns-${name}`)).toHaveAttribute("open", "");
-  await expect(page.locator(`details#ns-${name} > summary`)).toBeInViewport();
+  // The demo's shop is failing: it gets a chip; healthy namespaces don't.
+  await expect(bar.locator(".ns-chip")).toHaveText([/shop\s+1 failing/]);
+  const pick = bar.locator(".ns-pick-btn");
+  await pick.click();
+  const menu = page.getByRole("menu", { name: "Jump to a namespace" });
+  await expect(menu.getByRole("menuitem").first()).toBeVisible();
+  // Typing narrows it; Enter jumps to the first match.
+  await page.getByRole("searchbox", { name: "Find a namespace" }).fill("kube-sys");
+  await expect(menu.getByRole("menuitem")).toHaveCount(1);
+  await page.keyboard.press("Enter");
+  await expect(menu).toHaveCount(0);
+  await expect(page.locator("details#ns-kube-system")).toHaveAttribute("open", "");
+  await expect(page.locator("details#ns-kube-system > summary")).toBeInViewport();
+  await expect(pick).toContainText("kube-system"); // the button names the namespace in view
 });
 
 test("helm on the map: a release's outline, and the release when selected", async ({ page }) => {

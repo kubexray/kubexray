@@ -78,10 +78,12 @@ export const MapView = memo(function MapView(props: Props) {
 const chipCount = (ns: NamespaceView) =>
   ns.problems ? `${ns.problems} failing` : ns.workloadCount ? String(ns.workloadCount) : ns.serviceCount ? `${ns.serviceCount} svc` : "empty";
 
-/** Every namespace at a glance, always in view: a click opens one and
- * scrolls to it. Kubernetes' own namespaces sit in a menu. */
+/** The namespaces, in one menu: the one in view names it, a click jumps to
+ * any of them, and a namespace with a failing app also gets a red chip
+ * beside it, so trouble is one click away. Kubernetes' own sit at the end. */
 function NamespaceBar({ apps, system, current, onJump }: { apps: NamespaceView[]; system: NamespaceView[]; current?: string; onJump: (ns: string) => void }) {
   const [menu, setMenu] = useState(false);
+  const [q, setQ] = useState("");
   const box = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!menu) return;
@@ -94,60 +96,66 @@ function NamespaceBar({ apps, system, current, onJump }: { apps: NamespaceView[]
       removeEventListener("keydown", esc);
     };
   }, [menu]);
-  const sysProblems = system.reduce((n, ns) => n + ns.problems, 0);
+  const failing = [...apps, ...system].filter((ns) => ns.problems);
+  const match = (ns: NamespaceView) => ns.name.toLowerCase().includes(q.trim().toLowerCase());
+  const shownApps = apps.filter(match);
+  const shownSystem = system.filter(match);
+  const go = (name: string) => {
+    setMenu(false);
+    setQ("");
+    onJump(name);
+  };
+  const item = (ns: NamespaceView) => (
+    <button key={ns.name} type="button" role="menuitem" className={ns.name === current ? "on" : undefined} aria-current={ns.name === current || undefined} onClick={() => go(ns.name)}>
+      <i className={ns.problems ? "bad" : undefined} aria-hidden="true" />
+      {ns.name}
+      <em className={ns.problems ? "bad" : undefined}>{chipCount(ns)}</em>
+    </button>
+  );
   return (
     <nav className="ns-bar" aria-label="Namespaces">
-      <div className="ns-bar-list">
-        {apps.map((ns) => (
-          <button
-            key={ns.name}
-            type="button"
-            className={`ns-chip${ns.problems ? " bad" : ""}${current === ns.name ? " on" : ""}`}
-            aria-current={current === ns.name || undefined}
-            onClick={() => onJump(ns.name)}
-          >
-            <i aria-hidden="true" />
-            {ns.name} <em>{chipCount(ns)}</em>
-          </button>
-        ))}
-      </div>
-      {system.length > 0 && (
-        <>
-          <span className="ns-sep" aria-hidden="true" />
-          <div className="ns-sys" ref={box}>
-            <button
-              type="button"
-              className={`ns-chip sys${sysProblems ? " bad" : ""}${menu ? " open" : ""}${system.some((ns) => ns.name === current) ? " on" : ""}`}
-              aria-haspopup="menu"
-              aria-expanded={menu}
-              onClick={() => setMenu(!menu)}
-            >
-              System <em>{sysProblems ? `${sysProblems} failing` : system.length}</em>
-              <span aria-hidden="true">{menu ? "▴" : "▾"}</span>
-            </button>
-            {menu && (
-              <div className="ns-menu" role="menu">
-                {system.map((ns) => (
-                  <button
-                    key={ns.name}
-                    type="button"
-                    role="menuitem"
-                    onClick={() => {
-                      setMenu(false);
-                      onJump(ns.name);
-                    }}
-                  >
-                    <i className={ns.problems ? "bad" : undefined} aria-hidden="true" />
-                    {ns.name}
-                    <em>{ns.problems ? `${ns.problems} failing` : ns.workloadCount ? `${ns.workloadCount} app${ns.workloadCount === 1 ? "" : "s"}` : "empty"}</em>
-                  </button>
-                ))}
-                <p>Kubernetes&apos; own namespaces.</p>
-              </div>
-            )}
+      {failing.map((ns) => (
+        <button key={ns.name} type="button" className="ns-chip bad" onClick={() => onJump(ns.name)}>
+          <i aria-hidden="true" />
+          {ns.name} <em>{ns.problems} failing</em>
+        </button>
+      ))}
+      <div className="ns-pick" ref={box}>
+        <button type="button" className={`ns-pick-btn${menu ? " open" : ""}`} aria-haspopup="menu" aria-expanded={menu} onClick={() => setMenu(!menu)}>
+          {current ? (
+            <>
+              <em>Namespace</em>
+              {current}
+            </>
+          ) : (
+            <>
+              All namespaces
+              <em>{apps.length + system.length}</em>
+            </>
+          )}
+          <span aria-hidden="true">{menu ? "▴" : "▾"}</span>
+        </button>
+        {menu && (
+          <div className="ns-menu" role="menu" aria-label="Jump to a namespace">
+            <input
+              type="search"
+              autoFocus // the menu was just opened to pick one
+              value={q}
+              placeholder="Jump to a namespace…"
+              aria-label="Find a namespace"
+              onChange={(e) => setQ(e.target.value)}
+              onKeyDown={(e) => {
+                const first = shownApps[0] ?? shownSystem[0];
+                if (e.key === "Enter" && first) go(first.name);
+              }}
+            />
+            {shownApps.map(item)}
+            {shownSystem.length > 0 && <p className="ns-menu-head">Kubernetes</p>}
+            {shownSystem.map(item)}
+            {shownApps.length + shownSystem.length === 0 && <p className="ns-menu-none">No namespace matches “{q}”.</p>}
           </div>
-        </>
-      )}
+        )}
+      </div>
     </nav>
   );
 }

@@ -113,26 +113,32 @@ details.ns { scroll-margin-top: 60px; }
 
 /* The namespace bar: every namespace in view, a click away. */
 .ns-bar { position: sticky; top: 0; z-index: 5; flex: none; display: flex; align-items: center; gap: 6px; padding: 7px 8px; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; }
-.ns-bar-list { display: flex; gap: 6px; min-width: 0; overflow-x: auto; scrollbar-width: none; }
 .ns-chip { display: inline-flex; align-items: center; gap: 6px; flex: none; padding: 4px 11px; border: 1px solid var(--border); border-radius: 999px; background: var(--surface); color: var(--text); font: 500 13px var(--font-body); white-space: nowrap; cursor: pointer; }
 .ns-chip:hover { border-color: var(--border-strong); }
 .ns-chip > i { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); }
 .ns-chip em { font-style: normal; font-size: 12px; color: var(--muted); }
-.ns-chip.on { background: var(--text); border-color: var(--text); color: var(--surface); }
-.ns-chip.on em { color: color-mix(in srgb, var(--surface) 70%, var(--text)); }
 .ns-chip.bad { background: var(--crit-soft); border-color: color-mix(in srgb, var(--crit) 35%, var(--border)); color: color-mix(in srgb, var(--crit) 80%, var(--text)); }
 .ns-chip.bad > i { background: var(--crit); }
 .ns-chip.bad em { color: inherit; }
-.ns-chip.sys.open { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
-.ns-sep { width: 1px; height: 20px; flex: none; margin: 0 2px; background: var(--border); }
-.ns-sys { position: relative; flex: none; }
-.ns-menu { position: absolute; top: calc(100% + 6px); left: 0; z-index: 6; width: 260px; display: grid; gap: 1px; padding: 6px; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 16px 36px -14px rgb(16 24 32 / 0.4); }
+.ns-menu { position: absolute; top: calc(100% + 6px); left: 0; z-index: 6; width: 300px; max-height: min(460px, 70vh); overflow-y: auto; display: grid; gap: 1px; padding: 6px; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 16px 36px -14px rgb(16 24 32 / 0.4); }
+/* The namespace menu: what's in view, and every namespace a click away. */
+.ns-pick { position: relative; flex: none; }
+.ns-pick-btn { display: inline-flex; align-items: center; gap: 7px; padding: 5px 11px; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--surface); color: var(--text); font: 600 13px var(--font-body); cursor: pointer; }
+.ns-pick-btn em { font-style: normal; font-weight: 500; font-size: 12px; color: var(--muted); }
+.ns-pick-btn span { color: var(--muted); font-size: 10px; }
+.ns-pick-btn:hover, .ns-pick-btn.open { border-color: var(--accent); }
+.ns-pick-btn.open { box-shadow: 0 0 0 2px var(--accent-soft); }
+.ns-menu input { box-sizing: border-box; width: 100%; margin-bottom: 4px; padding: 6px 9px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface); color: var(--text); font: 13px var(--font-body); }
+.ns-menu input:focus { outline: none; border-color: var(--accent); }
+.ns-menu button.on { background: var(--sunken); font-weight: 600; }
+.ns-menu em.bad { color: var(--crit); font-weight: 600; }
+.ns-menu-head { margin: 6px 8px 2px; padding-top: 8px; border-top: 1px solid var(--border); font: 600 10.5px var(--font-data); letter-spacing: 0.07em; text-transform: uppercase; color: var(--muted); }
+.ns-menu-none { margin: 6px 8px; color: var(--muted); font-size: 12.5px; }
 .ns-menu button { all: unset; box-sizing: border-box; display: flex; align-items: center; gap: 8px; padding: 7px 8px; border-radius: 6px; font-size: 13px; cursor: pointer; }
 .ns-menu button:hover, .ns-menu button:focus-visible { background: var(--sunken); }
 .ns-menu button i { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); }
 .ns-menu button i.bad { background: var(--crit); }
 .ns-menu button em { margin-left: auto; font-style: normal; font-size: 12px; color: var(--muted); }
-.ns-menu p { margin: 4px 8px; padding-top: 8px; border-top: 1px solid var(--border); color: var(--muted); font-size: 12px; }
 /* A closed namespace's pods. */
 .ns-pods { margin-left: auto; align-self: center; display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 4px; max-width: 50%; }
 .ns-pods i { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); }
