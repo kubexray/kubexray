@@ -251,3 +251,16 @@ test("the side panel still resizes after visiting another page", async ({ page }
   await page.getByRole("button", { name: "Map", exact: true }).click();
   await expect(handle).toHaveAttribute("aria-valuemax", String(max));
 });
+
+test("the releases page lists Helm releases, and shows one on the map", async ({ page }) => {
+  await openDemo(page);
+  const views = page.getByRole("navigation", { name: "Views" });
+  await expect(views.getByRole("button")).toHaveText(["Map", "Incidents1", "Changes", "Releases"]);
+  await views.getByRole("button", { name: "Releases" }).click();
+  const rows = page.locator(".rel-table tbody tr");
+  await expect(rows.first()).toBeVisible();
+  await expect(page.locator(".rel-aside .release-details .kind")).toHaveText("Helm release");
+  await page.getByRole("button", { name: "Show on map" }).click();
+  await expect(page.locator(".release-details .kind")).toHaveText("Helm release");
+  await expect(page.locator(".release.helm").first()).toBeVisible();
+});

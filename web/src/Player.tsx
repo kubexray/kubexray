@@ -3,6 +3,8 @@ import { FeedSets } from "./lib/feedContext";
 import { ChangesView } from "./components/ChangesView";
 import { Header, type View } from "./components/Header";
 import { IncidentsView } from "./components/IncidentsView";
+import { ReleasesView } from "./components/ReleasesView";
+import { hasReleases } from "./lib/helm";
 import type { Entry } from "./components/IncidentCard";
 import { PostmortemDialog } from "./components/PostmortemDialog";
 import { Timeline } from "./components/Timeline";
@@ -43,7 +45,7 @@ export function Player() {
   const [copied, setCopied] = useState(false);
   const [drafting, setDrafting] = useState<Entry | null>(null);
   // ?view=changes or ?view=incidents opens on that view (kubexray.com links to it).
-  const [view, setView] = useState<View>(() => (["changes", "incidents"].includes(params.get("view") ?? "") ? (params.get("view") as View) : "map"));
+  const [view, setView] = useState<View>(() => (["changes", "incidents", "releases"].includes(params.get("view") ?? "") ? (params.get("view") as View) : "map"));
   const [query, setQuery] = useState("");
   const [focus, setFocus] = useState(0); // remounts the map with the selection
 
@@ -230,6 +232,24 @@ export function Player() {
                 setView("map");
               }}
             />
+          ) : view === "releases" ? (
+            <ReleasesView
+              state={state}
+              sets={replay.feed}
+              now={t}
+              onShow={(id) => {
+                setSelected(id);
+                setFocus((f) => f + 1);
+                setView("map");
+              }}
+              onRewind={(id, ts) => {
+                setPlaying(false);
+                setT(Date.parse(ts));
+                setSelected(id);
+                setFocus((f) => f + 1);
+                setView("map");
+              }}
+            />
           ) : undefined
         }
         header={(v) => (
@@ -237,7 +257,7 @@ export function Player() {
             view={v}
             status="replay"
             label={`${h.cluster}${h.anonymized ? " (anonymized)" : ""} · ${clock(h.from)} to ${clock(h.to)}`}
-            nav={{ active: view, onChange: setView, incidents: incidents?.incidents.length ?? 0, incidentApps: incidents?.incidents.map((i) => i.app) }}
+            nav={{ active: view, onChange: setView, incidents: incidents?.incidents.length ?? 0, releases: hasReleases(state), incidentApps: incidents?.incidents.map((i) => i.app) }}
             search={{ value: query, onChange: setQuery }}
           />
         )}

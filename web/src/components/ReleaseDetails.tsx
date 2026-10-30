@@ -11,10 +11,11 @@ const KIND: Record<string, string> = { PersistentVolumeClaim: "Volume" };
 /** The Selected panel for a release outlined on the map: its chart, the
  * revision running and who made it, what it manages, and (for Helm) its
  * revisions with a way back to just before each. */
-export function ReleaseDetails({ id, state, onSelect, height }: { id: string; state: ClusterState; onSelect: (id: string) => void; height?: number }) {
+export function ReleaseDetails({ id, state, onSelect, height, at }: { id: string; state: ClusterState; onSelect: (id: string) => void; height?: number; at?: number }) {
   const { revisions, onRewind } = useContext(Helm);
   const sets = useContext(FeedSets);
-  const now = useNow();
+  const clockNow = useNow();
+  const now = at ?? clockNow; // a replay's moment, when one is shown
   const sized = height ? { height, maxHeight: "none", flex: "none" } : undefined;
   const rel = parseReleaseId(id);
   const objects = rel ? releaseObjects(state, rel.tool, rel.ns, rel.name) : [];

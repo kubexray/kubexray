@@ -14,7 +14,7 @@ const STATUS: Record<StreamStatus | "replay", string> = {
 };
 
 /** The three views: the map, the change feed, and incidents. */
-export type View = "map" | "changes" | "incidents" | "sources";
+export type View = "map" | "incidents" | "changes" | "releases" | "sources";
 
 interface Props {
   view: NamespaceView[];
@@ -25,16 +25,20 @@ interface Props {
   /** sources: show the Sources view (live only). incidentApps: apps with an
    * incident, which need attention even when their pods look fine (a
    * signal such as failing requests, ADR-0016). */
-  nav?: { active: View; onChange: (v: View) => void; incidents: number; sources?: boolean; incidentApps?: string[] };
+  nav?: { active: View; onChange: (v: View) => void; incidents: number; releases?: boolean; sources?: boolean; incidentApps?: string[] };
   search?: { value: string; onChange: (q: string) => void };
   /** Who is signed in, with sign-in (ADR-0013). */
   me?: Me | null;
 }
 
+// In the order they're reached for: what's there, what's broken, what
+// changed, how Helm changed it, and where the signals come from.
 const VIEWS: { id: View; label: string }[] = [
   { id: "map", label: "Map" },
-  { id: "changes", label: "Changes" },
   { id: "incidents", label: "Incidents" },
+  { id: "changes", label: "Changes" },
+  { id: "releases", label: "Releases" },
+  { id: "sources", label: "Sources" },
 ];
 
 export function Header({ view, status, rewound = false, label, nav, search, me }: Props) {
@@ -54,7 +58,7 @@ export function Header({ view, status, rewound = false, label, nav, search, me }
       </div>
       {nav && (
         <nav className="views" aria-label="Views">
-          {[...VIEWS, ...(nav.sources ? [{ id: "sources" as View, label: "Sources" }] : [])].map((v) => (
+          {VIEWS.filter((v) => (v.id !== "releases" || nav.releases) && (v.id !== "sources" || nav.sources)).map((v) => (
             <button key={v.id} type="button" aria-current={nav.active === v.id ? "page" : undefined} className={nav.active === v.id ? "on" : ""} onClick={() => nav.onChange(v.id)}>
               {v.label}
               {v.id === "incidents" && nav.incidents > 0 && <span className="views-count">{nav.incidents}</span>}
