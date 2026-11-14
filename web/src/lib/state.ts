@@ -1,6 +1,7 @@
 // Cluster state rebuilt from the stream, exactly as the Go graph.State does
 // (ADR-0003): a snapshot, then deltas applied in sequence.
 import type { Edge, Message, Node } from "../gen/graph";
+import { isEdge, nodeProblem } from "./shape";
 
 export interface ClusterState {
   seq: number;
@@ -29,16 +30,32 @@ export function fromSnapshot(msg: Message): ClusterState {
 
 /**
  * Checks a delta from an untrusted source (a replay file) before it's applied,
- * like the Go graph.State does: every op must be complete and known.
+ * like the Go graph.State does: every op must be complete and known, and
+ * every node and edge in it shaped like one.
  */
 export function validateDelta(msg: Message): void {
+  if (msg.ops !== undefined && msg.ops !== null && !Array.isArray(msg.ops)) throw new Error(`seq ${msg.seq}: ops isn't a list`);
   for (const [i, op] of (msg.ops ?? []).entries()) {
     const ok =
-      (op.op === "upsertNode" && !!op.node?.id) ||
-      (op.op === "upsertEdge" && !!op.edge?.id) ||
-      ((op.op === "removeNode" || op.op === "removeEdge") && !!op.id);
-    if (!ok) throw new Error(`seq ${msg.seq} op ${i}: invalid ${op.op} operation`);
+      (op?.op === "upsertNode" && !!op.node?.id) ||
+      (op?.op === "upsertEdge" && !!op.edge?.id) ||
+      ((op?.op === "removeNode" || op?.op === "removeEdge") && typeof op.id === "string" && !!op.id);
+    if (!ok) throw new Error(`seq ${msg.seq} op ${i}: invalid ${String(op?.op)} operation`);
+    const problem = op.op === "upsertNode" ? nodeProblem(op.node) : op.op === "upsertEdge" && !isEdge(op.edge) ? "an edge is incomplete" : null;
+    if (problem) throw new Error(`seq ${msg.seq} op ${i}: ${problem}`);
   }
+}
+
+/** Checks a snapshot from an untrusted source, as validateDelta does a delta. */
+export function validateSnapshot(msg: Message): void {
+  for (const [what, list] of [["nodes", msg.nodes], ["edges", msg.edges]] as const) {
+    if (list !== undefined && list !== null && !Array.isArray(list)) throw new Error(`The snapshot's ${what} aren't a list.`);
+  }
+  for (const n of msg.nodes ?? []) {
+    const problem = nodeProblem(n);
+    if (problem) throw new Error(`In the snapshot, ${problem}.`);
+  }
+  for (const e of msg.edges ?? []) if (!isEdge(e)) throw new Error("The snapshot has an incomplete edge.");
 }
 
 /**

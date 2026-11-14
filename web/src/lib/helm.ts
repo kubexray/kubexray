@@ -77,6 +77,16 @@ export function revisions(state: ClusterState, release: string, ns: string): Rev
   return out.sort((a, b) => b.version - a.version);
 }
 
+/** Helm's revision records in the cluster, as text that changes when they
+ * do: what the map's release labels depend on, without the rest. */
+export function helmKey(state: ClusterState): string {
+  const out: string[] = [];
+  for (const [id, n] of state.nodes) {
+    if (n.kind === "Secret" && n.labels?.owner === "helm") out.push(`${id}|${n.labels.version ?? ""}|${n.labels.status ?? ""}|${n.labels.name ?? ""}|${n.created}`);
+  }
+  return out.join("\n");
+}
+
 /** A revision of any release in the cluster. */
 export interface ReleaseRevision extends Revision {
   release: string;

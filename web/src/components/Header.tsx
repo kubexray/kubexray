@@ -13,7 +13,7 @@ const STATUS: Record<StreamStatus | "replay", string> = {
   replay: "Replay",
 };
 
-/** The three views: the map, the change feed, and incidents. */
+/** The views: the map, the change feed, incidents, and sources (live only). */
 export type View = "map" | "changes" | "incidents" | "sources";
 
 interface Props {

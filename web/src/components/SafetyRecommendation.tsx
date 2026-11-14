@@ -113,7 +113,8 @@ function Result({ rec, app, onAgain }: { rec: Recommendation; app: string; onAga
     a.href = url;
     a.download = "kubexray-guardrail.yaml";
     a.click();
-    URL.revokeObjectURL(url);
+    // The download starts after click() returns; revoking now can cancel it.
+    setTimeout(() => URL.revokeObjectURL(url), 30_000);
   };
   return (
     <div className="rec-result">

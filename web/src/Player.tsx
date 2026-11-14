@@ -7,6 +7,7 @@ import type { Entry } from "./components/IncidentCard";
 import { PostmortemDialog } from "./components/PostmortemDialog";
 import { Timeline } from "./components/Timeline";
 import { Workspace } from "./components/Workspace";
+import { ErrorBoundary } from "./components/ErrorBoundary";
 import { changeEvents, mergeEvents } from "./lib/events";
 import { clock } from "./lib/format";
 import { firstIncident, incidentsAt, loadReplay, recoveredAt, type Replay, stateAt } from "./lib/replay";
@@ -197,7 +198,11 @@ export function Player() {
       link: shareable ? linkTo(entry.incidents[0]?.app ?? null, new Date(opens).toISOString()) : null,
     };
   };
-  return (
+  const close = () => {
+    setPlaying(false);
+    setReplay(null);
+  };
+  const shown = (
     <FeedSets.Provider value={replay.feed}>
       <Workspace
         key={focus}
@@ -306,4 +311,5 @@ export function Player() {
       {drafting && <PostmortemDialog draft={() => draft(drafting)} onClose={() => setDrafting(null)} />}
     </FeedSets.Provider>
   );
+  return <ErrorBoundary what="this replay" back={{ label: "Open another replay", onClick: close }}>{shown}</ErrorBoundary>;
 }

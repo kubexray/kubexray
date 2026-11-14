@@ -240,6 +240,7 @@ svg.wires path.incident { stroke: var(--crit); stroke-width: 2.5; }
 .revisions small { color: var(--muted); font-size: 12px; }
 .revisions li button { grid-column: 2; justify-self: start; padding: 0; border: 0; background: none; color: var(--accent); font-size: 12px; font-weight: 600; cursor: pointer; }
 .pods .caption { font-size: 11px; color: var(--muted); margin-left: 4px; }
+.pods .more { font-style: normal; font-size: 11.5px; color: var(--muted); }
 .pod {
   width: 12px; height: 12px; border-radius: 50%; border: 0; padding: 0; cursor: pointer; background: var(--ok);
   transition: background 0.3s, transform 0.15s; animation: enter 0.45s ease-out; flex: none;
