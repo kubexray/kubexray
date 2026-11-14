@@ -1,6 +1,6 @@
 module github.com/kubexray/kubexray
 
-go 1.27.3
+go 1.27.4
 
 require (
 	github.com/anthropics/anthropic-sdk-go v1.80.0

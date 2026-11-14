@@ -4,6 +4,11 @@ import (
 	"context"
 	"strings"
 	"testing"
+
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	corelisters "k8s.io/client-go/listers/core/v1"
+	"k8s.io/client-go/tools/cache"
 )
 
 // fake answers queries by a substring of them.
@@ -73,5 +78,38 @@ func TestParse(t *testing.T) {
 	}
 	if _, err := parse([]byte(`{"status":"error","error":"bad query"}`)); err == nil || !strings.Contains(err.Error(), "bad query") {
 		t.Errorf("err = %v", err)
+	}
+}
+
+func TestFind(t *testing.T) {
+	t.Parallel()
+	svc := func(ns, name string, port int32) *corev1.Service {
+		return &corev1.Service{
+			ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: name},
+			Spec:       corev1.ServiceSpec{Ports: []corev1.ServicePort{{Port: 80}, {Port: port}}},
+		}
+	}
+	find := func(services ...*corev1.Service) string {
+		idx := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{})
+		for _, s := range services {
+			if err := idx.Add(s); err != nil {
+				t.Fatal(err)
+			}
+		}
+		ns, name, port, ok := Find(corelisters.NewServiceLister(idx))
+		if !ok {
+			return ""
+		}
+		return ns + "/" + name + ":" + port
+	}
+	if got := find(svc("monitoring", "prometheus-server", 9090), svc("shop", "api", 8080)); got != "monitoring/prometheus-server:9090" {
+		t.Errorf("one Prometheus: %q", got)
+	}
+	if got := find(svc("monitoring", "prometheus-operated", 9090), svc("monitoring", "kube-prometheus-stack-prometheus", 9090)); got != "monitoring/prometheus-operated:9090" {
+		t.Errorf("the likeliest one: %q", got)
+	}
+	// A tenant's lookalike next to the real one: neither is trusted.
+	if got := find(svc("monitoring", "prometheus", 9090), svc("team-a", "prometheus", 9090)); got != "" {
+		t.Errorf("two equally likely: picked %q", got)
 	}
 }

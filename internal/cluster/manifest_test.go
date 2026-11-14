@@ -112,7 +112,7 @@ func TestParseResource(t *testing.T) {
 			t.Errorf("%s = %v, %v", in, got, err)
 		}
 	}
-	for _, bad := range []string{"applications", "a/b/c/d", "/v1/x", "v1/secrets"} {
+	for _, bad := range []string{"applications", "a/b/c/d", "/v1/x", "v1/secrets", "/v1/secrets", "example.com/v1/secrets", "*/v1/*", "apps/*/deployments", "v1/*"} {
 		if _, err := ParseResource(bad); err == nil {
 			t.Errorf("%s: no error", bad)
 		}
