@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { FeedSets } from "./lib/feedContext";
 import { ChangesView } from "./components/ChangesView";
-import { Header, type View } from "./components/Header";
+import { Header } from "./components/Header";
 import { IncidentsView } from "./components/IncidentsView";
 import type { Entry } from "./components/IncidentCard";
 import { PostmortemDialog } from "./components/PostmortemDialog";
@@ -11,6 +11,8 @@ import { changeEvents, mergeEvents } from "./lib/events";
 import { clock } from "./lib/format";
 import { firstIncident, incidentsAt, loadReplay, recoveredAt, type Replay, stateAt } from "./lib/replay";
 import { Wordmark } from "./components/Wordmark";
+import type { Filter } from "./lib/feed";
+import { readRoute, type Route, routeURL, SEARCH, useRouteHistory, type View } from "./lib/route";
 
 /** Playback speed: a few minutes of incident in under a minute. */
 const SPEED = 10;
@@ -40,11 +42,14 @@ export function Player() {
   const [t, setT] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [selected, setSelected] = useState<string | null>(null);
-  const [copied, setCopied] = useState(false);
   const [drafting, setDrafting] = useState<Entry | null>(null);
   // ?view=changes or ?view=incidents opens on that view (kubexray.com links to it).
-  const [view, setView] = useState<View>(() => (["changes", "incidents"].includes(params.get("view") ?? "") ? (params.get("view") as View) : "map"));
+  const [view, setView] = useState<View>(() => {
+    const v = readRoute().view;
+    return v === "sources" ? "map" : v;
+  });
   const [query, setQuery] = useState("");
+  const [changesFilter, setChangesFilter] = useState<Filter>("all");
   const [focus, setFocus] = useState(0); // remounts the map with the selection
 
   const open = useCallback(
@@ -59,7 +64,9 @@ export function Player() {
         const fromLink = from !== null && from === linked;
         const asked = fromLink ? Date.parse(params.get("t") ?? "") : NaN;
         const incident = firstIncident(r);
-        setT(asked >= start && asked <= end ? asked : incident !== null ? Math.min(end, incident) : end);
+        // Opened on the change feed, the whole recording; else its first incident.
+        const onFeed = fromLink && params.get("view") === "changes";
+        setT(asked >= start && asked <= end ? asked : incident !== null && !onFeed ? Math.min(end, incident) : end);
         setReplay(r);
         setSource(from);
         setSelected(fromLink ? params.get("app") : null);
@@ -126,6 +133,29 @@ export function Player() {
   const events = useMemo(() => (replay ? mergeEvents(replay.events, changeEvents(replay.changes)) : []), [replay]);
   const at = new Date(t).toISOString();
 
+  // The address bar follows the view, the playhead and the selection, for
+  // a linked replay; Back and Forward bring them back.
+  const route = useMemo<Route>(() => ({ view, t: replay ? at : null, app: selected }), [view, replay, at, selected]);
+  const onPop = useCallback(
+    (r: Route) => {
+      setPlaying(false);
+      setView(r.view === "sources" ? "map" : r.view);
+      if (r.t && replay) setT(Math.min(Date.parse(replay.header.to), Math.max(Date.parse(replay.header.from), Date.parse(r.t))));
+      setSelected(r.app);
+      setFocus((f) => f + 1);
+    },
+    [replay],
+  );
+  // A replay opened from a link (or the demo) is named in the address bar,
+  // so the address is always a link to what's shown; a dropped file can't be.
+  useEffect(() => {
+    if (!replay || !source || new URLSearchParams(location.search).get("replay") === source) return;
+    const url = new URL(location.href);
+    url.search = new URLSearchParams({ replay: source }).toString();
+    history.replaceState(null, "", url.href);
+  }, [replay, source]);
+  useRouteHistory(route, onPop, { enabled: !!replay && !!source, liveSteps: false });
+
   if (!replay || !state) {
     return (
       <main
@@ -162,20 +192,8 @@ export function Player() {
 
   const linkTo = (app: string | null, moment = at) => {
     if (!source) return null;
-    const p = new URLSearchParams({ replay: source, t: moment });
-    if (app) p.set("app", app);
-    return `${location.origin}${location.pathname}?${p}`;
-  };
-  const permalink = () => {
-    const link = linkTo(selected);
-    if (!link) return;
-    navigator.clipboard.writeText(link).then(
-      () => {
-        setCopied(true);
-        setTimeout(() => setCopied(false), 1500);
-      },
-      () => prompt("Copy this link", link),
-    );
+    const p = new URLSearchParams({ replay: source });
+    return routeURL({ view: "map", t: moment, app }, `${location.origin}${location.pathname}?${p}`);
   };
 
   const h = replay.header;
@@ -205,8 +223,15 @@ export function Player() {
         page={
           view === "changes" ? (
             <ChangesView
+              key={changesFilter}
               sets={replay.feed}
-              now={end}
+              now={t}
+              from={Date.parse(h.from)}
+              onShowAll={() => {
+                setPlaying(false);
+                setT(end);
+              }}
+              initialFilter={changesFilter}
               query={query}
               live={false}
               canRewindTo={(ts) => Date.parse(ts) >= Date.parse(h.from)}
@@ -222,12 +247,18 @@ export function Player() {
             <IncidentsView
               incidents={incidents?.incidents ?? []}
               groups={incidents?.groups ?? []}
-              sets={replay.feed}
               now={t}
+              live={false}
+              query={query}
+              broke={replay.feed.filter((s) => s.verdict === "broke" && Date.parse(s.at) <= t).length}
               onShow={(id) => {
                 setSelected(id);
                 setFocus((f) => f + 1);
                 setView("map");
+              }}
+              onBroke={() => {
+                setChangesFilter("broke");
+                setView("changes");
               }}
             />
           ) : undefined
@@ -237,29 +268,28 @@ export function Player() {
             view={v}
             status="replay"
             label={`${h.cluster}${h.anonymized ? " (anonymized)" : ""} · ${clock(h.from)} to ${clock(h.to)}`}
-            nav={{ active: view, onChange: setView, incidents: incidents?.incidents.length ?? 0, incidentApps: incidents?.incidents.map((i) => i.app) }}
-            search={{ value: query, onChange: setQuery }}
+            nav={{
+              active: view,
+              onChange: (v) => {
+                if (v === "changes") setChangesFilter("all");
+                setView(v);
+              },
+              incidents: incidents?.incidents.length ?? 0,
+            }}
+            search={SEARCH[view] ? { value: query, onChange: setQuery, placeholder: SEARCH[view] ?? "" } : undefined}
+            menu={[
+              {
+                label: "Open another replay",
+                note: "A .kxr file or link",
+                onSelect: () => {
+                  setPlaying(false);
+                  setReplay(null);
+                },
+              },
+            ]}
           />
         )}
-        notice={
-          <div className="replay-bar">
-            <span>You're watching a recording. Use the timeline or press Play; links keep the moment and the selected app.</span>
-            {source && (
-              <button type="button" onClick={permalink}>
-                {copied ? "Link copied" : "Copy link to this moment"}
-              </button>
-            )}
-            <button
-              type="button"
-              onClick={() => {
-                setPlaying(false);
-                setReplay(null);
-              }}
-            >
-              Open another replay
-            </button>
-          </div>
-        }
+        onClearSearch={() => setQuery("")}
         state={state}
         incidents={incidents?.incidents ?? []}
         groups={incidents?.groups ?? []}
@@ -300,6 +330,7 @@ export function Player() {
               setPlaying(false);
               if (ts) setT(Date.parse(ts));
             }}
+            link={source ? () => linkTo(selected) : undefined}
           />
         )}
       />

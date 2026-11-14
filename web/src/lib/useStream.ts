@@ -16,12 +16,14 @@ export interface Stream {
   incidents: Incident[];
   groups: Group[];
   events: ClusterEvent[];
+  /** When the server was last heard from, by this browser's clock. */
+  updated: string | null;
 }
 
 export const MAX_EVENTS = 300;
 
 export function useStream(): Stream {
-  const [stream, setStream] = useState<Stream>({ status: "connecting", state: null, incidents: [], groups: [], events: [] });
+  const [stream, setStream] = useState<Stream>({ status: "connecting", state: null, incidents: [], groups: [], events: [], updated: null });
   const current = useRef<ClusterState | null>(null);
 
   useEffect(() => {
@@ -36,9 +38,10 @@ export function useStream(): Stream {
 
       ws.onmessage = (ev: MessageEvent<string>) => {
         const parsed = JSON.parse(ev.data) as Message | IncidentsMessage;
+        const updated = new Date().toISOString();
         if (parsed.type === "incidents") {
           const { incidents, groups } = parsed as IncidentsMessage;
-          setStream((s) => ({ ...s, incidents, groups: groups ?? [] }));
+          setStream((s) => ({ ...s, incidents, groups: groups ?? [], updated }));
           return;
         }
         const msg = parsed as Message;
@@ -46,7 +49,7 @@ export function useStream(): Stream {
           if (msg.type === "snapshot") {
             current.current = fromSnapshot(msg);
             delay = 500;
-            setStream((s) => ({ ...s, status: "live", state: current.current }));
+            setStream((s) => ({ ...s, status: "live", state: current.current, updated }));
           } else if (msg.type === "delta" && current.current) {
             const before = current.current;
             current.current = applyDelta(before, msg);
@@ -54,6 +57,7 @@ export function useStream(): Stream {
             setStream((s) => ({
               ...s,
               state: current.current,
+              updated,
               events: events.length ? [...s.events, ...events].slice(-MAX_EVENTS) : s.events,
             }));
           }

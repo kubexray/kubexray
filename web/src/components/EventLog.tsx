@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
+import { useEscape } from "../lib/keys";
 import type { ClusterEvent } from "../lib/events";
 import { type LogFilter, logCounts, logRows, type Scope } from "../lib/eventlog";
 import { clock } from "../lib/format";
@@ -34,12 +35,7 @@ export function EventLog({ events, at, scope, scopeName, onPick, onHover, full, 
   const counts = logCounts(events, active);
   const cut = at ? Date.parse(at) : Infinity;
 
-  useEffect(() => {
-    if (!full) return;
-    const esc = (e: KeyboardEvent) => e.key === "Escape" && onFull(false);
-    addEventListener("keydown", esc);
-    return () => removeEventListener("keydown", esc);
-  }, [full, onFull]);
+  useEscape(full, () => onFull(false));
 
   const row = (e: ClusterEvent, child = false) => (
     <li key={e.id} className={Date.parse(e.ts) > cut ? "future" : undefined}>

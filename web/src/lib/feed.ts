@@ -1,7 +1,7 @@
 // The change feed's view logic (ADR-0012): filters, search, the summary
 // cards and the histogram. The engine (Go) builds and judges the sets;
 // this only arranges them.
-import type { Set as ChangeSet, DiffLine } from "../gen/feed";
+import type { Set as ChangeSet, DiffLine, Entry } from "../gen/feed";
 import { elapsed, hm, who } from "./format";
 import type { NamespaceView } from "./view";
 
@@ -18,7 +18,8 @@ export const FILTERS: { id: Filter; label: string }[] = [
 /** Who made a set, as the UI says it. */
 export function author(s: ChangeSet): string {
   if (who(s.by)) return who(s.by);
-  if (s.entries.some((e) => e.what === "replicas")) return "an autoscaler or kubectl scale";
+  // Neither kubectl scale nor an autoscaler leaves a write record.
+  if (s.entries.some((e) => e.what === "replicas")) return "someone (Kubernetes doesn't record who scales)";
   // An edit Kubernetes keeps no record of: an object without write records,
   // or a kubectl replace, which drops the previous writer's.
   if (s.entries.some((e) => e.what === "changed" || e.what === "template")) return "someone (Kubernetes didn't record who)";
@@ -39,29 +40,55 @@ const VERDICT: Record<string, string> = {
   "": "Judging…",
 };
 
-/** Whether a change broke something that has since been fixed. */
-export const resolved = (s: ChangeSet) => s.verdict === "broke" && !!s.ended;
+/** Whether a change broke something that had been fixed by `now` (a
+ * replay's playhead: what's fixed later isn't known yet). */
+export const resolved = (s: ChangeSet, now = Infinity) => s.verdict === "broke" && !!s.ended && Date.parse(s.ended) <= now;
 
-/** The look of a set's card and badge: a resolved breakage is green, like
- * anything healthy, so only what's still broken is red. */
-export function tone(s: ChangeSet): string {
-  return resolved(s) ? "resolved" : s.verdict || "judging";
+/** The look of a set's card and badge: red while what it broke is still
+ * broken, neutral once fixed (it still broke something: not good news). */
+export function tone(s: ChangeSet, now = Infinity): string {
+  if (resolved(s, now)) return "resolved";
+  if (s.verdict === "fixed" && Date.parse(s.at) > now) return "judging";
+  return s.verdict || "judging";
+}
+
+/** A length of time, as said in a sentence: "45s", "3m", "2h 5m". */
+export function roughly(ms: number): string {
+  const s = Math.max(0, Math.round(ms / 1000));
+  if (s < 60) return `${s}s`;
+  if (s < 3600) return `${Math.floor(s / 60)}m`;
+  return elapsed(ms);
 }
 
 export function verdictLabel(s: ChangeSet): string {
-  if (resolved(s)) return "Resolved";
-  if (s.verdict === "broke") return "Broke something"; // the note names the app
+  if (s.verdict === "broke") return s.incident ? `Broke ${shortName(s.incident)}` : "Broke something";
   return VERDICT[s.verdict] ?? s.verdict;
 }
 
-/** The verdict's note; a resolved one says what broke, for how long and
- * when it was fixed. */
-export function verdictNote(s: ChangeSet): string {
-  if (resolved(s) && s.ended) {
-    const app = s.incident ? shortName(s.incident) : "an app";
-    return `broke ${app} for ${elapsed(Date.parse(s.ended) - Date.parse(s.at))} · resolved at ${hm(s.ended)}`;
-  }
+/** The verdict's note; a breakage fixed since says when: "fixed 3m later
+ * · at 13:28". Still broken at `now`, the engine's note ("checkout is
+ * degraded 59s later"). */
+export function verdictNote(s: ChangeSet, now = Infinity): string {
+  if (resolved(s, now) && s.ended) return `fixed ${roughly(Date.parse(s.ended) - Date.parse(s.at))} later · at ${hm(s.ended)}`;
   return s.note ?? "";
+}
+
+/** The labels Helm and charts bump on every release: the set's title
+ * already says the version, so they're noise in its details and diffs. */
+const VERSION_LABEL = /^metadata\.labels\["(helm\.sh\/chart|app\.kubernetes\.io\/version)"\]$/;
+export const versionLabel = (l: DiffLine) => VERSION_LABEL.test(l.path) || l.path === "release version";
+
+/** The diff lines worth showing: version label bumps left out. */
+export const meaningful = (lines: DiffLine[] | undefined) => (lines ?? []).filter((l) => !versionLabel(l));
+
+/** An entry that only bumped version labels (a Service in a Helm upgrade). */
+export const labelOnly = (e: Entry) => (e.diff?.length ?? 0) > 0 && meaningful(e.diff).length === 0 && e.what === "changed";
+
+/** A set's entries worth listing: label-only bumps left out, unless that's
+ * all there is. */
+export function shownEntries(s: ChangeSet): Entry[] {
+  const kept = s.entries.filter((e) => !labelOnly(e));
+  return kept.length ? kept : s.entries;
 }
 
 /** How far a cause's time may be from the feed entry that recorded it: the
@@ -83,7 +110,7 @@ export function causeDiff(sets: ChangeSet[], cause: { object: string; at?: strin
       if (off <= SAME_CHANGE_MS && (!best || off < best.off)) best = { lines: e.diff, off };
     }
   }
-  return (best?.lines ?? []).filter((l) => l.path !== "replicas" && l.path !== "release version");
+  return meaningful(best?.lines).filter((l) => l.path !== "replicas");
 }
 
 /** The moment just before a set, for rewinding to it. */
@@ -211,14 +238,19 @@ export type Window = [from: number, to: number];
 
 export const inWindow = (s: ChangeSet, w: Window | null) => !w || (Date.parse(s.at) >= w[0] && Date.parse(s.at) < w[1]);
 
-/** The map narrowed to apps and Services whose names match a search. */
+/** The map narrowed to what matches a search: namespaces, apps, Services
+ * and Ingresses by name, and apps by the images they run. */
 export function searchView(view: NamespaceView[], query: string): NamespaceView[] {
   const q = query.trim().toLowerCase();
   if (!q) return view;
+  const hit = (s: string | undefined) => !!s?.toLowerCase().includes(q);
   return view
     .map((ns) => {
-      if (ns.name.toLowerCase().includes(q)) return ns;
-      const rows = ns.rows.filter((r) => [r.workload?.node.name, ...r.services.map((s) => s.name), ...r.ingresses.map((i) => i.name)].some((n) => n?.toLowerCase().includes(q)));
+      if (hit(ns.name)) return ns;
+      const rows = ns.rows.filter((r) => {
+        const n = r.workload?.node;
+        return hit(n?.name) || (n?.spec?.containers ?? []).some((c) => hit(c.image)) || r.services.some((s) => hit(s.name)) || r.ingresses.some((i) => hit(i.name));
+      });
       return { ...ns, rows };
     })
     .filter((ns) => ns.rows.length > 0);
