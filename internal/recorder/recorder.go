@@ -10,7 +10,10 @@
 // With a directory (ADR-0010), every completed segment is written to disk as
 // gzip NDJSON and only the one being recorded stays in memory, so history
 // survives restarts. Each segment stands alone, so a restart or a gap in the
-// stream starts a new epoch without losing what was recorded before it.
+// stream starts a new epoch without losing what was recorded before it, and
+// a segment that can't be read back (a bad disk block, a bit flip) costs only
+// its own stretch of history: it is set aside as .bad and what comes after it
+// starts over from its own keyframe.
 package recorder
 
 import (
@@ -20,6 +23,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
@@ -48,6 +52,7 @@ type Options struct {
 	KeyframeEvery time.Duration // how often to start a new segment while things change
 	Dir           string        // where to keep segments on disk; empty keeps them in memory
 	MaxDiskBytes  int64         // disk budget for segments (with Dir)
+	Log           *slog.Logger  // where to warn about unreadable segments (default: slog.Default)
 }
 
 // DefaultOptions keep an hour of history in at most 256 MiB, with a keyframe
@@ -85,8 +90,17 @@ type Recorder struct {
 	epoch    int
 	broken   bool // the stream broke: wait for a keyframe, then start a new epoch
 
+	// saveMu serializes writing segments to disk, which happens without mu.
+	saveMu sync.Mutex
+
 	cacheMu sync.Mutex
 	cache   map[string]*segment // segments read back from disk, by file
+
+	// Readers open segment files without mu: a file pruned while any is
+	// reading is deleted once the last one is done (see pin).
+	filesMu sync.Mutex
+	readers int
+	doomed  []string
 }
 
 // New returns an empty recorder that keeps history in memory.
@@ -111,13 +125,30 @@ func Open(opts Options) (*Recorder, error) {
 			_ = os.Remove(tmp)
 		}
 	}
+	// Segments set aside as unreadable are kept a while for a look, then go
+	// with the rest of their window.
+	if bads, err := filepath.Glob(filepath.Join(opts.Dir, "seg-*"+badExt)); err == nil {
+		for _, bad := range bads {
+			if fi, err := os.Stat(bad); err == nil && fi.ModTime().Before(time.Now().Add(-opts.Window)) {
+				_ = os.Remove(bad)
+			}
+		}
+	}
 	for _, name := range names {
 		s, ok := parseName(name)
 		if !ok {
 			continue // not ours, or left half-written by a crash (those end in .tmp)
 		}
-		if fi, err := os.Stat(name); err == nil {
-			s.onDisk = fi.Size()
+		fi, err := os.Stat(name)
+		if err != nil {
+			continue
+		}
+		s.onDisk = fi.Size()
+		if s.onDisk < minSegment {
+			// Too short to hold even an empty gzip stream: no point indexing
+			// it. Segments that are damaged inside are found when read.
+			r.setAside(name, errors.New("truncated"))
+			continue
 		}
 		r.segments = append(r.segments, s)
 		r.disk += s.onDisk
@@ -129,7 +160,12 @@ func Open(opts Options) (*Recorder, error) {
 	return r, nil
 }
 
-const ext = ".ndjson.gz"
+const (
+	ext    = ".ndjson.gz"
+	badExt = ".bad" // after ext: a segment that couldn't be read back
+	// minSegment is the smallest a gzip file can be: header and trailer.
+	minSegment = 18
+)
 
 // Segment files are named seg-<from>-<to>-<epoch>-<firstSeq>-<lastSeq>, with
 // times in Unix nanoseconds, so the index can be rebuilt without reading
@@ -170,6 +206,27 @@ func (r *Recorder) Keyframe(snapshot graph.Message, raw []byte) error {
 	if snapshot.Type != graph.MessageSnapshot {
 		return fmt.Errorf("recorder: keyframe must be a snapshot, got %q", snapshot.Type)
 	}
+	done, err := r.startSegment(snapshot, raw)
+	if err != nil {
+		return err
+	}
+	// The finished segment is written to disk without the lock: gzip and
+	// fsync take a while, and rewinding and the live stream go on meanwhile.
+	// A disk error (full, read-only) must not stop recording: the segment
+	// stays in memory, within the memory budget, and recording goes on.
+	saveErr := r.save(done)
+	r.mu.Lock()
+	r.prune(snapshot.TS)
+	r.mu.Unlock()
+	if saveErr != nil {
+		return fmt.Errorf("%w: %w", ErrNotSaved, saveErr)
+	}
+	return nil
+}
+
+// startSegment starts a new segment with a keyframe and returns the one it
+// finishes, if that one is to be written to disk.
+func (r *Recorder) startSegment(snapshot graph.Message, raw []byte) (*segment, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	cur := r.current()
@@ -180,19 +237,15 @@ func (r *Recorder) Keyframe(snapshot graph.Message, raw []byte) error {
 		}
 		r.broken = false
 	case snapshot.Seq != cur.lastSeq():
-		return fmt.Errorf("%w: keyframe at seq %d, last recorded %d", graph.ErrGap, snapshot.Seq, cur.lastSeq())
+		return nil, fmt.Errorf("%w: keyframe at seq %d, last recorded %d", graph.ErrGap, snapshot.Seq, cur.lastSeq())
 	}
-	// A disk error (full, read-only) must not stop recording: the segment
-	// stays in memory, within the memory budget, and recording goes on.
-	saveErr := r.persist(cur)
 	e := entry{snapshot.Seq, r.monotonic(snapshot.TS), raw}
 	r.segments = append(r.segments, &segment{epoch: r.epoch, keyframe: e, last: e, bytes: len(raw)})
 	r.bytes += len(raw)
-	r.prune(snapshot.TS)
-	if saveErr != nil {
-		return fmt.Errorf("%w: %w", ErrNotSaved, saveErr)
+	if r.opts.Dir == "" || cur == nil || cur.file != "" {
+		return nil, nil
 	}
-	return nil
+	return cur, nil
 }
 
 // Record appends a delta. It must directly follow the last recorded message.
@@ -254,34 +307,74 @@ func (r *Recorder) Break() {
 // Close writes the segment being recorded to disk, so a clean shutdown
 // loses nothing.
 func (r *Recorder) Close() error {
+	r.saveMu.Lock()
+	defer r.saveMu.Unlock()
+	// The segment being recorded: hold the lock throughout, so nothing is
+	// recorded into it while it's written. It's a shutdown.
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return r.persist(r.current())
-}
-
-// persist writes a segment to disk and drops its messages from memory. It
-// does nothing without a directory, or for a segment already written.
-func (r *Recorder) persist(s *segment) error {
+	s := r.current()
 	if r.opts.Dir == "" || s == nil || s.file != "" {
 		return nil
 	}
+	path, size, err := r.write(s)
+	if err != nil {
+		return err
+	}
+	r.saved(s, path, size)
+	return nil
+}
+
+// save writes a finished segment to disk, without holding mu, and drops its
+// messages from memory. Only the writer calls it, with a segment that's no
+// longer being recorded, so nothing changes it meanwhile. It does nothing
+// for nil.
+func (r *Recorder) save(s *segment) error {
+	if s == nil {
+		return nil
+	}
+	r.saveMu.Lock()
+	defer r.saveMu.Unlock()
+	path, size, err := r.write(s)
+	if err != nil {
+		return err
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !slices.Contains(r.segments, s) {
+		r.removeFile(path) // pruned while it was being written
+		return nil
+	}
+	r.saved(s, path, size)
+	return nil
+}
+
+// write writes a segment's file and returns its path and size.
+func (r *Recorder) write(s *segment) (string, int64, error) {
 	path := filepath.Join(r.opts.Dir, fileName(s))
 	tmp := path + ".tmp"
 	if err := writeSegment(tmp, s); err != nil {
 		_ = os.Remove(tmp)
-		return fmt.Errorf("recorder: writing segment: %w", err)
+		return "", 0, fmt.Errorf("recorder: writing segment: %w", err)
 	}
 	if err := os.Rename(tmp, path); err != nil {
 		_ = os.Remove(tmp)
-		return fmt.Errorf("recorder: %w", err)
+		return "", 0, fmt.Errorf("recorder: %w", err)
 	}
+	var size int64
 	if fi, err := os.Stat(path); err == nil {
-		s.onDisk = fi.Size()
+		size = fi.Size()
 	}
+	return path, size, nil
+}
+
+// saved notes that a segment is on disk and drops its messages from memory.
+// Hold mu.
+func (r *Recorder) saved(s *segment, path string, size int64) {
+	s.onDisk = size
 	r.disk += s.onDisk
 	r.bytes -= s.bytes
 	s.file, s.bytes, s.deltas, s.keyframe.raw, s.last.raw = path, 0, nil, nil, nil
-	return nil
 }
 
 func writeSegment(path string, s *segment) (err error) {
@@ -334,15 +427,29 @@ func (r *Recorder) load(s *segment) (*segment, error) {
 
 const cacheSize = 8
 
+// errCorrupt marks a segment file that opened but can't be read back.
+var errCorrupt = errors.New("unreadable segment")
+
 func readSegment(s *segment) (*segment, error) {
 	f, err := os.Open(s.file)
 	if err != nil {
 		return nil, fmt.Errorf("recorder: %w", err)
 	}
 	defer f.Close()
+	out, err := decodeSegment(f, s)
+	if err != nil {
+		return nil, fmt.Errorf("recorder: %s: %w: %w", filepath.Base(s.file), errCorrupt, err)
+	}
+	return out, nil
+}
+
+// decodeSegment reads a segment file's messages. It must hold all of them,
+// from the keyframe to the last message its name says it has: a segment cut
+// short would leave a gap before the next one.
+func decodeSegment(f io.Reader, s *segment) (*segment, error) {
 	zr, err := gzip.NewReader(f)
 	if err != nil {
-		return nil, fmt.Errorf("recorder: %s: %w", filepath.Base(s.file), err)
+		return nil, err
 	}
 	out := &segment{epoch: s.epoch, file: s.file}
 	sc := bufio.NewScanner(zr)
@@ -355,7 +462,7 @@ func readSegment(s *segment) (*segment, error) {
 			TS  time.Time `json:"ts"`
 		}
 		if err := json.Unmarshal(raw, &head); err != nil {
-			return nil, fmt.Errorf("recorder: %s: %w", filepath.Base(s.file), err)
+			return nil, err
 		}
 		ts := head.TS
 		if ts.Before(prev) {
@@ -370,13 +477,96 @@ func readSegment(s *segment) (*segment, error) {
 		}
 		out.last = e
 	}
-	if err := sc.Err(); err != nil && !errors.Is(err, io.ErrUnexpectedEOF) {
-		return nil, fmt.Errorf("recorder: %s: %w", filepath.Base(s.file), err)
+	if err := sc.Err(); err != nil {
+		return nil, err
 	}
-	if out.keyframe.raw == nil {
-		return nil, fmt.Errorf("recorder: %s is empty", filepath.Base(s.file))
+	switch {
+	case out.keyframe.raw == nil:
+		return nil, errors.New("empty")
+	case out.keyframe.seq != s.keyframe.seq || out.last.seq != s.last.seq:
+		return nil, fmt.Errorf("holds seq %d..%d, want %d..%d", out.keyframe.seq, out.last.seq, s.keyframe.seq, s.last.seq)
 	}
 	return out, nil
+}
+
+// unreadable handles a segment that couldn't be read: a damaged file is set
+// aside, so one bad file costs its own stretch of history and no more. A
+// file that couldn't be opened (pruned meanwhile, too many open files) is
+// left alone.
+func (r *Recorder) unreadable(s *segment, err error) {
+	if !errors.Is(err, errCorrupt) {
+		return
+	}
+	r.mu.Lock()
+	i := slices.IndexFunc(r.segments, func(x *segment) bool { return x.file == s.file })
+	if i < 0 {
+		r.mu.Unlock()
+		return // pruned, or already set aside
+	}
+	r.disk -= r.segments[i].onDisk
+	r.segments = slices.Delete(r.segments, i, i+1)
+	if i == len(r.segments) {
+		r.broken = true // it was the last one: what comes next is a new epoch
+	}
+	r.mu.Unlock()
+	r.cacheMu.Lock()
+	delete(r.cache, s.file)
+	r.cacheMu.Unlock()
+	r.setAside(s.file, err)
+}
+
+// setAside renames a damaged segment file to .bad, out of the history.
+func (r *Recorder) setAside(path string, err error) {
+	log := r.log()
+	if rerr := os.Rename(path, path+badExt); rerr != nil {
+		log.Warn("skipping a history segment that can't be read", "file", filepath.Base(path), "err", err, "rename_err", rerr)
+		return
+	}
+	log.Warn("skipping a history segment that can't be read; set aside as "+badExt, "file", filepath.Base(path), "err", err)
+}
+
+func (r *Recorder) log() *slog.Logger {
+	if r.opts.Log != nil {
+		return r.opts.Log
+	}
+	return slog.Default()
+}
+
+// pin keeps pruned files on disk until the returned function is called:
+// readers open them without holding mu. Call it holding mu (at least
+// RLock), so no prune comes in between.
+func (r *Recorder) pin() (unpin func()) {
+	r.filesMu.Lock()
+	r.readers++
+	r.filesMu.Unlock()
+	return func() {
+		r.filesMu.Lock()
+		defer r.filesMu.Unlock()
+		if r.readers--; r.readers == 0 {
+			for _, path := range r.doomed {
+				_ = os.Remove(path)
+			}
+			r.doomed = nil
+		}
+	}
+}
+
+// removeFile deletes a pruned segment's file, or once no reader may be
+// about to open it.
+func (r *Recorder) removeFile(path string) {
+	r.filesMu.Lock()
+	defer r.filesMu.Unlock()
+	if r.readers > 0 {
+		r.doomed = append(r.doomed, path)
+		return
+	}
+	_ = os.Remove(path)
+}
+
+// continues reports whether s carries on from prev in one sequence: the
+// same epoch, with nothing missing in between.
+func continues(prev, s *segment) bool {
+	return prev.epoch == s.epoch && prev.last.seq == s.keyframe.seq
 }
 
 // monotonic keeps the history index ordered even if the wall clock steps
@@ -414,7 +604,7 @@ func (r *Recorder) prune(now time.Time) {
 			r.bytes -= old.bytes
 			if old.file != "" {
 				r.disk -= old.onDisk
-				_ = os.Remove(old.file)
+				r.removeFile(old.file)
 				r.cacheMu.Lock()
 				delete(r.cache, old.file)
 				r.cacheMu.Unlock()
@@ -504,11 +694,15 @@ func (r *Recorder) Range(from, to time.Time, maxBytes int) (msgs [][]byte, start
 		return nil, start, end, ErrNotRecorded
 	}
 	start, end = from, to
-	for last > first && r.segments[last].epoch != r.segments[first].epoch {
-		last--
-		end = r.segments[last].last.ts // the epoch ends before to
+	for i := first + 1; i <= last; i++ {
+		if !continues(r.segments[i-1], r.segments[i]) {
+			last = i - 1
+			end = r.segments[last].last.ts // the epoch ends before to
+			break
+		}
 	}
 	segs := copyForReading(r.segments[first : last+1])
+	defer r.pin()()
 	r.mu.RUnlock()
 
 	size := 0
@@ -523,7 +717,16 @@ func (r *Recorder) Range(from, to time.Time, maxBytes int) (msgs [][]byte, start
 	for i, s := range segs {
 		loaded, err := r.load(s)
 		if err != nil {
-			return nil, start, end, err
+			r.unreadable(s, err)
+			if i == 0 {
+				return nil, start, end, err
+			}
+			// What's after a damaged segment isn't one sequence with
+			// what's before it: end with the last one read.
+			if t := segs[i-1].last.ts; t.Before(end) {
+				end = t
+			}
+			return msgs, start, end, nil
 		}
 		if i == 0 {
 			if err := add(loaded.keyframe.raw); err != nil {
@@ -558,27 +761,37 @@ func copyForReading(segs []*segment) []*segment {
 
 // Walk calls fn with every recorded message from the oldest on: each
 // epoch's first keyframe, then its deltas, as one stream with a snapshot
-// wherever a restart or a break began a new sequence. Segments are read
+// wherever a restart or a break began a new sequence. A segment that can't
+// be read is skipped with a warning, and the stream starts again after it
+// with a snapshot, so no delta is applied across the gap. Segments are read
 // from disk without holding the lock.
 func (r *Recorder) Walk(fn func(raw []byte) error) error {
 	r.mu.RLock()
 	segs := copyForReading(r.segments)
+	defer r.pin()()
 	r.mu.RUnlock()
-	for i, s := range segs {
+	var prev *segment // the last segment streamed
+	for _, s := range segs {
 		loaded := s
 		if s.file != "" {
 			// Read past the cache: a full walk would only evict what
 			// rewinding and exports keep warm.
 			var err error
 			if loaded, err = readSegment(s); err != nil {
-				return err
+				r.unreadable(s, err)
+				if !errors.Is(err, errCorrupt) {
+					r.log().Warn("skipping a history segment that can't be opened", "file", filepath.Base(s.file), "err", err)
+				}
+				prev = nil
+				continue
 			}
 		}
-		if i == 0 || segs[i-1].epoch != s.epoch {
+		if prev == nil || !continues(prev, s) {
 			if err := fn(loaded.keyframe.raw); err != nil {
 				return err
 			}
 		}
+		prev = s
 		for _, d := range loaded.deltas {
 			if err := fn(d.raw); err != nil {
 				return err

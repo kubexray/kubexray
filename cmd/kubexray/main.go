@@ -111,15 +111,12 @@ var (
 // connection holds the flags every command that reads a cluster shares.
 type connection struct {
 	kubeconfig, context, namespace string
-	noSecrets                      bool     // don't watch Secrets (serve --no-secrets)
-	values                         bool     // keep values for diffs (ADR-0017)
-	resources                      hostList // more kinds to keep a manifest history of (ADR-0018)
-	prometheus                     string   // where to read traffic (ADR-0016); found when empty
-	sensitivity                    string   // calm, normal or strict (ADR-0016)
-	// history walks what was recorded before this start, to seed traffic
-	// baselines; nil when there's none.
-	history func(fn func(raw []byte) error) error
-	watcher *cluster.Watcher // set by sync
+	noSecrets                      bool             // don't watch Secrets (serve --no-secrets)
+	values                         bool             // keep values for diffs (ADR-0017)
+	resources                      hostList         // more kinds to keep a manifest history of (ADR-0018)
+	prometheus                     string           // where to read traffic (ADR-0016); found when empty
+	sensitivity                    string           // calm, normal or strict (ADR-0016)
+	watcher                        *cluster.Watcher // set by sync
 
 	// Set by resolve.
 	cfg      *rest.Config
@@ -207,11 +204,6 @@ func (c *connection) sync(ctx context.Context, log *slog.Logger, stderr io.Write
 		return nil, "", fmt.Errorf("--sensitivity: %w", err)
 	}
 	w := cluster.New(client, metaClient, g, log).WithManifests(dyn, resources).WithPrometheus(c.prometheus, inCluster).WithSensitivity(sens)
-	if c.history != nil {
-		if err := w.SeedTraffic(c.history); err != nil {
-			log.Warn("learning traffic baselines from history", "err", err)
-		}
-	}
 	if c.noSecrets {
 		w.WithoutSecrets()
 	}
@@ -446,17 +438,16 @@ func ui(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("listening: %w", err)
 	}
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	running := startServing(ctx, cancel, srv, ln)
 	g, _, err := conn.sync(ctx, log, stderr)
 	if err != nil {
-		_ = ln.Close()
-		if errors.Is(err, context.Canceled) {
-			return nil
-		}
-		return err
+		return running.abort(err)
 	}
 	watcherOnce.Store(conn.watcher)
 
-	return recordAndServe(ctx, g, rec, hub, srv, ln, log, func() {
+	return recordAndServe(running, g, rec, hub, log, func() {
 		_, _ = fmt.Fprintf(stdout, "kubexray is running at %s   (Ctrl-C to stop)\n", srv.URL())
 		if !*noBrowser {
 			if err := openBrowser(ctx, srv.URL()); err != nil {
@@ -466,34 +457,65 @@ func ui(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	})
 }
 
-// recordAndServe runs the pump (recording and streaming) and the web server
-// until either stops or ctx is cancelled. ready runs once the first snapshot
-// can be streamed.
-func recordAndServe(ctx context.Context, g *graph.Graph, rec *recorder.Recorder, hub *server.Hub, srv *server.Server, ln net.Listener, log *slog.Logger, ready func()) error {
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-	var wg sync.WaitGroup
-	errs := make(chan error, 2)
-	run := func(f func() error) {
-		wg.Go(func() {
-			if err := f(); err != nil {
-				errs <- err
-			}
-			cancel() // either one stopping stops both
-		})
-	}
-	run(func() error { return recorder.Pump(ctx, g, rec, flushInterval, log, hub.Emit) })
-	run(func() error { return srv.Serve(ctx, ln) })
+// serving is the web server running in the background, and what runs
+// beside it. It starts before the cluster syncs, so health probes are
+// answered through a long startup; whatever stops first stops the rest.
+type serving struct {
+	ctx    context.Context // cancelled when anything stops
+	cancel context.CancelFunc
+	wg     sync.WaitGroup
+	errs   chan error
+}
 
+// startServing serves srv on ln until ctx is cancelled; whatever stops
+// first, it or something run beside it, calls cancel.
+func startServing(ctx context.Context, cancel context.CancelFunc, srv *server.Server, ln net.Listener) *serving {
+	s := &serving{ctx: ctx, cancel: cancel, errs: make(chan error, 2)}
+	s.run(func() error { return srv.Serve(ctx, ln) })
+	return s
+}
+
+func (s *serving) run(f func() error) {
+	s.wg.Go(func() {
+		if err := f(); err != nil {
+			s.errs <- err
+		}
+		s.cancel() // either one stopping stops both
+	})
+}
+
+// wait waits for everything to stop and returns the first error.
+func (s *serving) wait() error {
+	s.wg.Wait() // let the server shut down gracefully
+	s.cancel()
+	close(s.errs)
+	return <-s.errs
+}
+
+// abort stops serving after startup failed with err. Being interrupted
+// isn't a failure; the server failing first is the error to report.
+func (s *serving) abort(err error) error {
+	s.cancel()
+	if serveErr := s.wait(); serveErr != nil {
+		return serveErr
+	}
+	if errors.Is(err, context.Canceled) {
+		return nil
+	}
+	return err
+}
+
+// recordAndServe runs the pump (recording and streaming) beside the web
+// server until either stops or the context is cancelled. ready runs once
+// the first snapshot can be streamed.
+func recordAndServe(s *serving, g *graph.Graph, rec *recorder.Recorder, hub *server.Hub, log *slog.Logger, ready func()) error {
+	s.run(func() error { return recorder.Pump(s.ctx, g, rec, flushInterval, log, hub.Emit) })
 	select {
 	case <-hub.Ready():
 		ready()
-	case <-ctx.Done():
+	case <-s.ctx.Done():
 	}
-
-	wg.Wait() // let the server shut down gracefully
-	close(errs)
-	return <-errs
+	return s.wait()
 }
 
 // play serves the replay player for one file: no cluster, no kubeconfig.

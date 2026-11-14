@@ -221,3 +221,206 @@ func TestWalkStreamsEveryEpoch(t *testing.T) {
 		t.Errorf("Walk = %q, %v; want %q", strings.Join(got, " "), err, want)
 	}
 }
+
+// fourSegments records three segments to disk and a fourth in memory, and
+// returns the second one's file.
+func fourSegments(t *testing.T, r *Recorder, dir string) string {
+	t.Helper()
+	keyframe(t, r, snapshot(0, at(0), "a"))
+	record(t, r, delta(1, at(1), add("b")))
+	keyframe(t, r, snapshot(1, at(30), "a", "b"))
+	record(t, r, delta(2, at(31), add("c")))
+	keyframe(t, r, snapshot(2, at(60), "a", "b", "c"))
+	record(t, r, delta(3, at(61), remove("a")))
+	keyframe(t, r, snapshot(3, at(90), "b", "c"))
+	files := segments(t, dir)
+	if len(files) != 3 {
+		t.Fatalf("%d segment files, want 3", len(files))
+	}
+	return files[1] // names sort by time
+}
+
+func walked(t *testing.T, r *Recorder) string {
+	t.Helper()
+	var got []string
+	err := r.Walk(func(raw []byte) error {
+		var m graph.Message
+		if err := json.Unmarshal(raw, &m); err != nil {
+			return err
+		}
+		got = append(got, fmt.Sprintf("%s%d", m.Type[:1], m.Seq))
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("Walk: %v", err)
+	}
+	return strings.Join(got, " ")
+}
+
+func TestDamagedSegmentCostsOnlyItsOwnHistory(t *testing.T) {
+	t.Parallel()
+	damage := map[string]func(t *testing.T, path string){
+		"truncated": func(t *testing.T, path string) {
+			fi, err := os.Stat(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Truncate(path, fi.Size()-6); err != nil {
+				t.Fatal(err)
+			}
+		},
+		"bit flip": func(t *testing.T, path string) {
+			b, err := os.ReadFile(path) //nolint:gosec // the test's own file
+			if err != nil {
+				t.Fatal(err)
+			}
+			b[len(b)/2] ^= 0x10
+			if err := os.WriteFile(path, b, 0o600); err != nil { //nolint:gosec // the test's own file
+				t.Fatal(err)
+			}
+		},
+	}
+	for name, spoil := range damage {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			r := open(t, diskOptions(dir))
+			bad := fourSegments(t, r, dir)
+			spoil(t, bad)
+
+			// The walk skips it, and starts again after it from a
+			// snapshot: no delta is applied across the gap.
+			if got, want := walked(t, r), "s0 d1 s2 d3"; got != want {
+				t.Errorf("Walk = %q, want %q", got, want)
+			}
+			if _, err := os.Stat(bad + badExt); err != nil {
+				t.Errorf("the damaged segment wasn't set aside: %v", err)
+			}
+			if got := len(segments(t, dir)); got != 3 { // two segments and the .bad
+				t.Errorf("%d files, want 3", got)
+			}
+			// What's on either side still rewinds, and a restart
+			// doesn't trip over it again.
+			assertAt(t, r, at(1.5), "a", "b")
+			assertAt(t, r, at(62), "b", "c")
+			r = open(t, diskOptions(dir))
+			if got, want := walked(t, r), "s0 d1 s2 d3"; got != want {
+				t.Errorf("Walk after a restart = %q, want %q", got, want)
+			}
+		})
+	}
+}
+
+func TestExportStopsAtADamagedSegment(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	r := open(t, diskOptions(dir))
+	bad := fourSegments(t, r, dir)
+	if err := os.WriteFile(bad, []byte("this is not a gzip file at all"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	msgs, _, end, err := r.Range(at(0), at(70), 0)
+	if err != nil || len(msgs) != 2 || !end.Equal(at(1)) {
+		t.Errorf("an export across a damaged segment = %d messages, ending %v, %v; want the 2 before it, ending at 1s", len(msgs), end.Sub(t0), err)
+	}
+	if _, err := os.Stat(bad + badExt); err != nil {
+		t.Errorf("the damaged segment wasn't set aside: %v", err)
+	}
+	// From there on, the history after the gap is its own sequence.
+	msgs, _, end, err = r.Range(at(0), at(70), 0)
+	if err != nil || len(msgs) != 2 || !end.Equal(at(1)) {
+		t.Errorf("the same export again = %d messages, ending %v, %v", len(msgs), end.Sub(t0), err)
+	}
+	if msgs, _, _, err := r.Range(at(60), at(70), 0); err != nil || len(msgs) != 2 {
+		t.Errorf("an export after the gap = %d messages, %v; want 2", len(msgs), err)
+	}
+}
+
+func TestOpenSetsAsideEmptySegments(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	empty := filepath.Join(dir, "seg-0000000000000000001-0000000000000000002-0-0-1.ndjson.gz")
+	oldBad := filepath.Join(dir, "seg-0000000000000000001-0000000000000000002-0-0-0.ndjson.gz.bad")
+	for _, f := range []string{empty, oldBad} {
+		if err := os.WriteFile(f, nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	old := time.Now().Add(-8 * 24 * time.Hour)
+	if err := os.Chtimes(oldBad, old, old); err != nil {
+		t.Fatal(err)
+	}
+	r := open(t, diskOptions(dir))
+	if _, _, ok := r.Bounds(); ok {
+		t.Error("an empty segment file was loaded as history")
+	}
+	if _, err := os.Stat(empty + badExt); err != nil {
+		t.Errorf("an empty segment wasn't set aside: %v", err)
+	}
+	if _, err := os.Stat(oldBad); !os.IsNotExist(err) {
+		t.Errorf("a segment set aside longer ago than the window is still there: %v", err)
+	}
+}
+
+func TestPruneWaitsForReaders(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	opts := diskOptions(dir)
+	opts.Window = time.Minute
+	r := open(t, opts)
+	keyframe(t, r, snapshot(0, at(0), "a"))
+	keyframe(t, r, snapshot(0, at(30), "a"))
+	first := segments(t, dir)[0]
+	// A reader has the index and is about to open the first file, without
+	// the lock, when the writer prunes it.
+	r.mu.RLock()
+	unpin := r.pin()
+	r.mu.RUnlock()
+	keyframe(t, r, snapshot(0, at(120), "a"))
+	if _, err := os.Stat(first); err != nil {
+		t.Fatalf("a pruned file was deleted under a reader: %v", err)
+	}
+	unpin()
+	if _, err := os.Stat(first); !os.IsNotExist(err) {
+		t.Errorf("a pruned file outlived its last reader: %v", err)
+	}
+}
+
+func TestSavingDoesNotHoldUpReaders(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	r := open(t, diskOptions(dir))
+	keyframe(t, r, snapshot(0, at(0), "a"))
+	record(t, r, delta(1, at(1), add("b")))
+	// The disk is slow: writing the finished segment takes a while.
+	r.saveMu.Lock()
+	done := make(chan error)
+	go func() {
+		m := snapshot(1, at(30), "a", "b")
+		raw, _ := json.Marshal(m)
+		done <- r.Keyframe(m, raw)
+	}()
+	read := make(chan struct{})
+	go func() {
+		defer close(read)
+		// Once the new segment has started, while the old one is saved.
+		for _, to, _ := r.Bounds(); !to.Equal(at(30)); _, to, _ = r.Bounds() {
+			time.Sleep(time.Millisecond)
+		}
+		if _, err := r.At(at(1.5)); err != nil {
+			t.Errorf("At while saving: %v", err)
+		}
+	}()
+	select {
+	case <-read:
+	case <-time.After(5 * time.Second):
+		t.Error("reading history waited for a segment to be written")
+	}
+	r.saveMu.Unlock()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if got := len(segments(t, dir)); got != 1 {
+		t.Errorf("%d segment files after saving, want 1", got)
+	}
+}

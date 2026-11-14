@@ -36,10 +36,20 @@ func (w *Watcher) WithSensitivity(s Sensitivity) *Watcher {
 	return w
 }
 
-// SeedTraffic learns apps' traffic history from a recording, so a restart
-// doesn't start every baseline over. Call it before Start.
-func (w *Watcher) SeedTraffic(walk func(fn func(raw []byte) error) error) error {
-	return walk(func(raw []byte) error {
+// TrafficHistory is apps' traffic as recorded, for their baselines: learned
+// by LearnTraffic, handed to a watcher by SeedTraffic.
+type TrafficHistory struct {
+	byID map[string]history
+}
+
+// LearnTraffic learns apps' traffic history from a recording, so a restart
+// doesn't start every baseline over. walk calls its function with every
+// recorded message in order (recorder.Walk). It takes a while on a long
+// history, so it runs on its own, while the watcher starts: on an error it
+// returns what it learned until then.
+func LearnTraffic(walk func(fn func(raw []byte) error) error) (*TrafficHistory, error) {
+	h := &TrafficHistory{byID: map[string]history{}}
+	err := walk(func(raw []byte) error {
 		var m graph.Message
 		if err := json.Unmarshal(raw, &m); err != nil {
 			return err
@@ -55,14 +65,41 @@ func (w *Watcher) SeedTraffic(walk func(fn func(raw []byte) error) error) error 
 			if n.Kind != graph.KindTraffic || t == nil {
 				continue
 			}
-			h := w.history[n.ID]
-			if len(h) > 0 && m.TS.Sub(h[len(h)-1].at) < trafficEvery/2 {
+			past := h.byID[n.ID]
+			if len(past) > 0 && m.TS.Sub(past[len(past)-1].at) < trafficEvery/2 {
 				continue // the same minute, seen again in a snapshot
 			}
-			w.history[n.ID] = h.add(sample{at: m.TS, rps: t.RPS, errorPct: t.ErrorPct, p99: t.P99, broken: !t.ErrorsSince.IsZero() || !t.SlowSince.IsZero()})
+			h.byID[n.ID] = past.add(sample{at: m.TS, rps: t.RPS, errorPct: t.ErrorPct, p99: t.P99, broken: !t.ErrorsSince.IsZero() || !t.SlowSince.IsZero()})
 		}
 		return nil
 	})
+	return h, err
+}
+
+// SeedTraffic adds what LearnTraffic learned before the minutes the watcher
+// has read itself since it started. It's safe to call while the watcher
+// runs.
+func (w *Watcher) SeedTraffic(h *TrafficHistory) {
+	if h == nil {
+		return
+	}
+	now := w.now()
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	for id, past := range h.byID {
+		live := w.history[id]
+		if len(live) > 0 {
+			// Only what came before the watcher's own first minute.
+			keep := 0
+			for keep < len(past) && live[0].at.Sub(past[keep].at) >= trafficEvery/2 {
+				keep++
+			}
+			past = past[:keep:keep]
+		}
+		if merged := append(past, live...).since(now.Add(-keepHistory)); len(merged) > 0 {
+			w.history[id] = merged
+		}
+	}
 }
 
 // WithPrometheus reads traffic from Prometheus at url. Without it, kubexray
@@ -244,6 +281,13 @@ func (w *Watcher) readTraffic(ctx context.Context, q prom.Querier, adapters []pr
 		if !seen[id] {
 			delete(w.traffic, id)
 			w.graph.RemoveNode(id)
+		}
+	}
+	// An app that's gone keeps its history a week, in case it comes back
+	// (or Prometheus missed it for a while), then loses it.
+	for id, h := range w.history {
+		if len(h) == 0 || now.Sub(h[len(h)-1].at) > keepHistory {
+			delete(w.history, id)
 		}
 	}
 }

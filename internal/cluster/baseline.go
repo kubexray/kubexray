@@ -76,6 +76,15 @@ func (h history) add(s sample) history {
 	return h[cut:]
 }
 
+// since drops the minutes before cutoff.
+func (h history) since(cutoff time.Time) history {
+	cut := 0
+	for cut < len(h) && h[cut].at.Before(cutoff) {
+		cut++
+	}
+	return h[cut:]
+}
+
 // normalRange is what's normal for one number: the threshold above which
 // it's a break, and the usual range to show people.
 type normalRange struct {

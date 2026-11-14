@@ -121,3 +121,21 @@ func TestReadURL(t *testing.T) {
 		t.Errorf("readURL(none) = %q, %v", u, err)
 	}
 }
+
+func TestMemoryLimit(t *testing.T) {
+	t.Parallel()
+	env := func(vars map[string]string) func(string) string { return func(k string) string { return vars[k] } }
+	if got, ok := memoryLimit(env(map[string]string{"KUBEXRAY_MEMORY_LIMIT": "536870912"})); !ok || got != 483183820 {
+		t.Errorf("a 512 MiB container = %d, %v; want 90%% of it", got, ok)
+	}
+	for _, vars := range []map[string]string{
+		{},
+		{"KUBEXRAY_MEMORY_LIMIT": "0"},
+		{"KUBEXRAY_MEMORY_LIMIT": "512Mi"},
+		{"KUBEXRAY_MEMORY_LIMIT": "536870912", "GOMEMLIMIT": "300MiB"}, // the operator's own choice
+	} {
+		if got, ok := memoryLimit(env(vars)); ok {
+			t.Errorf("memoryLimit(%v) = %d, want none set", vars, got)
+		}
+	}
+}
