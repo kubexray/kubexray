@@ -9,6 +9,7 @@ import { PostmortemDialog } from "./components/PostmortemDialog";
 import { ShareDialog } from "./components/ShareDialog";
 import { Timeline } from "./components/Timeline";
 import { Workspace } from "./components/Workspace";
+import { ErrorBoundary } from "./components/ErrorBoundary";
 import type { Change, Group, Incident } from "./gen/cause";
 import type { FeedResponse, HistoryResponse, Sources } from "./gen/server";
 import { fetchAt, fetchChanges, fetchFeed, fetchHistory, fetchMe, fetchSources, fetchWhy, type Me, signInURL } from "./lib/api";
@@ -234,7 +235,13 @@ export function App() {
     ) : undefined;
   const placeholder = SEARCH[view];
 
-  return (
+  // The way back from a view that couldn't be drawn: live, on the map.
+  const backToLive = () => {
+    setAt(null);
+    setView("map");
+    setFocus((f) => ({ id: null, n: f.n + 1 }));
+  };
+  const shown = (
     <FeedSets.Provider value={sets}>
       <Workspace
         key={focus.n}
@@ -318,4 +325,5 @@ export function App() {
       {sharing && <ShareDialog entry={sharing} recordedFrom={history?.from ?? null} onClose={() => setSharing(null)} />}
     </FeedSets.Provider>
   );
+  return <ErrorBoundary what="the cluster" back={{ label: "Back to live", onClick: backToLive }}>{shown}</ErrorBoundary>;
 }

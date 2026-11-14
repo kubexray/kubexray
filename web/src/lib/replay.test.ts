@@ -53,6 +53,12 @@ describe("loadReplay", () => {
     ["a backwards window", file([{ ...lines[0], from: T(60), to: T(0) }, ...lines.slice(1)]), /ends before it starts/],
     ["a bad message time", file([lines[0], { ...lines[1], ts: "soon" }]), /invalid line 2 time/],
     ["two snapshots", file([lines[0], lines[1], { ...lines[1], seq: 2 }]), /only one snapshot/],
+    ["a node without a status", file([lines[0], { ...lines[1], nodes: [{ ...pod("a"), status: undefined }] }]), /node Pod\/shop\/a has an invalid status/],
+    ["a node with a numeric name", file([lines[0], { ...lines[1], nodes: [{ ...pod("a"), name: 7 }] }]), /node Pod\/shop\/a has an invalid name/],
+    ["nodes that aren't a list", file([lines[0], { ...lines[1], nodes: "all of them" }]), /nodes aren't a list/],
+    ["an incomplete edge", file([lines[0], { ...lines[1], edges: [{ id: "owns:x" }] }]), /incomplete edge/],
+    ["a malformed delta node", file([lines[0], lines[1], { ...lines[3], ops: [{ op: "upsertNode", node: { ...pod("b"), labels: { app: 1 } } }] }]), /node Pod\/shop\/b has an invalid labels/],
+    ["a malformed feed", file([...lines, { v: 1, type: "feed", sets: [{ id: "s1", entries: "none" }] }]), /change feed is malformed/],
   ];
   for (const [name, blob, why] of bad) {
     it(`rejects a file with ${name}`, async () => {

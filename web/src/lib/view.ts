@@ -72,6 +72,15 @@ function push<V>(m: Map<string, V[]>, key: string, v: V) {
   else m.set(key, [v]);
 }
 
+// The same pod on a dead node is the same object each time the view is
+// built, so the cards showing it can tell nothing changed.
+const downPods = new WeakMap<Node, Node>();
+function downPod(p: Node): Node {
+  let d = downPods.get(p);
+  if (!d) downPods.set(p, (d = { ...p, status: { ...p.status, reason: ReasonNodeNotReady } }));
+  return d;
+}
+
 export function buildView(state: ClusterState): NamespaceView[] {
   const ins = new Map<string, { from: string; type: string }[]>();
   const outs = new Map<string, { to: string; type: string }[]>();
@@ -107,8 +116,7 @@ export function buildView(state: ClusterState): NamespaceView[] {
   // Pods on a NotReady node report nothing themselves; say why they're down.
   // Mirrors the cause engine (internal/cause/cause.go, explain).
   const deadNodes = new Set([...state.nodes.values()].filter((n) => n.kind === "Node" && !n.status.ready).map((n) => n.id));
-  const withNodeReason = (p: Node): Node =>
-    p.parent && deadNodes.has(p.parent) && !p.status.ready && !p.status.reason ? { ...p, status: { ...p.status, reason: ReasonNodeNotReady } } : p;
+  const withNodeReason = (p: Node): Node => (p.parent && deadNodes.has(p.parent) && !p.status.ready && !p.status.reason ? downPod(p) : p);
 
   for (const raw of state.nodes.values()) {
     const n = raw.kind === "Pod" ? withNodeReason(raw) : raw;
@@ -224,4 +232,70 @@ export function chainOf(view: NamespaceView[], id: string, direction: "both" | "
     }
   }
   return new Set([...up, ...down]);
+}
+
+const sameList = <T>(a: readonly T[], b: readonly T[]) => a === b || (a.length === b.length && a.every((x, i) => x === b[i]));
+/** Placeholders for missing objects are made afresh each time. */
+const sameNode = (a: Node | undefined, b: Node) => a === b || (!!a && !a.created && !b.created && a.id === b.id && a.kind === b.kind && a.name === b.name);
+
+function sameUses(a: Map<string, Node>, b: Map<string, Node>): boolean {
+  if (a.size !== b.size) return false;
+  for (const [id, n] of b) if (!sameNode(a.get(id), n)) return false;
+  return true;
+}
+
+function sameTargets(a: Map<string, Set<string>>, b: Map<string, Set<string>>): boolean {
+  if (a.size !== b.size) return false;
+  for (const [id, t] of b) {
+    const was = a.get(id);
+    if (!was || was.size !== t.size || [...t].some((x) => !was.has(x))) return false;
+  }
+  return true;
+}
+
+const sameWires = (a: Wire[], b: Wire[]) => a.length === b.length && a.every((w, i) => w[0] === b[i]?.[0] && w[1] === b[i]?.[1]);
+
+function keepWorkload(prev: Workload | undefined, next: Workload): Workload {
+  if (!prev) return next;
+  const uses = sameUses(prev.uses, next.uses) ? prev.uses : next.uses;
+  const pods = sameList(prev.pods, next.pods) ? prev.pods : next.pods;
+  if (prev.node === next.node && pods === prev.pods && uses === prev.uses) return prev;
+  return { node: next.node, pods, uses };
+}
+
+function keepRow(prev: Row | undefined, next: Row): Row {
+  if (!prev) return next;
+  const workload = next.workload && keepWorkload(prev.workload, next.workload);
+  if (workload === prev.workload && sameList(prev.services, next.services) && sameList(prev.ingresses, next.ingresses)) return prev;
+  return { ...next, workload };
+}
+
+function keepNamespace(prev: NamespaceView | undefined, next: NamespaceView): NamespaceView {
+  if (!prev) return next;
+  const before = new Map(prev.rows.map((r) => [r.key, r]));
+  const rows = next.rows.map((r) => keepRow(before.get(r.key), r));
+  const kept: NamespaceView = {
+    ...next,
+    rows: sameList(prev.rows, rows) ? prev.rows : rows,
+    wires: sameWires(prev.wires, next.wires) ? prev.wires : next.wires,
+    serviceTargets: sameTargets(prev.serviceTargets, next.serviceTargets) ? prev.serviceTargets : next.serviceTargets,
+  };
+  const same = (Object.keys(kept) as (keyof NamespaceView)[]).every((k) => kept[k] === prev[k]);
+  return same ? prev : kept;
+}
+
+/**
+ * Returns a function that takes each new view and gives back the previous
+ * one's objects wherever nothing changed: the same namespace, row and app
+ * objects, and the same list if nothing changed at all. A delta usually
+ * touches a few apps, and memoized components skip the rest.
+ */
+export function viewKeeper(): (next: NamespaceView[]) => NamespaceView[] {
+  let prev: NamespaceView[] = [];
+  return (next) => {
+    const before = new Map(prev.map((ns) => [ns.name, ns]));
+    const out = next.map((ns) => keepNamespace(before.get(ns.name), ns));
+    prev = sameList(prev, out) ? prev : out;
+    return prev;
+  };
 }

@@ -6,7 +6,8 @@ import { type Edge, type Message, type Node, SchemaVersion } from "../gen/graph"
 import type { Set as ChangeSet } from "../gen/feed";
 import { MaxLine, MaxUncompressed, type ChangesMessage, type FeedMessage, type Header } from "../gen/replay";
 import { type ClusterEvent, statusEvents } from "./events";
-import { applyOps, type ClusterState, fromSnapshot, validateDelta } from "./state";
+import { isChangeSet } from "./shape";
+import { applyOps, type ClusterState, fromSnapshot, validateDelta, validateSnapshot } from "./state";
 
 export interface Replay {
   header: Header;
@@ -98,6 +99,7 @@ export async function loadReplay(data: Blob, limit = MaxUncompressed): Promise<R
         const m = msg as Message;
         const t = time(m.ts, `line ${i + 1}`);
         if (seq < 0) {
+          if (m.type === "snapshot") validateSnapshot(m);
           const snap = fromSnapshot(m); // throws unless it's a snapshot
           for (const [id, n] of snap.nodes) nodes.set(id, n);
           for (const [id, e] of snap.edges) edges.set(id, e);
@@ -122,7 +124,8 @@ export async function loadReplay(data: Blob, limit = MaxUncompressed): Promise<R
         break;
       }
       case "feed": {
-        const sets = (msg as FeedMessage).sets;
+        const sets: unknown = (msg as FeedMessage).sets;
+        if (sets !== undefined && sets !== null && !(Array.isArray(sets) && sets.every(isChangeSet))) throw new Error(`Line ${i + 1}: the change feed is malformed.`);
         r.feed = Array.isArray(sets) ? sets : [];
         break;
       }

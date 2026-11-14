@@ -1,33 +1,36 @@
-import { memo, useContext, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { memo, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Node } from "../gen/graph";
 import { FeedSets } from "../lib/feedContext";
 import { ago } from "../lib/format";
 import { podHealth, podText } from "../lib/health";
+import { highlightClasses, useHighlight } from "../lib/highlight";
 import { useEscape } from "../lib/keys";
 import { useNow } from "../lib/useNow";
 import { driftOf, Helm, type Owner, ownerOf, releaseId, TOOL_NAME } from "../lib/helm";
 import { incidentCount, type NamespaceView, type Row as ViewRow, type Workload, wireTarget, workloadHealth, workloadProblem } from "../lib/view";
 
+export type { Highlight } from "../lib/highlight";
+
 const KIND_LABEL: Record<string, string> = { PersistentVolumeClaim: "Volume" };
 
-export interface Highlight {
-  /** Cards lit by hovering, or null. */
-  lit: Set<string> | null;
-  hovered: string | null;
-  /** The broken path of the current incident, or null. */
-  broken: Set<string> | null;
-  selected: string | null;
-}
+/** Pods drawn per app; the rest are a count. A 500-replica DaemonSet is
+ * read from its numbers, not its dots. */
+export const MAX_PODS = 20;
 
+// What lights up comes from the highlight store (lib/highlight), so hovering
+// renders only the cards whose look changes.
 interface Props {
   view: NamespaceView[];
   open: Map<string, boolean>;
-  highlight: Highlight;
   causeOf: (appId: string) => string | null;
   onToggle: (ns: string, open: boolean) => void;
   onSelect: (id: string) => void;
   onHover: (id: string | null) => void;
 }
+
+/** What each namespace needs: stable between updates, so namespaces that
+ * didn't change skip rendering. */
+type NamespaceProps = Omit<Props, "view" | "open"> & { ns: NamespaceView; isOpen?: boolean };
 
 /** The open-state key of the group holding Kubernetes' own namespaces. */
 export const SYSTEM = "_system";
@@ -69,7 +72,7 @@ export const MapView = memo(function MapView(props: Props) {
     <div className="map" aria-label="Cluster map" ref={map}>
       {props.view.length > 1 && <NamespaceBar apps={apps} system={system} current={current} onJump={jump} />}
       {apps.map((ns) => (
-        <Namespace key={ns.name} ns={ns} {...props} />
+        <Namespace key={ns.name} ns={ns} isOpen={props.open.get(ns.name)} causeOf={props.causeOf} onToggle={props.onToggle} onSelect={props.onSelect} onHover={props.onHover} />
       ))}
       {system.length > 0 && <SystemGroup system={system} {...props} />}
     </div>
@@ -172,7 +175,7 @@ function SystemGroup({ system, ...props }: Props & { system: NamespaceView[] }) 
       {isOpen && (
         <div className="ns-group">
           {system.map((ns) => (
-            <Namespace key={ns.name} ns={ns} {...props} />
+            <Namespace key={ns.name} ns={ns} isOpen={props.open.get(ns.name)} causeOf={props.causeOf} onToggle={props.onToggle} onSelect={props.onSelect} onHover={props.onHover} />
           ))}
         </div>
       )}
@@ -233,14 +236,16 @@ export interface Release {
   /** What selecting its label selects. */
   id: string;
   tool: Owner["tool"];
-  /** "helm · storefront", then "chart 1.2.1 · revision 4 · 2d ago". */
+  /** "helm · storefront", then "chart 1.2.1 · revision 4", then when the
+   * deployed revision was made, shown as "2d ago". */
   name: string;
   detail: string;
+  deployedAt?: string;
   /** The cards inside it, by their data-key. */
   cards: string[];
 }
 
-function releases(ns: string, rows: ViewRow[], revisionsOf: (release: string, ns: string) => { version: number; status: string; at: string }[], now: number): Release[] {
+function releases(ns: string, rows: ViewRow[], revisionsOf: (release: string, ns: string) => { version: number; status: string; at: string }[]): Release[] {
   const out = new Map<string, Release>();
   for (const row of rows) {
     const o = rowOwner(row);
@@ -250,8 +255,8 @@ function releases(ns: string, rows: ViewRow[], revisionsOf: (release: string, ns
       const deployed = o.tool === "helm" ? revisionsOf(o.name, o.ns ?? "").find((r) => r.status === "deployed") : undefined;
       const detail: string[] = [];
       if (o.chart) detail.push(`chart ${o.chart}`);
-      if (deployed) detail.push(`revision ${deployed.version}`, ago(deployed.at, now));
-      rel = { key: ownerKey(o), id: releaseId(o, ns), tool: o.tool, name: `${TOOL_NAME[o.tool].toLowerCase()} · ${o.name}`, detail: detail.join(" · "), cards: [] };
+      if (deployed) detail.push(`revision ${deployed.version}`);
+      rel = { key: ownerKey(o), id: releaseId(o, ns), tool: o.tool, name: `${TOOL_NAME[o.tool].toLowerCase()} · ${o.name}`, detail: detail.join(" · "), deployedAt: deployed?.at, cards: [] };
       out.set(rel.key, rel);
     }
     rel.cards.push(...row.ingresses.map((n) => n.id), ...row.services.map((n) => n.id));
@@ -260,13 +265,12 @@ function releases(ns: string, rows: ViewRow[], revisionsOf: (release: string, ns
   return [...out.values()];
 }
 
-function Namespace({ ns, open, highlight, causeOf, onToggle, onSelect, onHover }: Props & { ns: NamespaceView }) {
+const Namespace = memo(function Namespace({ ns, isOpen: openState, causeOf, onToggle, onSelect, onHover }: NamespaceProps) {
   const { revisions } = useContext(Helm);
-  const now = useNow();
-  const rows = groupRows(ns.rows);
-  const rels = releases(ns.name, rows, revisions, now);
+  const rows = useMemo(() => groupRows(ns.rows), [ns.rows]);
+  const rels = useMemo(() => releases(ns.name, rows, revisions), [ns.name, rows, revisions]);
   const relOf = new Map(rels.map((r) => [r.key, r]));
-  const isOpen = open.get(ns.name) ?? (!ns.system || !ns.allHealthy);
+  const isOpen = openState ?? (!ns.system || !ns.allHealthy);
   const released = rels.length ? ` · ${rels.length} release${rels.length === 1 ? "" : "s"}` : "";
   const apps = `${ns.workloadCount} app${ns.workloadCount === 1 ? "" : "s"}${released}`;
   const meta = ns.problems
@@ -274,9 +278,7 @@ function Namespace({ ns, open, highlight, causeOf, onToggle, onSelect, onHover }
     : ns.workloadCount
       ? `${apps} · ${ns.allHealthy ? "all healthy" : "not all ready"}`
       : `${ns.serviceCount} service${ns.serviceCount === 1 ? "" : "s"}`;
-  const card = (n: Node, kind: string, key = n.id, extra = "") => (
-    <NodeCard key={key} n={n} kind={kind} dataKey={key} extra={extra} highlight={highlight} onSelect={onSelect} onHover={onHover} />
-  );
+  const card = (n: Node, kind: string, key = n.id, extra = "") => <NodeCard key={key} n={n} kind={kind} dataKey={key} extra={extra} onSelect={onSelect} onHover={onHover} />;
   return (
     <details
       id={nsId(ns.name)}
@@ -294,7 +296,7 @@ function Namespace({ ns, open, highlight, causeOf, onToggle, onSelect, onHover }
       </summary>
       {isOpen && (
         <div className="lanes">
-          <Grid ns={ns} highlight={highlight} releases={rels}>
+          <Grid ns={ns} releases={rels}>
             <ColHead title="Way in" sub="Ingress" />
             <ColHead title="Load balancer" sub="Service" />
             <ColHead title="App" sub="Deployment · StatefulSet · DaemonSet · Job. Each dot is a pod, one running copy." />
@@ -304,15 +306,7 @@ function Namespace({ ns, open, highlight, causeOf, onToggle, onSelect, onHover }
               const rel = starts === "release" ? relOf.get(ownerKey(rowOwner(row) as Owner)) : undefined;
               return (
               <Row key={row.key}>
-                {rel && (
-                  <div className={`release-head ${rel.tool}`} data-key={`release|${rel.key}`}>
-                    <button type="button" className={`release-tag${highlight.selected === rel.id ? " selected" : ""}`} onClick={() => onSelect(rel.id)}>
-                      {rel.tool === "helm" && <HelmIcon />}
-                      <b>{rel.name}</b>
-                      {rel.detail && <span>{rel.detail}</span>}
-                    </button>
-                  </div>
-                )}
+                {rel && <ReleaseHead rel={rel} onSelect={onSelect} />}
                 {starts === "loose" && <div className="release-head loose">Not managed by a tool</div>}
                 <div className="cell">{row.ingresses.map((i) => card(i, "Ingress"))}</div>
                 <div className="cell">
@@ -325,7 +319,7 @@ function Namespace({ ns, open, highlight, causeOf, onToggle, onSelect, onHover }
                 </div>
                 <div className="cell">
                   {row.workload && (
-                    <WorkloadCard w={row.workload} cause={causeOf(row.workload.node.id)} highlight={highlight} onSelect={onSelect} onHover={onHover} />
+                    <WorkloadCard w={row.workload} cause={causeOf(row.workload.node.id)} onSelect={onSelect} onHover={onHover} />
                   )}
                 </div>
                 <div className="cell uses">
@@ -341,6 +335,36 @@ function Namespace({ ns, open, highlight, causeOf, onToggle, onSelect, onHover }
         </div>
       )}
     </details>
+  );
+});
+
+/** A release's label above its first row. */
+function ReleaseHead({ rel, onSelect }: { rel: Release; onSelect: (id: string) => void }) {
+  const selected = useHighlight((h) => h.selected === rel.id);
+  return (
+    <div className={`release-head ${rel.tool}`} data-key={`release|${rel.key}`}>
+      <button type="button" className={`release-tag${selected ? " selected" : ""}`} onClick={() => onSelect(rel.id)}>
+        {rel.tool === "helm" && <HelmIcon />}
+        <b>{rel.name}</b>
+        {(rel.detail || rel.deployedAt) && (
+          <span>
+            {rel.detail}
+            {rel.deployedAt && <Ago at={rel.deployedAt} prefix={rel.detail ? " · " : ""} />}
+          </span>
+        )}
+      </button>
+    </div>
+  );
+}
+
+/** "2d ago", kept current: the only part of a namespace that ticks. */
+function Ago({ at, prefix = "" }: { at: string; prefix?: string }) {
+  const now = useNow();
+  return (
+    <>
+      {prefix}
+      {ago(at, now)}
+    </>
   );
 }
 
@@ -358,30 +382,21 @@ function Row({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
-function classes(n: Node, h: Highlight, base: string): string {
-  const c = [base];
-  if (h.lit && !h.lit.has(n.id)) c.push("dim");
-  if (h.lit?.has(n.id) && h.hovered !== n.id) c.push("lit");
-  if (h.broken?.has(n.id)) c.push("incident");
-  if (h.selected === n.id) c.push("selected");
-  return c.join(" ");
-}
-
 interface CardProps {
   n: Node;
   kind: string;
   dataKey: string;
   extra: string;
-  highlight: Highlight;
   onSelect: (id: string) => void;
   onHover: (id: string | null) => void;
 }
 
-function NodeCard({ n, kind, dataKey, extra, highlight, onSelect, onHover }: CardProps) {
+const NodeCard = memo(function NodeCard({ n, kind, dataKey, extra, onSelect, onHover }: CardProps) {
+  const className = useHighlight((h) => highlightClasses(n.id, h, `node ${extra}`));
   return (
     <button
       type="button"
-      className={classes(n, highlight, `node ${extra}`)}
+      className={className}
       data-key={dataKey}
       title={extra.includes("missing") ? "Referenced, but doesn't exist" : undefined}
       onClick={() => onSelect(n.id)}
@@ -394,37 +409,28 @@ function NodeCard({ n, kind, dataKey, extra, highlight, onSelect, onHover }: Car
       <span className="n">{n.name}</span>
     </button>
   );
-}
+});
 
 interface WorkloadProps {
   w: Workload;
   cause: string | null;
-  highlight: Highlight;
   onSelect: (id: string) => void;
   onHover: (id: string | null) => void;
 }
 
-function WorkloadCard({ w, cause, highlight, onSelect, onHover }: WorkloadProps) {
+const WorkloadCard = memo(function WorkloadCard({ w, cause, onSelect, onHover }: WorkloadProps) {
   const health = workloadHealth(w);
   const r = w.node.status.replicas;
   const ready = r ? `${r.ready}/${r.desired}` : w.node.kind === "Job" ? w.node.status.phase ?? "" : "";
   const problem = workloadProblem(w);
-
-  // During a rollout, pods belong to different ReplicaSets: old ones first.
-  const groups = new Map<string, Node[]>();
-  for (const p of w.pods) {
-    const rs = p.name.slice(0, p.name.lastIndexOf("-"));
-    groups.set(rs, [...(groups.get(rs) ?? []), p]);
-  }
-  const ordered = [...groups.values()].sort((a, b) => (a[0]?.created ?? "").localeCompare(b[0]?.created ?? ""));
-  const rolling = w.node.kind === "Deployment" && ordered.length > 1;
+  const className = useHighlight((h) => highlightClasses(w.node.id, h, `node workload ${health}`));
 
   return (
     // The card's name row is the button; the pods are buttons of their own
     // beside it, not inside it. A click anywhere else on the card selects
     // the app too (the pointer's shortcut for the same button).
     <div
-      className={classes(w.node, highlight, `node workload ${health}`)}
+      className={className}
       data-key={w.node.id}
       onClick={() => onSelect(w.node.id)}
       onMouseEnter={() => onHover(w.node.id)}
@@ -446,14 +452,55 @@ function WorkloadCard({ w, cause, highlight, onSelect, onHover }: WorkloadProps)
         <span className="ready">{ready}</span>
       </button>
       <div className="pods">
-        {(rolling ? ordered : [w.pods]).map((pods, i) => (
+        <Pods w={w} onSelect={onSelect} />
+        <Drift n={w.node} />
+      </div>
+      {problem && <div className="problem">{problem}</div>}
+      {cause && <div className="caused">{cause}</div>}
+    </div>
+  );
+});
+
+const HEALTH_RANK = { crit: 0, warn: 1, dying: 2, ok: 3 } as Record<string, number>;
+
+/** The pods drawn when there are too many: problems first, so a failing pod
+ * is never one of those folded into the count. */
+function podsShown(pods: Node[]): Set<Node> | null {
+  if (pods.length <= MAX_PODS) return null;
+  const ranked = [...pods].sort((a, b) => (HEALTH_RANK[podHealth(a)] ?? 3) - (HEALTH_RANK[podHealth(b)] ?? 3));
+  return new Set(ranked.slice(0, MAX_PODS));
+}
+
+/** An app's pods as dots, grouped by ReplicaSet during a rollout. */
+const Pods = memo(function Pods({ w, onSelect }: { w: Workload; onSelect: (id: string) => void }) {
+  // Only a selection among these pods renders them again.
+  const selected = useHighlight((h) => (h.selected && w.pods.some((p) => p.id === h.selected) ? h.selected : null));
+  const { ordered, rolling, shown } = useMemo(() => {
+    // During a rollout, pods belong to different ReplicaSets: old ones first.
+    const groups = new Map<string, Node[]>();
+    for (const p of w.pods) {
+      const rs = p.name.slice(0, p.name.lastIndexOf("-"));
+      const g = groups.get(rs);
+      if (g) g.push(p);
+      else groups.set(rs, [p]);
+    }
+    const ordered = [...groups.values()].sort((a, b) => (a[0]?.created ?? "").localeCompare(b[0]?.created ?? ""));
+    return { ordered, rolling: w.node.kind === "Deployment" && ordered.length > 1, shown: podsShown(w.pods) };
+  }, [w]);
+  const hidden = shown ? w.pods.length - shown.size : 0;
+
+  return (
+    <>
+      {(rolling ? ordered : [w.pods]).map((group, i) => {
+        const pods = shown ? group.filter((p) => shown.has(p)) : group;
+        return (
           <span key={i} className="group">
             {i > 0 && <span className="sep" />}
             {pods.map((p) => (
               <button
                 type="button"
                 key={p.id}
-                className={`pod ${podHealth(p)}${highlight.selected === p.id ? " selected" : ""}`}
+                className={`pod ${podHealth(p)}${selected === p.id ? " selected" : ""}`}
                 title={`${p.name} · ${podText(p)}`}
                 aria-label={`Pod ${p.name}: ${podText(p)}`}
                 onClick={(e) => {
@@ -463,15 +510,17 @@ function WorkloadCard({ w, cause, highlight, onSelect, onHover }: WorkloadProps)
               />
             ))}
           </span>
-        ))}
-        {rolling && <span className="caption">rolling out: old → new</span>}
-        <Drift n={w.node} />
-      </div>
-      {problem && <div className="problem">{problem}</div>}
-      {cause && <div className="caused">{cause}</div>}
-    </div>
+        );
+      })}
+      {hidden > 0 && (
+        <em className="more" title={`${hidden} more pods; select the app to see them all`}>
+          {`+${hidden}`}
+        </em>
+      )}
+      {rolling && <span className="caption">rolling out: old → new</span>}
+    </>
   );
-}
+});
 
 /** A hand edit the next sync of the tool managing an app would undo. Who
  * manages it shows on its release's outline. */
@@ -495,20 +544,53 @@ const HelmIcon = () => (
   </svg>
 );
 
+interface Path {
+  d: string;
+  from: string;
+  to: string;
+}
+interface Box {
+  key: string;
+  tool: string;
+  top: number;
+  height: number;
+}
+const pathsKey = (paths: Path[]) => paths.map((p) => p.d).join();
+const boxesKey = (boxes: Box[]) => boxes.map((b) => `${b.key}:${b.top}:${b.height}`).join();
+
 // The grid of cards, with orthogonal wires drawn between them once laid out.
-function Grid({ ns, highlight, releases = [], children }: { ns: NamespaceView; highlight: Highlight; releases?: Release[]; children: React.ReactNode }) {
+function Grid({ ns, releases = [], children }: { ns: NamespaceView; releases?: Release[]; children: React.ReactNode }) {
   const ref = useRef<HTMLDivElement>(null);
-  const [paths, setPaths] = useState<{ d: string; from: string; to: string }[]>([]);
-  const [boxes, setBoxes] = useState<{ key: string; tool: string; top: number; height: number }[]>([]);
+  const [paths, setPaths] = useState<Path[]>([]);
+  const [boxes, setBoxes] = useState<Box[]>([]);
   const wiresKey = ns.wires.map((w) => w.join(">")).join(",") + releases.map((r) => r.key + r.cards.join()).join(";");
 
   useLayoutEffect(() => {
     const grid = ref.current;
     if (!grid) return;
+    // The cards, found once per wiring rather than once per wire per
+    // redraw; a card replaced since is looked up again.
+    const cards = new Map<string, Element>();
+    for (const el of grid.querySelectorAll("[data-key]")) cards.set(el.getAttribute("data-key") ?? "", el);
+    const card = (key: string) => {
+      let el = cards.get(key);
+      if (!el?.isConnected) {
+        el = grid.querySelector(`[data-key="${CSS.escape(key)}"]`) ?? undefined;
+        if (el) cards.set(key, el);
+      }
+      return el;
+    };
+    let shownPaths = "";
+    let shownBoxes = "";
     const draw = () => {
       const g = grid.getBoundingClientRect();
-      const box = (key: string) => grid.querySelector(`[data-key="${CSS.escape(key)}"]`)?.getBoundingClientRect();
-      const out: { d: string; from: string; to: string }[] = [];
+      // Each card measured once per redraw, however many wires it ends.
+      const rects = new Map<string, DOMRect | undefined>();
+      const box = (key: string) => {
+        if (!rects.has(key)) rects.set(key, card(key)?.getBoundingClientRect());
+        return rects.get(key);
+      };
+      const out: Path[] = [];
       for (const [from, to] of ns.wires) {
         const a = box(from);
         const b = box(to);
@@ -526,19 +608,27 @@ function Grid({ ns, highlight, releases = [], children }: { ns: NamespaceView; h
             : `M${x1},${y1} H${mx - r} Q${mx},${y1} ${mx},${y1 + dy * r} V${y2 - dy * r} Q${mx},${y2} ${mx + r},${y2} H${x2}`;
         out.push({ d, from: wireTarget(from), to: wireTarget(to) });
       }
-      setPaths(out);
       // Each release: an outline across the rows, from the middle of its
       // label down to just below its cards.
-      setBoxes(
-        releases.flatMap((r) => {
-          const head = box(`release|${r.key}`);
-          const rects = r.cards.map(box).filter((b): b is DOMRect => !!b);
-          if (!head || !rects.length) return [];
-          const top = head.top + head.height / 2 - g.top;
-          const bottom = Math.max(...rects.map((b) => b.bottom)) - g.top + 10;
-          return [{ key: r.key, tool: r.tool, top, height: bottom - top }];
-        }),
-      );
+      const outlines = releases.flatMap((r) => {
+        const head = box(`release|${r.key}`);
+        const cardRects = r.cards.map(box).filter((b): b is DOMRect => !!b);
+        if (!head || !cardRects.length) return [];
+        const top = head.top + head.height / 2 - g.top;
+        const bottom = Math.max(...cardRects.map((b) => b.bottom)) - g.top + 10;
+        return [{ key: r.key, tool: r.tool, top, height: bottom - top }];
+      });
+      // A resize that moves nothing draws nothing.
+      const pk = pathsKey(out);
+      if (pk !== shownPaths) {
+        shownPaths = pk;
+        setPaths(out);
+      }
+      const bk = boxesKey(outlines);
+      if (bk !== shownBoxes) {
+        shownBoxes = bk;
+        setBoxes(outlines);
+      }
     };
     draw();
     const ro = new ResizeObserver(draw);
@@ -548,22 +638,31 @@ function Grid({ ns, highlight, releases = [], children }: { ns: NamespaceView; h
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [wiresKey]);
 
-  const wireClass = (from: string, to: string) => {
-    if (highlight.broken?.has(from) && highlight.broken.has(to)) return "incident";
-    if (!highlight.lit) return "";
-    return highlight.lit.has(from) && highlight.lit.has(to) ? "lit" : "dim";
-  };
   return (
     <div className="grid" ref={ref}>
       {boxes.map((b) => (
         <div key={b.key} className={`release ${b.tool}`} style={{ top: b.top, height: b.height }} aria-hidden="true" />
       ))}
       {children}
-      <svg className="wires" aria-hidden="true">
-        {paths.map((p) => (
-          <path key={`${p.from}>${p.to}`} d={p.d} className={wireClass(p.from, p.to)} />
-        ))}
-      </svg>
+      <Wires paths={paths} />
     </div>
+  );
+}
+
+/** The wires, lit and dimmed with the hover on their own. */
+function Wires({ paths }: { paths: Path[] }) {
+  const lit = useHighlight((h) => h.lit);
+  const broken = useHighlight((h) => h.broken);
+  const wireClass = (from: string, to: string) => {
+    if (broken?.has(from) && broken.has(to)) return "incident";
+    if (!lit) return "";
+    return lit.has(from) && lit.has(to) ? "lit" : "dim";
+  };
+  return (
+    <svg className="wires" aria-hidden="true">
+      {paths.map((p) => (
+        <path key={`${p.from}>${p.to}`} d={p.d} className={wireClass(p.from, p.to)} />
+      ))}
+    </svg>
   );
 }

@@ -1,13 +1,15 @@
-import { type CSSProperties, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { type CSSProperties, type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Group, Incident } from "../gen/cause";
 import type { ClusterEvent } from "../lib/events";
 import { labelOf } from "../lib/eventlog";
-import { allRevisions, Helm, parseReleaseId, revisions } from "../lib/helm";
+import { allRevisions, Helm, type HelmInfo, helmKey, parseReleaseId, revisions } from "../lib/helm";
 import { clock } from "../lib/format";
+import { HighlightContext, highlightStore, NO_HIGHLIGHT } from "../lib/highlight";
+import { useStableCallback } from "../lib/hooks";
 import type { ClusterState } from "../lib/state";
 import { searchView } from "../lib/feed";
 import { useEscape, useShortcut } from "../lib/keys";
-import { allWorkloads, buildView, chainOf, countIncidents } from "../lib/view";
+import { allWorkloads, buildView, chainOf, countIncidents, viewKeeper } from "../lib/view";
 import { DetailsPanel } from "./DetailsPanel";
 import { DiffPanel } from "./DiffPanel";
 import { EventLog } from "./EventLog";
@@ -66,27 +68,26 @@ export interface Compare {
  * panel and event log, with selection and hover tracing. */
 export function Workspace(props: Props) {
   const { state, incidents, groups, events, at, onSelectionChange } = props;
-  // Every incident count on the page is from the incident list.
-  const view = useMemo(() => countIncidents(buildView(state), incidents), [state, incidents]);
+  // Every incident count on the page is from the incident list. The same
+  // objects are kept for what didn't change, so the map redraws only the
+  // apps a delta touched.
+  const [keepView] = useState(viewKeeper);
+  const [keepMapView] = useState(viewKeeper);
+  const view = useMemo(() => keepView(countIncidents(buildView(state), incidents)), [keepView, state, incidents]);
 
   const [selected, setSelectedState] = useState<string | null>(props.initialSelection ?? null);
   // Diff mode: the moment compared from. States never change once made, so
   // keeping this one is enough; the other side is whatever is shown.
   const [base, setBase] = useState<{ at: string; state: ClusterState } | null>(null);
-  // Live, the moment is now: the last delta may be minutes old.
-  const [liveNow, setLiveNow] = useState(() => new Date().toISOString());
-  useEffect(() => {
-    if (at || !base) return;
-    const t = setInterval(() => setLiveNow(new Date().toISOString()), 1000);
-    return () => clearInterval(t);
-  }, [at, base]);
-  const shownAt = at ?? liveNow;
-  const compare: Compare = {
-    from: base?.at ?? null,
-    disabled: !base && !!props.loading,
-    toggle: () => setBase(base ? null : { at: at ?? new Date().toISOString(), state }),
-  };
-  const [hovered, setHovered] = useState<string | null>(null);
+  // Kept the same between updates, so the timeline's effects don't rerun on
+  // every delta.
+  const toggleCompare = useStableCallback(() => setBase(base ? null : { at: at ?? new Date().toISOString(), state }));
+  const compareFrom = base?.at ?? null;
+  const compareDisabled = !base && !!props.loading;
+  const compare: Compare = useMemo(() => ({ from: compareFrom, disabled: compareDisabled, toggle: toggleCompare }), [compareFrom, compareDisabled, toggleCompare]);
+  // Hover, selection and the broken path light the map up through a store,
+  // not state: hovering a card renders the cards it changes, not the page.
+  const [highlight] = useState(() => highlightStore({ ...NO_HIGHLIGHT, selected: props.initialSelection ?? null }));
   // A selection passed in (a jump from the feed, a link) opens its namespace,
   // which may be collapsed, and is scrolled to once drawn.
   const [open, setOpen] = useState(() => {
@@ -99,13 +100,11 @@ export function Workspace(props: Props) {
     if (id) requestAnimationFrame(() => document.querySelector(`[data-key="${CSS.escape(id)}"]`)?.scrollIntoView({ block: "center" }));
   }, []);
   const appOf = useCallback((id: string | null) => (id && !parseReleaseId(id) ? (allWorkloads(view).find(({ w }) => w.pods.some((p) => p.id === id))?.w.node.id ?? id) : null), [view]);
-  const setSelected = useCallback(
-    (id: string | null) => {
-      setSelectedState(id);
-      onSelectionChange?.(id, appOf(id));
-    },
-    [onSelectionChange, appOf],
-  );
+  // Stable, so the map's memoized namespaces don't render on every update.
+  const setSelected = useStableCallback((id: string | null) => {
+    setSelectedState(id);
+    onSelectionChange?.(id, appOf(id));
+  });
 
   const list = useMemo(() => entries(incidents, groups), [incidents, groups]);
   const topEntry = list[0];
@@ -120,24 +119,18 @@ export function Workspace(props: Props) {
     }
   }, [topEntry, setSelected]);
 
-  const show = useCallback(
-    (id: string) => {
-      const ns = state.nodes.get(id)?.ns;
-      if (ns) setOpen((o) => new Map(o).set(ns, true));
-      setSelected(id);
-      requestAnimationFrame(() => document.querySelector(`[data-key="${CSS.escape(id)}"]`)?.scrollIntoView({ block: "nearest", behavior: "smooth" }));
-    },
-    [state, setSelected],
-  );
-  const toggle = useCallback(
-    (ns: string, isOpen: boolean) => {
-      setOpen((o) => new Map(o).set(ns, isOpen));
-      // Closing a namespace closes what was selected in it.
-      const at = parseReleaseId(selected)?.ns ?? selected?.split("/")[1];
-      if (!isOpen && at && (at === ns || (ns === SYSTEM && view.some((v) => v.system && v.name === at)))) setSelected(null);
-    },
-    [selected, view, setSelected],
-  );
+  const show = useStableCallback((id: string) => {
+    const ns = state.nodes.get(id)?.ns;
+    if (ns) setOpen((o) => new Map(o).set(ns, true));
+    setSelected(id);
+    requestAnimationFrame(() => document.querySelector(`[data-key="${CSS.escape(id)}"]`)?.scrollIntoView({ block: "nearest", behavior: "smooth" }));
+  });
+  const toggle = useStableCallback((ns: string, isOpen: boolean) => {
+    setOpen((o) => new Map(o).set(ns, isOpen));
+    // Closing a namespace closes what was selected in it.
+    const at = parseReleaseId(selected)?.ns ?? selected?.split("/")[1];
+    if (!isOpen && at && (at === ns || (ns === SYSTEM && view.some((v) => v.system && v.name === at)))) setSelected(null);
+  });
 
   const selectedApp = appOf(selected);
   // The side panel's width, and the details' height above the log (0: as
@@ -175,8 +168,15 @@ export function Workspace(props: Props) {
     for (const inc of topEntry.incidents) for (const id of chainOf(view, inc.app, "up")) ids.add(id);
     return ids;
   }, [view, topEntry]);
-  const lit = useMemo(() => (hovered ? chainOf(view, hovered) : null), [view, hovered]);
-  const highlight = useMemo(() => ({ lit, hovered, broken, selected }), [lit, hovered, broken, selected]);
+  // What changes with the view is set before paint; the chain under the
+  // pointer is traced again on the new view.
+  const shownView = useRef(view);
+  useLayoutEffect(() => {
+    shownView.current = view;
+    const { hovered } = highlight.get();
+    highlight.set({ broken, selected, lit: hovered ? chainOf(view, hovered) : null });
+  }, [highlight, view, broken, selected]);
+  const hover = useCallback((id: string | null) => highlight.set({ hovered: id, lit: id ? chainOf(shownView.current, id) : null }), [highlight]);
   const causeOf = useCallback(
     (appId: string) => {
       const c = incidents.find((i) => i.app === appId)?.causes?.[0];
@@ -192,7 +192,17 @@ export function Workspace(props: Props) {
   useShortcut("/", () => document.querySelector<HTMLInputElement>(".search input")?.focus());
   useShortcut("l", props.onLive);
 
-  const mapView = useMemo(() => searchView(view, props.search ?? ""), [view, props.search]);
+  const mapView = useMemo(() => keepMapView(searchView(view, props.search ?? "")), [keepMapView, view, props.search]);
+  // Changes only when Helm's records do, not on every delta: the map's
+  // namespaces read their releases' revisions from it.
+  const helmRecords = helmKey(state);
+  const onRewind = useStableCallback(props.onRewind);
+  const helm: HelmInfo = useMemo(
+    () => ({ revisions: (release, ns) => revisions(state, release, ns), all: () => allRevisions(state), onRewind }),
+    // `state` is as good as the latest for Helm's records while they're the same.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [helmRecords, onRewind],
+  );
 
   if (props.page) {
     return (
@@ -209,7 +219,7 @@ export function Workspace(props: Props) {
       {props.header(view)}
       {props.notice}
       <IncidentCard list={list} at={at} canRewindTo={props.canRewindTo} onShow={show} onRewind={props.onRewind} actions={props.actions} />
-      <Helm.Provider value={{ revisions: (release, ns) => revisions(state, release, ns), all: () => allRevisions(state), onRewind: props.onRewind }}>
+      <Helm.Provider value={helm}>
         <main className={`main${props.loading || props.stale ? " loading" : ""}${logFull ? " log-full" : ""}`} style={{ "--aside": `${asideW}px` } as CSSProperties}>
           {mapView.length === 0 && props.search ? (
             <div className="map map-empty" aria-label="Cluster map">
@@ -223,7 +233,9 @@ export function Workspace(props: Props) {
               )}
             </div>
           ) : (
-            <MapView view={mapView} open={open} highlight={highlight} causeOf={causeOf} onToggle={toggle} onSelect={setSelected} onHover={setHovered} />
+            <HighlightContext.Provider value={highlight}>
+              <MapView view={mapView} open={open} causeOf={causeOf} onToggle={toggle} onSelect={setSelected} onHover={hover} />
+            </HighlightContext.Provider>
           )}
           <Splitter axis="col" label="Resize the side panel" value={asideW} min={300} max={900} pane="after" onChange={setAsideW} onReset={() => setAsideW(ASIDE_W)} />
           <aside ref={setAside}>
@@ -234,7 +246,7 @@ export function Workspace(props: Props) {
             )}
             <Splitter axis="row" label="Resize the details and the log" value={Math.min(detailsH || 260, detailsMax)} min={60} max={detailsMax} pane="before" onChange={setDetailsH} onReset={() => setDetailsH(0)} />
             {base ? (
-              <DiffPanel from={base} to={{ at: shownAt, state }} onSelect={show} onClose={() => setBase(null)} />
+              <DiffPanel from={base} to={{ at, state }} onSelect={show} onClose={() => setBase(null)} />
             ) : (
               <EventLog
                 events={events}
