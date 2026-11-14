@@ -67,7 +67,12 @@ func ParseResource(s string) (schema.GroupVersionResource, error) {
 	if slices.Contains(parts, "") {
 		return gvr, fmt.Errorf("resource %q: want group/version/resource, e.g. argoproj.io/v1alpha1/applications", s)
 	}
-	if gvr.Group == "" && gvr.Resource == "secrets" {
+	if slices.Contains(parts, "*") {
+		return gvr, fmt.Errorf("resource %q: name the group, version and resource; wildcards would read every kind, Secrets included", s)
+	}
+	// Secrets by any group: a lookalike resource named secrets is refused
+	// too, rather than guessing which ones hold credentials.
+	if gvr.Resource == "secrets" {
 		return gvr, fmt.Errorf("resource %q: kubexray never reads Secrets", s)
 	}
 	return gvr, nil

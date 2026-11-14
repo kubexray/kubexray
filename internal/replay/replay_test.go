@@ -41,7 +41,7 @@ func recording(t *testing.T) [][]byte {
 			}},
 		},
 		Change: &graph.Change{At: at(-60), By: "helm", Tool: "helm"},
-		Origin: &graph.Origin{Tool: "helm", Name: "acme-payments"},
+		Origin: &graph.Origin{Tool: "helm", Name: "acme-payments", Namespace: "acme-releases"},
 	}
 	cm := graph.Node{
 		ID: "ConfigMap/payments-prod/checkout-config", Kind: "ConfigMap", Namespace: "payments-prod", Name: "checkout-config", Created: at(-60),

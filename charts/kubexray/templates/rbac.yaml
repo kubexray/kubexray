@@ -54,7 +54,10 @@ rules:
   {{- if or (lt (len $parts) 2) (gt (len $parts) 3) }}
   {{- fail (printf "diffs.extraResources: %q isn't group/version/resource" .) }}
   {{- end }}
-  {{- if and (eq (len $parts) 2) (eq (last $parts) "secrets") }}
+  {{- if or (has "" $parts) (has "*" $parts) }}
+  {{- fail (printf "diffs.extraResources: %q needs a group, version and resource by name, without wildcards" .) }}
+  {{- end }}
+  {{- if eq (last $parts) "secrets" }}
   {{- fail "diffs.extraResources: kubexray never reads Secrets" }}
   {{- end }}
   - apiGroups: [{{ if eq (len $parts) 3 }}{{ first $parts | quote }}{{ else }}""{{ end }}]

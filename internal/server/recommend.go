@@ -89,12 +89,15 @@ func (s *Server) recommend(w http.ResponseWriter, r *http.Request) {
 // while it lasted) and what a draft needs.
 func (s *Server) recommendInput(w http.ResponseWriter, r *http.Request) (recommend.Input, bool) {
 	id := r.URL.Query().Get("set")
-	i := slices.IndexFunc(s.hub.Feed().Sets(time.Time{}), func(set feed.Set) bool { return set.ID == id })
+	// One read of the feed: a set recorded between two reads would shift
+	// the index onto a different change.
+	sets := s.hub.Feed().Sets(time.Time{})
+	i := slices.IndexFunc(sets, func(set feed.Set) bool { return set.ID == id })
 	if i < 0 {
 		http.Error(w, "kubexray doesn't have that change", http.StatusNotFound)
 		return recommend.Input{}, false
 	}
-	set := s.hub.Feed().Sets(time.Time{})[i]
+	set := sets[i]
 	switch {
 	case set.Verdict != feed.Broke || set.Incident == "":
 		http.Error(w, "Safety recommendations are for changes that broke an app.", http.StatusConflict)
@@ -108,6 +111,14 @@ func (s *Server) recommendInput(w http.ResponseWriter, r *http.Request) (recomme
 		http.Error(w, err.Error(), http.StatusConflict)
 		return recommend.Input{}, false
 	}
+	// A draft carries the ConfigMap's values and the crash log, read with
+	// kubexray's own permissions: only for people who may see values there
+	// (ADR-0020), checked before anything is read from the cluster.
+	allow := s.valuesFor(r)
+	if allow != nil && !allow(inc.Namespace) {
+		http.Error(w, valuesRefused, http.StatusForbidden)
+		return recommend.Input{}, false
+	}
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 	in, err := s.recommender.Prepare(ctx, inc)
@@ -119,8 +130,15 @@ func (s *Server) recommendInput(w http.ResponseWriter, r *http.Request) (recomme
 		http.Error(w, err.Error(), http.StatusConflict)
 		return recommend.Input{}, false
 	}
+	if allow != nil && in.Object != nil && !allow(in.Object.GetNamespace()) {
+		http.Error(w, valuesRefused, http.StatusForbidden)
+		return recommend.Input{}, false
+	}
 	return in, true
 }
+
+// valuesRefused is why someone who may not see values can't draft.
+const valuesRefused = "Drafting a safety recommendation sends the configuration's values, and Kubernetes doesn't let you read ConfigMaps in this namespace."
 
 // lookBack are the moments before an incident ended at which its cause is
 // looked for: the fix is often a later change to the same object, and once

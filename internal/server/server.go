@@ -94,6 +94,7 @@ type Server struct {
 	// alertNodes writes firing alerts into the graph (ADR-0016), and
 	// sources says where signals come from; both set in serve mode.
 	alertNodes func(n graph.Node, remove bool)
+	alertIdx   alertIndex // the alert nodes written, to bound them
 	sources    func() Sources
 	lastAlert  atomic.Pointer[time.Time]
 }
@@ -349,7 +350,7 @@ func (s *Server) Handler() http.Handler {
 	}
 	api.Handle("GET /", http.FileServerFS(s.assets))
 
-	secured := s.checkHost(s.headers(s.session(api)))
+	secured := s.checkHost(s.headers(sameOrigin(s.session(api))))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Liveness and readiness probes: no data, no authentication, and any
 		// Host (the kubelet uses the pod's IP).
@@ -451,17 +452,20 @@ func (s *Server) session(next http.Handler) http.Handler {
 			}
 			// API clients (scripts, curl) send the token as a bearer token.
 			if tok, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer "); ok {
+				// Only bad tokens are limited: behind an Ingress everyone shares
+				// an address, and someone guessing mustn't lock out the scripts
+				// and Alertmanager that hold the right one.
+				if s.valid(tok) {
+					next.ServeHTTP(w, r)
+					return
+				}
 				ip := auth.ClientIP(r)
 				if !s.limit.Allow(ip) {
 					http.Error(w, "too many invalid tokens; wait a minute", http.StatusTooManyRequests)
 					return
 				}
-				if !s.valid(tok) {
-					s.limit.Fail(ip)
-					http.Error(w, "invalid token", http.StatusUnauthorized)
-					return
-				}
-				next.ServeHTTP(w, r)
+				s.limit.Fail(ip)
+				http.Error(w, "invalid token", http.StatusUnauthorized)
 				return
 			}
 			if o := s.remote.OIDC; o != nil {
@@ -753,7 +757,16 @@ func (s *Server) alertmanager(w http.ResponseWriter, r *http.Request) {
 		// subject: an app that's fine gets no incident from it.
 		weak := byPod && inc.Healthy && a.Status == "firing"
 		if known && s.alertNodes != nil && a.Name() != "" && !weak {
-			s.alertNodes(alertNode(a, inc), a.Status != "firing")
+			n := alertNode(a, inc)
+			switch {
+			case a.Status != "firing":
+				s.alertIdx.remove(inc.App, n.ID)
+				s.alertNodes(n, true)
+			case s.alertIdx.add(inc.App, n.ID):
+				s.alertNodes(n, false)
+			default:
+				s.log.Warn("too many firing alerts to show; leaving this one out", "alert", a.Name(), "app", inc.App)
+			}
 		}
 		if !s.alerts.Enabled() {
 			continue

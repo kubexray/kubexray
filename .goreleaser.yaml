@@ -6,9 +6,12 @@
 version: 2
 project_name: kubexray
 
+# The UI is embedded in the binary. CI builds it in a job of its own and
+# hands it over, so npm never runs beside the release's signing identity;
+# locally, run `make web` first.
 before:
   hooks:
-    - make web # the UI is embedded in the binary
+    - test -f internal/web/dist/index.html
 
 builds:
   - id: kubexray
