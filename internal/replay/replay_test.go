@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"strings"
 	"testing"
@@ -392,5 +393,30 @@ func TestAnonymizedTrafficStaysWithItsApp(t *testing.T) {
 	newAnonymizer().message(&m)
 	if want := graph.TrafficID(m.Nodes[0]); m.Nodes[1].ID != want || m.Nodes[1].Parent != m.Nodes[0].ID || strings.Contains(m.Nodes[1].ID, "checkout") {
 		t.Errorf("app %s, traffic %s (parent %s); want %s", m.Nodes[0].ID, m.Nodes[1].ID, m.Nodes[1].Parent, want)
+	}
+}
+
+func TestWriteRefusesLinesPlayersWouldRefuse(t *testing.T) {
+	t.Parallel()
+	// A big cluster: its snapshot alone is over MaxLine, while the replay as
+	// a whole is under MaxUncompressed.
+	g := graph.New()
+	long := strings.Repeat("x", 1<<20)
+	for i := range 20 {
+		name := fmt.Sprintf("pod-%d", i)
+		g.UpsertNode(graph.Node{ID: "Pod/shop/" + name, Kind: "Pod", Namespace: "shop", Name: name, Status: graph.Status{Ready: true, Message: long}})
+	}
+	_, _, snap := g.FlushAndSnapshot()
+	snap.TS = t0
+	raw, err := json.Marshal(snap)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(raw) <= MaxLine || len(raw) >= MaxUncompressed {
+		t.Fatalf("snapshot is %d bytes: the test needs one over a line and under a file", len(raw))
+	}
+	err = Write(t.Context(), io.Discard, [][]byte{raw}, Options{From: t0, To: t0.Add(time.Minute)})
+	if !errors.Is(err, ErrTooLarge) || !strings.Contains(err.Error(), "snapshot") || !strings.Contains(err.Error(), "replay line") {
+		t.Errorf("Write of a snapshot over MaxLine = %v, want ErrTooLarge saying the snapshot is too large for a line", err)
 	}
 }

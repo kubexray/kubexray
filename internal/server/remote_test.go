@@ -452,3 +452,50 @@ func TestAlertsBecomeIncidents(t *testing.T) {
 		t.Errorf("sources = %s", body)
 	}
 }
+
+func TestProbesDuringStartup(t *testing.T) {
+	t.Parallel()
+	hub := NewHub(MaxClients, 4) // the cluster hasn't synced: no snapshot yet
+	srv, err := New(hub, recorder.New(recorder.DefaultOptions), web.Assets(), slog.New(slog.DiscardHandler), Info{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ln, err := srv.ListenRemote(t.Context(), Remote{Addr: "127.0.0.1:0", Token: testToken})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- srv.Serve(ctx, ln) }()
+	t.Cleanup(func() {
+		cancel()
+		if err := <-done; err != nil {
+			t.Errorf("Serve: %v", err)
+		}
+	})
+	probe := func(path string) int {
+		t.Helper()
+		req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://"+ln.Addr().String()+path, nil)
+		req.Host = "10.244.1.7:8080" // the kubelet, at the pod's IP
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = resp.Body.Close()
+		return resp.StatusCode
+	}
+	if got := probe("/healthz"); got != http.StatusOK {
+		t.Errorf("/healthz while syncing = %d, want 200: the pod is alive", got)
+	}
+	if got := probe("/readyz"); got != http.StatusServiceUnavailable {
+		t.Errorf("/readyz while syncing = %d, want 503", got)
+	}
+	g := graph.New()
+	_, _, snap := g.FlushAndSnapshot()
+	if err := hub.Emit(snap, nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := probe("/readyz"); got != http.StatusOK {
+		t.Errorf("/readyz once the first snapshot is out = %d, want 200", got)
+	}
+}

@@ -8,7 +8,8 @@ import { HighlightContext, highlightStore, NO_HIGHLIGHT } from "../lib/highlight
 import { useStableCallback } from "../lib/hooks";
 import type { ClusterState } from "../lib/state";
 import { searchView } from "../lib/feed";
-import { allWorkloads, buildView, chainOf, viewKeeper } from "../lib/view";
+import { useEscape, useShortcut } from "../lib/keys";
+import { allWorkloads, buildView, chainOf, countIncidents, viewKeeper } from "../lib/view";
 import { DetailsPanel } from "./DetailsPanel";
 import { DiffPanel } from "./DiffPanel";
 import { EventLog } from "./EventLog";
@@ -35,6 +36,11 @@ interface Props {
   page?: ReactNode;
   /** Narrows the map to matching apps. */
   search?: string;
+  onClearSearch?: () => void;
+  /** Not up to date (reconnecting): the map is dimmed. */
+  stale?: boolean;
+  /** Back to live, or a replay's end: the L key. */
+  onLive?: () => void;
   canRewindTo: (ts: string) => boolean;
   onRewind: (ts: string) => void;
   actions?: (entry: Entry) => ReactNode;
@@ -62,11 +68,12 @@ export interface Compare {
  * panel and event log, with selection and hover tracing. */
 export function Workspace(props: Props) {
   const { state, incidents, groups, events, at, onSelectionChange } = props;
-  // The same objects for what didn't change, so the map redraws only the
+  // Every incident count on the page is from the incident list. The same
+  // objects are kept for what didn't change, so the map redraws only the
   // apps a delta touched.
   const [keepView] = useState(viewKeeper);
   const [keepMapView] = useState(viewKeeper);
-  const view = useMemo(() => keepView(buildView(state)), [keepView, state]);
+  const view = useMemo(() => keepView(countIncidents(buildView(state), incidents)), [keepView, state, incidents]);
 
   const [selected, setSelectedState] = useState<string | null>(props.initialSelection ?? null);
   // Diff mode: the moment compared from. States never change once made, so
@@ -178,15 +185,12 @@ export function Workspace(props: Props) {
     [incidents],
   );
 
-  // Escape clears the selection on the map; on another view it belongs to
-  // that view (closing a dialog).
+  // Escape clears the selection on the map, once nothing opened since (a
+  // menu, a pinned change) is left to close.
   const onMap = !props.page;
-  useEffect(() => {
-    if (!onMap) return;
-    const esc = (e: KeyboardEvent) => e.key === "Escape" && setSelected(null);
-    addEventListener("keydown", esc);
-    return () => removeEventListener("keydown", esc);
-  }, [setSelected, onMap]);
+  useEscape(onMap && !!selected, () => setSelected(null));
+  useShortcut("/", () => document.querySelector<HTMLInputElement>(".search input")?.focus());
+  useShortcut("l", props.onLive);
 
   const mapView = useMemo(() => keepMapView(searchView(view, props.search ?? "")), [keepMapView, view, props.search]);
   // Changes only when Helm's records do, not on every delta: the map's
@@ -216,10 +220,23 @@ export function Workspace(props: Props) {
       {props.notice}
       <IncidentCard list={list} at={at} canRewindTo={props.canRewindTo} onShow={show} onRewind={props.onRewind} actions={props.actions} />
       <Helm.Provider value={helm}>
-        <main className={`main${props.loading ? " loading" : ""}${logFull ? " log-full" : ""}`} style={{ "--aside": `${asideW}px` } as CSSProperties}>
-          <HighlightContext.Provider value={highlight}>
-            <MapView view={mapView} open={open} causeOf={causeOf} onToggle={toggle} onSelect={setSelected} onHover={hover} />
-          </HighlightContext.Provider>
+        <main className={`main${props.loading || props.stale ? " loading" : ""}${logFull ? " log-full" : ""}`} style={{ "--aside": `${asideW}px` } as CSSProperties}>
+          {mapView.length === 0 && props.search ? (
+            <div className="map map-empty" aria-label="Cluster map">
+              <p>
+                Nothing on the map matches “{props.search}”. Search looks at namespaces, apps, Services, Ingresses and images.
+              </p>
+              {props.onClearSearch && (
+                <button type="button" onClick={props.onClearSearch}>
+                  Clear the search
+                </button>
+              )}
+            </div>
+          ) : (
+            <HighlightContext.Provider value={highlight}>
+              <MapView view={mapView} open={open} causeOf={causeOf} onToggle={toggle} onSelect={setSelected} onHover={hover} />
+            </HighlightContext.Provider>
+          )}
           <Splitter axis="col" label="Resize the side panel" value={asideW} min={300} max={900} pane="after" onChange={setAsideW} onReset={() => setAsideW(ASIDE_W)} />
           <aside ref={setAside}>
             {parseReleaseId(selected) && selected ? (

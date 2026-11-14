@@ -4,9 +4,10 @@ import { FeedSets } from "../lib/feedContext";
 import { ago } from "../lib/format";
 import { podHealth, podText } from "../lib/health";
 import { highlightClasses, useHighlight } from "../lib/highlight";
+import { useEscape } from "../lib/keys";
 import { useNow } from "../lib/useNow";
 import { driftOf, Helm, type Owner, ownerOf, releaseId, TOOL_NAME } from "../lib/helm";
-import { type NamespaceView, type Row as ViewRow, type Workload, wireTarget, workloadHealth, workloadProblem } from "../lib/view";
+import { incidentCount, type NamespaceView, type Row as ViewRow, type Workload, wireTarget, workloadHealth, workloadProblem } from "../lib/view";
 
 export type { Highlight } from "../lib/highlight";
 
@@ -79,7 +80,7 @@ export const MapView = memo(function MapView(props: Props) {
 });
 
 const chipCount = (ns: NamespaceView) =>
-  ns.problems ? `${ns.problems} failing` : ns.workloadCount ? String(ns.workloadCount) : ns.serviceCount ? `${ns.serviceCount} svc` : "empty";
+  ns.problems ? incidentCount(ns.problems) : ns.workloadCount ? String(ns.workloadCount) : ns.serviceCount ? `${ns.serviceCount} svc` : "empty";
 
 /** Every namespace at a glance, always in view: a click opens one and
  * scrolls to it. Kubernetes' own namespaces sit in a menu. */
@@ -89,14 +90,10 @@ function NamespaceBar({ apps, system, current, onJump }: { apps: NamespaceView[]
   useEffect(() => {
     if (!menu) return;
     const away = (e: PointerEvent) => !box.current?.contains(e.target as globalThis.Node) && setMenu(false);
-    const esc = (e: KeyboardEvent) => e.key === "Escape" && setMenu(false);
     addEventListener("pointerdown", away);
-    addEventListener("keydown", esc);
-    return () => {
-      removeEventListener("pointerdown", away);
-      removeEventListener("keydown", esc);
-    };
+    return () => removeEventListener("pointerdown", away);
   }, [menu]);
+  useEscape(menu, () => setMenu(false));
   const sysProblems = system.reduce((n, ns) => n + ns.problems, 0);
   return (
     <nav className="ns-bar" aria-label="Namespaces">
@@ -125,7 +122,7 @@ function NamespaceBar({ apps, system, current, onJump }: { apps: NamespaceView[]
               aria-expanded={menu}
               onClick={() => setMenu(!menu)}
             >
-              System <em>{sysProblems ? `${sysProblems} failing` : system.length}</em>
+              System <em>{sysProblems ? incidentCount(sysProblems) : system.length}</em>
               <span aria-hidden="true">{menu ? "▴" : "▾"}</span>
             </button>
             {menu && (
@@ -142,7 +139,7 @@ function NamespaceBar({ apps, system, current, onJump }: { apps: NamespaceView[]
                   >
                     <i className={ns.problems ? "bad" : undefined} aria-hidden="true" />
                     {ns.name}
-                    <em>{ns.problems ? `${ns.problems} failing` : ns.workloadCount ? `${ns.workloadCount} app${ns.workloadCount === 1 ? "" : "s"}` : "empty"}</em>
+                    <em>{ns.problems ? incidentCount(ns.problems) : ns.workloadCount ? `${ns.workloadCount} app${ns.workloadCount === 1 ? "" : "s"}` : "empty"}</em>
                   </button>
                 ))}
                 <p>Kubernetes&apos; own namespaces.</p>
@@ -172,7 +169,7 @@ function SystemGroup({ system, ...props }: Props & { system: NamespaceView[] }) 
       <summary>
         <span className="ns-name">System</span>
         <span className={`ns-meta ${problems ? "bad" : ""}`}>
-          {system.length} namespaces · {apps} apps · {problems ? `${problems} need${problems === 1 ? "s" : ""} attention` : "all healthy"}
+          {system.length} namespaces · {apps} apps · {problems ? incidentCount(problems) : system.every((ns) => ns.allHealthy) ? "all healthy" : "not all ready"}
         </span>
       </summary>
       {isOpen && (
@@ -275,10 +272,11 @@ const Namespace = memo(function Namespace({ ns, isOpen: openState, causeOf, onTo
   const relOf = new Map(rels.map((r) => [r.key, r]));
   const isOpen = openState ?? (!ns.system || !ns.allHealthy);
   const released = rels.length ? ` · ${rels.length} release${rels.length === 1 ? "" : "s"}` : "";
+  const apps = `${ns.workloadCount} app${ns.workloadCount === 1 ? "" : "s"}${released}`;
   const meta = ns.problems
-    ? `${ns.workloadCount} apps${released} · ${ns.problems} need${ns.problems === 1 ? "s" : ""} attention`
+    ? `${apps} · ${incidentCount(ns.problems)}`
     : ns.workloadCount
-      ? `${ns.workloadCount} app${ns.workloadCount === 1 ? "" : "s"}${released} · all healthy`
+      ? `${apps} · ${ns.allHealthy ? "all healthy" : "not all ready"}`
       : `${ns.serviceCount} service${ns.serviceCount === 1 ? "" : "s"}`;
   const card = (n: Node, kind: string, key = n.id, extra = "") => <NodeCard key={key} n={n} kind={kind} dataKey={key} extra={extra} onSelect={onSelect} onHover={onHover} />;
   return (
@@ -428,27 +426,31 @@ const WorkloadCard = memo(function WorkloadCard({ w, cause, onSelect, onHover }:
   const className = useHighlight((h) => highlightClasses(w.node.id, h, `node workload ${health}`));
 
   return (
+    // The card's name row is the button; the pods are buttons of their own
+    // beside it, not inside it. A click anywhere else on the card selects
+    // the app too (the pointer's shortcut for the same button).
     <div
       className={className}
       data-key={w.node.id}
-      role="button"
-      tabIndex={0}
-      aria-label={`${w.node.kind} ${w.node.name}, ${ready} ready${problem ? `, ${problem}` : ""}`}
       onClick={() => onSelect(w.node.id)}
-      onKeyDown={(e) => {
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault();
-          onSelect(w.node.id);
-        }
-      }}
       onMouseEnter={() => onHover(w.node.id)}
       onMouseLeave={() => onHover(null)}
     >
-      <div className="top">
+      <button
+        type="button"
+        className="top"
+        aria-label={`${w.node.kind} ${w.node.name}, ${ready} ready${problem ? `, ${problem}` : ""}`}
+        onClick={(e) => {
+          e.stopPropagation();
+          onSelect(w.node.id);
+        }}
+        onFocus={() => onHover(w.node.id)}
+        onBlur={() => onHover(null)}
+      >
         <span className="n">{w.node.name}</span>
         <span className="k">{w.node.kind}</span>
         <span className="ready">{ready}</span>
-      </div>
+      </button>
       <div className="pods">
         <Pods w={w} onSelect={onSelect} />
         <Drift n={w.node} />

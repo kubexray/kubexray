@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Set as ChangeSet } from "../gen/feed";
-import { applyFilter, author, FILTERS, type Filter, filterCounts, fittingRange, justBefore, type Range, shortName, rangeWindow, summarize, tone, verdictLabel, verdictNote, type Window } from "../lib/feed";
+import { applyFilter, author, FILTERS, type Filter, filterCounts, fittingRange, justBefore, type Range, shortName, rangeWindow, shownEntries, summarize, tone, verdictLabel, verdictNote, type Window } from "../lib/feed";
 import { clock, hm } from "../lib/format";
 import { ActivityHistogram } from "./ActivityHistogram";
 import { DiffView, DriftView, hasDiff } from "./DiffView";
@@ -8,10 +8,18 @@ import { SafetyRecommendation } from "./SafetyRecommendation";
 
 interface Props {
   sets: ChangeSet[];
+  /** Live, the server's clock; in a replay, the playhead: what came later
+   * isn't shown, and verdicts are as they stood then. */
   now: number;
   query: string;
   /** Live mode: remembers what you've seen ("since you last looked"). */
   live: boolean;
+  /** A replay's start, which its numbers count from ("today" is live's). */
+  from?: number;
+  /** A replay paused before its end: moves the playhead to the end. */
+  onShowAll?: () => void;
+  /** The filter to open with (the Incidents view links to Broke something). */
+  initialFilter?: Filter;
   canRewindTo: (ts: string) => boolean;
   /** Opens the map at a moment, with an object selected. */
   onRewind: (ts: string, select: string) => void;
@@ -38,13 +46,15 @@ function writeSeen(t: number) {
   }
 }
 
-/** The lines under a set's title: each entry, unless the title already says it. */
+/** The lines under a set's title: each entry, unless the title already
+ * says it. Version label bumps (a Helm upgrade's Service) aren't listed. */
 function details(s: ChangeSet): string[] {
-  if (s.entries.length === 1) {
-    const e = s.entries[0];
+  const shown = shownEntries(s);
+  if (shown.length === 1) {
+    const e = shown[0];
     return e && !s.title.includes(e.summary) ? [e.summary] : [];
   }
-  return s.entries.map((e) => `${e.kind} ${e.name}: ${e.summary}`);
+  return shown.map((e) => `${e.kind} ${e.name}: ${e.summary}`);
 }
 
 function touches(s: ChangeSet): string {
@@ -53,8 +63,11 @@ function touches(s: ChangeSet): string {
 }
 
 /** The change feed (ADR-0012): every change, and what it did. */
-export function ChangesView({ sets, now, query, live, canRewindTo, onRewind, recommend }: Props) {
-  const [filter, setFilter] = useState<Filter>("all");
+export function ChangesView({ sets: recorded, now, query, live, from, onShowAll, initialFilter = "all", canRewindTo, onRewind, recommend }: Props) {
+  // A replay shows what had happened by the playhead.
+  const sets = useMemo(() => (live ? recorded : recorded.filter((s) => Date.parse(s.at) <= now)), [recorded, live, now]);
+  const later = recorded.length - sets.length;
+  const [filter, setFilter] = useState<Filter>(initialFilter);
   // Changes whose diff is open, by set ID.
   const [diffs, setDiffs] = useState<Set<string>>(() => new Set());
   const toggleDiff = (id: string) =>
@@ -80,8 +93,10 @@ export function ChangesView({ sets, now, query, live, canRewindTo, onRewind, rec
   const shown = useMemo(() => applyFilter(sets, filter, query, span), [sets, filter, query, span]);
   const counts = useMemo(() => filterCounts(sets, query, span), [sets, query, span]);
   const charted = useMemo(() => applyFilter(sets, filter, query), [sets, filter, query]);
-  const midnight = new Date(now).setHours(0, 0, 0, 0);
-  const today = useMemo(() => summarize(sets, midnight), [sets, midnight]);
+  // Live, today's numbers; a replay's, the whole recording's up to the playhead.
+  const since = live ? new Date(now).setHours(0, 0, 0, 0) : (from ?? 0);
+  const today = useMemo(() => summarize(sets, since), [sets, since]);
+  const period = live ? "today" : "in this recording";
   const unseen = useMemo(() => (seen === null ? null : summarize(sets, seen)), [sets, seen]);
 
   const markSeen = () => {
@@ -118,16 +133,31 @@ export function ChangesView({ sets, now, query, live, canRewindTo, onRewind, rec
         </section>
       )}
 
-      <section className="feed-stats" aria-label="Today at a glance">
+      {later > 0 && (
+        <section className="feed-banner quiet" aria-label="Later in the recording">
+          <div>
+            Showing changes up to {clock(new Date(now).toISOString())}, where the replay is. {later} more come{later === 1 ? "s" : ""} later in the recording.
+          </div>
+          {onShowAll && (
+            <div className="feed-actions">
+              <button type="button" onClick={onShowAll}>
+                Go to the end
+              </button>
+            </div>
+          )}
+        </section>
+      )}
+
+      <section className="feed-stats" aria-label={live ? "Today at a glance" : "The recording at a glance"}>
         <div className="feed-stat">
-          <div className="feed-stat-label">Changes today</div>
+          <div className="feed-stat-label">{live ? "Changes today" : "Changes recorded"}</div>
           <div className="feed-stat-value">{today.changes}</div>
           <div className="feed-stat-note">by {today.authors} {today.authors === 1 ? "person or tool" : "people and tools"}</div>
         </div>
         <div className="feed-stat">
           <div className="feed-stat-label">Broke something</div>
           <div className={`feed-stat-value${today.broke ? " crit" : ""}`}>{today.broke}</div>
-          <div className="feed-stat-note">{today.broke ? "filter by Broke something to see them" : "nothing broke today"}</div>
+          <div className="feed-stat-note">{today.broke ? "filter by Broke something to see them" : `nothing broke ${period}`}</div>
         </div>
         <div className="feed-stat">
           <div className="feed-stat-label">Settled healthy</div>
@@ -141,7 +171,7 @@ export function ChangesView({ sets, now, query, live, canRewindTo, onRewind, rec
         </div>
       </section>
 
-      <ActivityHistogram sets={charted} now={now} range={range} onRange={setRange} picked={picked} onPick={setPicked} />
+      <ActivityHistogram sets={charted} now={now} end={live ? "now" : clock(new Date(now).toISOString())} range={range} onRange={setRange} picked={picked} onPick={setPicked} />
 
       <div className="feed-filters" role="group" aria-label="Show">
         {FILTERS.map((f) => (
@@ -155,11 +185,15 @@ export function ChangesView({ sets, now, query, live, canRewindTo, onRewind, rec
       <section className="feed-list" aria-label="Changes">
         {shown.length === 0 && (
           <div className="feed-empty">
-            {sets.length === 0 ? "No changes recorded yet. They appear here as they happen." : "No changes match in this time. Pick a longer range, or clear the search and filters."}
+            {sets.length === 0
+              ? live
+                ? "No changes recorded yet. They appear here as they happen."
+                : "No changes recorded by this point in the replay."
+              : "No changes match in this time. Pick a longer range, or clear the search and filters."}
           </div>
         )}
         {shown.map((s) => (
-          <article key={s.id} className={`feed-card ${tone(s)}`}>
+          <article key={s.id} className={`feed-card ${tone(s, now)}`}>
             <time dateTime={s.at}>{hm(s.at)}</time>
             <div className="feed-main">
               <div className="feed-title">
@@ -168,7 +202,7 @@ export function ChangesView({ sets, now, query, live, canRewindTo, onRewind, rec
               </div>
               <div className="feed-by">
                 by <strong>{author(s)}</strong>
-                {s.entries.length > 1 && ` · ${s.entries.length} changes`}
+                {shownEntries(s).length > 1 && ` · ${shownEntries(s).length} changes`}
                 {touches(s) && ` · ${touches(s)}`}
               </div>
               {details(s).length > 0 && (
@@ -187,8 +221,8 @@ export function ChangesView({ sets, now, query, live, canRewindTo, onRewind, rec
               {diffs.has(s.id) && <DiffView entries={s.entries} />}
             </div>
             <div className="feed-side">
-              <span className={`verdict ${tone(s)}`}>{verdictLabel(s)}</span>
-              <span className="feed-note">{verdictNote(s)}</span>
+              <span className={`verdict ${tone(s, now)}`}>{verdictLabel(s)}</span>
+              <span className="feed-note">{verdictNote(s, now)}</span>
               <div className="feed-buttons">
                 {canRewindTo(justBefore(s)) && (
                   <button type="button" onClick={() => rewind(s)}>
@@ -210,7 +244,7 @@ export function ChangesView({ sets, now, query, live, canRewindTo, onRewind, rec
       </section>
 
       {open && (
-        <ChangeDetail set={open} canRewind={canRewindTo(justBefore(open))} onRewind={() => rewind(open)} onClose={() => setOpenId(null)} recommend={recommend} />
+        <ChangeDetail set={open} now={now} canRewind={canRewindTo(justBefore(open))} onRewind={() => rewind(open)} onClose={() => setOpenId(null)} recommend={recommend} />
       )}
     </main>
   );
@@ -218,12 +252,14 @@ export function ChangesView({ sets, now, query, live, canRewindTo, onRewind, rec
 
 function ChangeDetail({
   set: s,
+  now,
   canRewind,
   onRewind,
   onClose,
   recommend,
 }: {
   set: ChangeSet;
+  now: number;
   canRewind: boolean;
   onRewind: () => void;
   onClose: () => void;
@@ -256,9 +292,9 @@ function ChangeDetail({
         </button>
       </div>
 
-      <div className={`feed-verdict-box ${tone(s)}`}>
-        <span className={`verdict ${tone(s)}`}>{verdictLabel(s)}</span>
-        <span>{verdictNote(s) || "kubexray is still watching what it does."}</span>
+      <div className={`feed-verdict-box ${tone(s, now)}`}>
+        <span className={`verdict ${tone(s, now)}`}>{verdictLabel(s)}</span>
+        <span>{verdictNote(s, now) || "kubexray is still watching what it does."}</span>
       </div>
 
       {apps.length > 0 && (
@@ -271,7 +307,7 @@ function ChangeDetail({
       <section>
         <h3>What changed</h3>
         <ul className="feed-drawer-list">
-          {s.entries.map((e, i) => (
+          {shownEntries(s).map((e, i) => (
             <li key={`${e.object}-${i}`}>
               <span className="feed-ns">{e.kind}</span> <strong>{e.name}</strong> {e.summary}
               {e.drift && <DriftView entry={e} />}

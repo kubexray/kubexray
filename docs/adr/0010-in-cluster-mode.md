@@ -44,9 +44,13 @@ With `--data-dir`, each completed segment (a keyframe and its deltas, ADR-0003) 
 
 Retention is by age (`--retention`, default 7 days) and by total size (`--retention-size`, default 1 GiB), whichever comes first; the oldest segments go first.
 
+A segment that can't be read back in full (a bad block, a bit flip) costs only its own stretch of history. It is renamed to `.bad` and left out of the index, and what comes after it is treated as a new sequence, so no delta is applied across the gap. `.bad` files are deleted once they are older than the retention window.
+
 ### 5. Restarts
 
 A restarted process starts a new sequence (ADR-0003). Recorded history from before the restart stays available for rewinding: each segment stands alone (it starts with a keyframe). Exports (ADR-0008) must be one continuous sequence, so a window that spans a restart starts at the first segment after the restart; the response says so.
+
+A restart must not turn into a crash loop. The HTTP server starts before the cluster syncs: `/healthz` (liveness) answers as soon as kubexray listens, and `/readyz` (readiness) once the first snapshot can be streamed. The change feed and traffic baselines are rebuilt from history in the background, from one shared read of it, so a week of history doesn't hold up startup.
 
 ### 6. Packaging
 

@@ -20,6 +20,8 @@ export interface Stream {
   incidents: Incident[];
   groups: Group[];
   events: ClusterEvent[];
+  /** When the server was last heard from, by this browser's clock. */
+  updated: string | null;
 }
 
 export const MAX_EVENTS = 300;
@@ -72,7 +74,7 @@ const frame = (f: () => void) => (typeof requestAnimationFrame === "function" ? 
 const cancelFrame = (id: ReturnType<typeof frame>) => (typeof cancelAnimationFrame === "function" ? cancelAnimationFrame(id as number) : clearTimeout(id));
 
 export function useStream(): Stream {
-  const [stream, setStream] = useState<Stream>({ status: "connecting", state: null, incidents: [], groups: [], events: [] });
+  const [stream, setStream] = useState<Stream>({ status: "connecting", state: null, incidents: [], groups: [], events: [], updated: null });
 
   useEffect(() => {
     let ws: WebSocket | null = null;
@@ -81,12 +83,14 @@ export function useStream(): Stream {
     let stopped = false;
     let batch: ReturnType<typeof deltaBatcher> | null = null;
     let scheduled: ReturnType<typeof frame> | null = null;
+    // When the last message arrived, not when its frame was drawn.
+    let heard: string | null = null;
 
     const flush = () => {
       scheduled = null;
       if (!batch?.pending()) return;
       const { state, events } = batch.take();
-      setStream((s) => ({ ...s, state, events: events.length ? [...s.events, ...events].slice(-MAX_EVENTS) : s.events }));
+      setStream((s) => ({ ...s, state, updated: heard, events: events.length ? [...s.events, ...events].slice(-MAX_EVENTS) : s.events }));
     };
 
     const connect = () => {
@@ -102,9 +106,11 @@ export function useStream(): Stream {
       socket.onmessage = (ev: MessageEvent<string>) => {
         try {
           const parsed = JSON.parse(ev.data) as Message | IncidentsMessage;
+          heard = new Date().toISOString();
+          const updated = heard;
           if (parsed.type === "incidents") {
             const { incidents, groups } = parsed as IncidentsMessage;
-            setStream((s) => ({ ...s, incidents: Array.isArray(incidents) ? incidents : [], groups: Array.isArray(groups) ? groups : [] }));
+            setStream((s) => ({ ...s, incidents: Array.isArray(incidents) ? incidents : [], groups: Array.isArray(groups) ? groups : [], updated }));
             return;
           }
           const msg = parsed as Message;
@@ -114,7 +120,7 @@ export function useStream(): Stream {
             const state = fromSnapshot(msg);
             batch = deltaBatcher(state);
             delay = 500;
-            setStream((s) => ({ ...s, status: "live", state, events: kept.length ? [...s.events, ...kept].slice(-MAX_EVENTS) : s.events }));
+            setStream((s) => ({ ...s, status: "live", state, updated, events: kept.length ? [...s.events, ...kept].slice(-MAX_EVENTS) : s.events }));
           } else if (msg.type === "delta" && batch) {
             batch.apply(msg);
             scheduled ??= frame(flush);

@@ -6,6 +6,7 @@ import { FeedSets } from "../lib/feedContext";
 import { verdictNote } from "../lib/feed";
 import { Helm, type ReleaseRevision } from "../lib/helm";
 import { type HelmMark, keepLabels, labelWidth, type Mark, model, moments, RANGES, type Range, type RevisionInfo, type Span, step, ticks, windowFor } from "../lib/timeline";
+import { useEscape } from "../lib/keys";
 import { useNow } from "../lib/useNow";
 import { DiffView, hasDiff } from "./DiffView";
 import { stateText } from "./IncidentCard";
@@ -28,6 +29,10 @@ interface Props {
   compare?: Compare;
   /** A moment to mark, from the event pointed at in the log. */
   ghost?: string | null;
+  /** A link to the moment shown, with the selection, to copy. */
+  link?: () => string | null;
+  /** Live, but not up to date: reconnecting. */
+  stale?: boolean;
 }
 
 type Hover = { left: number; mark?: Mark; span?: Span; helm?: HelmMark } | null;
@@ -44,7 +49,19 @@ const RANGE_LABEL: Record<Range, string> = { hour: "Hour", day: "Day", week: "We
 const SHOWN_AFTER = 35_000;
 
 /** The rewind timeline: what changed, what broke, what fixed it, over time. */
-export function Timeline({ bounds, at, mode, incidents, onSeek, onFocus, playing, onPlay, compare, ghost }: Props) {
+export function Timeline({ bounds, at, mode, incidents, onSeek, onFocus, playing, onPlay, compare, ghost, link, stale = false }: Props) {
+  const [copied, setCopied] = useState(false);
+  const copyLink = () => {
+    const url = link?.();
+    if (!url) return;
+    navigator.clipboard.writeText(url).then(
+      () => {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 1500);
+      },
+      () => prompt("Copy this link", url),
+    );
+  };
   const now = useNow();
   const sets = useContext(FeedSets);
   const helmInfo = useContext(Helm);
@@ -65,12 +82,7 @@ export function Timeline({ bounds, at, mode, incidents, onSeek, onFocus, playing
     ro.observe(el);
     return () => ro.disconnect();
   }, [shown]);
-  useEffect(() => {
-    if (!pinned) return;
-    const close = (e: KeyboardEvent) => e.key === "Escape" && setPinned(null);
-    addEventListener("keydown", close);
-    return () => removeEventListener("keydown", close);
-  }, [pinned]);
+  useEscape(!!pinned, () => setPinned(null));
   // Compare with an earlier revision: go to it, start comparing there once
   // its moment has loaded, then go to the later one.
   const queued = useRef<{ from: number; to: number } | null>(null);
@@ -174,8 +186,8 @@ export function Timeline({ bounds, at, mode, incidents, onSeek, onFocus, playing
             ‹
           </button>
           {live ? (
-            <button type="button" className={`tl-live ${at ? "" : "on"}`} onClick={() => onSeek(null)} disabled={!at}>
-              {at ? "● Back to live" : "● Live"}
+            <button type="button" className={`tl-live ${at ? "" : stale ? "stale" : "on"}`} onClick={() => onSeek(null)} disabled={!at} title={at ? "Back to live (L)" : undefined}>
+              {at ? "● Back to live" : stale ? "○ Reconnecting" : "● Live"}
             </button>
           ) : (
             <button type="button" className="tl-play" onClick={onPlay}>
@@ -196,7 +208,7 @@ export function Timeline({ bounds, at, mode, incidents, onSeek, onFocus, playing
         )}
         <span className="tl-spacer" />
         <span className="clock">
-          {live ? (at ? "rewound" : "live") : `${duration(bounds.from, value)} of ${duration(bounds.from, last)}`}
+          {live ? (at ? "rewound" : stale ? "not live" : "live") : `${duration(bounds.from, value)} of ${duration(bounds.from, last)}`}
         </span>
         {live && (
           <div className="tl-range" role="group" aria-label="How much to show">
@@ -206,6 +218,11 @@ export function Timeline({ bounds, at, mode, incidents, onSeek, onFocus, playing
               </button>
             ))}
           </div>
+        )}
+        {link && (
+          <button type="button" className="tl-link" onClick={copyLink} title="A link to this moment, with what's selected">
+            {copied ? "Link copied" : "Copy link"}
+          </button>
         )}
         {compare && (
           <button type="button" className={`compare${compare.from ? " on" : ""}`} onClick={compare.toggle} aria-pressed={!!compare.from} disabled={compare.disabled}>

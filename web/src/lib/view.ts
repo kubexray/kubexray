@@ -36,6 +36,8 @@ export interface NamespaceView {
   serviceTargets: Map<string, Set<string>>;
   workloadCount: number;
   serviceCount: number;
+  /** Apps failing, by their pods; countIncidents makes it the incidents in
+   * the namespace, so every count on the page agrees. */
   problems: number;
   allHealthy: boolean;
 }
@@ -190,6 +192,21 @@ export function buildView(state: ClusterState): NamespaceView[] {
   }
   return out.sort((a, b) => Number(a.system) - Number(b.system) || b.workloadCount - a.workloadCount || a.name.localeCompare(b.name));
 }
+
+/** The view with each namespace's problems counted from the incident list:
+ * the one source for every incident count on the page (the header, the
+ * Incidents tab, the namespace bar and headers). */
+export function countIncidents(view: NamespaceView[], incidents: readonly { namespace: string }[]): NamespaceView[] {
+  const by = new Map<string, number>();
+  for (const i of incidents) by.set(i.namespace, (by.get(i.namespace) ?? 0) + 1);
+  return view.map((ns) => {
+    const problems = by.get(ns.name) ?? 0;
+    return problems === ns.problems ? ns : { ...ns, problems };
+  });
+}
+
+/** "1 incident", "3 incidents". */
+export const incidentCount = (n: number) => `${n} incident${n === 1 ? "" : "s"}`;
 
 /** Every app in the view, with its namespace. */
 export function allWorkloads(view: NamespaceView[]): { ns: string; w: Workload }[] {

@@ -30,7 +30,7 @@ export function DetailsPanel({ id, state, view, incident, onSelect, height }: Pr
   const n = id ? state?.nodes.get(id) : undefined;
   if (!n || !state) {
     return (
-      <section className="panel details" aria-live="polite" style={sized}>
+      <section className="panel details" style={sized}>
         <h2>Selected</h2>
         <p className="empty">
           {id ? "This object doesn't exist at this point in time." : "Select an app, pod or service to see what it's doing and how it connects."}
@@ -90,8 +90,12 @@ export function DetailsPanel({ id, state, view, incident, onSelect, height }: Pr
   }
 
   return (
-    <section className="panel details" aria-live="polite" style={sized}>
+    <section className="panel details" style={sized}>
       <h2>Selected</h2>
+      {/* Said when the selection changes, not each time a duration ticks. */}
+      <p className="sr-only" aria-live="polite">
+        Selected {n.kind} {n.name}
+      </p>
       <div className="kind">{n.kind}</div>
       <div className="name">{n.name}</div>
       <div className={`state ${health}`}>{stateText}</div>

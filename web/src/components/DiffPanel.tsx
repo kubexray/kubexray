@@ -42,14 +42,13 @@ export function DiffPanel({ from, to: shown, onSelect, onClose }: Props) {
   return (
     <section className="panel compare-panel" aria-label="Changes between two moments">
       <div className="diff-head">
-        <h2>Changes</h2>
+        <h2>
+          Compared {clock(a.at)} → {clock(b.at)}
+        </h2>
         <button type="button" onClick={onClose}>
           Done
         </button>
       </div>
-      <p className="diff-span">
-        {clock(a.at)} → {clock(b.at)}
-      </p>
       <p className="empty">{diffs.length === 0 ? "Nothing changed between these moments. Move the timeline to compare with another." : "Move the timeline to compare with another moment."}</p>
       {[...byNs].map(([ns, list]) => (
         <div key={ns} className="diff-ns">

@@ -1,26 +1,42 @@
 import type { Group, Incident } from "../gen/cause";
-import type { Set as ChangeSet } from "../gen/feed";
-import { author, verdictNote } from "../lib/feed";
-import { duration, hm } from "../lib/format";
-import { CauseLine, DiagnosisLine, entries, SignalTag, stateText } from "./IncidentCard";
+import { clock, duration, hm } from "../lib/format";
+import { CauseLine, DiagnosisLine, type Entry, entries, SignalTag, stateText } from "./IncidentCard";
 
 interface Props {
   incidents: Incident[];
   groups: Group[];
-  sets: ChangeSet[];
+  /** The moment shown: now when live, else the rewound moment or playhead. */
   now: number;
+  /** Live and not rewound: "now" means now. */
+  live: boolean;
+  query: string;
+  /** How many changes broke something up to the moment shown. */
+  broke: number;
   onShow: (app: string) => void;
+  /** Opens Changes, filtered to the changes that broke something. */
+  onBroke: () => void;
 }
 
-/** What's broken now, and the changes that broke something recently. */
-export function IncidentsView({ incidents, groups, sets, now, onShow }: Props) {
-  const list = entries(incidents, groups);
-  const broke = sets.filter((s) => s.verdict === "broke");
+/** Whether an entry mentions every word of a search. */
+function matches(e: Entry, query: string): boolean {
+  const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+  const text = [e.group?.cause.summary ?? "", ...e.incidents.flatMap((i) => [i.name, i.namespace, i.symptom.summary, stateText(i), i.causes?.[0]?.summary ?? ""])]
+    .join(" ")
+    .toLowerCase();
+  return words.every((w) => text.includes(w));
+}
+
+/** What's broken at the moment shown: now, or where the timeline is. */
+export function IncidentsView({ incidents, groups, now, live, query, broke, onShow, onBroke }: Props) {
+  const all = entries(incidents, groups);
+  const list = all.filter((e) => matches(e, query));
+  const when = clock(new Date(now).toISOString());
   return (
     <main className="feed">
-      <section aria-label="Broken now" className="feed-list">
-        <h2 className="feed-heading">Broken now</h2>
-        {list.length === 0 && <div className="feed-empty">Nothing is broken. Every app is running as expected.</div>}
+      <section aria-label={live ? "Broken now" : `Broken at ${when}`} className="feed-list">
+        <h2 className="feed-heading">{live ? "Broken now" : `Broken at ${when}`}</h2>
+        {all.length === 0 && <div className="feed-empty">{live ? "Nothing is broken. Every app is running as expected." : `Nothing was broken at ${when}.`}</div>}
+        {all.length > 0 && list.length === 0 && <div className="feed-empty">No incident matches “{query}”.</div>}
         {list.map((e) => {
           const first = e.incidents[0];
           if (!first) return null;
@@ -52,34 +68,13 @@ export function IncidentsView({ incidents, groups, sets, now, onShow }: Props) {
             </article>
           );
         })}
-      </section>
-
-      <section aria-label="Changes that broke something" className="feed-list">
-        <h2 className="feed-heading">Changes that broke something</h2>
-        {broke.length === 0 && <div className="feed-empty">No change has broken anything in the recorded history.</div>}
-        {broke.map((s) => (
-          <article key={s.id} className="feed-card">
-            <time dateTime={s.at}>{hm(s.at)}</time>
-            <div className="feed-main">
-              <div className="feed-title">
-                <span className="feed-ns">{s.namespace || "cluster"}</span>
-                <span className="feed-name">{s.title}</span>
-              </div>
-              <div className="feed-by">
-                by <strong>{author(s)}</strong> · {verdictNote(s)}
-              </div>
-            </div>
-            <div className="feed-side">
-              {s.incident && (
-                <div className="feed-buttons">
-                  <button type="button" onClick={() => onShow(s.incident ?? "")}>
-                    Show on map
-                  </button>
-                </div>
-              )}
-            </div>
-          </article>
-        ))}
+        {broke > 0 && (
+          <p className="feed-more">
+            <button type="button" className="link" onClick={onBroke}>
+              {broke} change{broke === 1 ? "" : "s"} broke something{live ? "" : ` up to ${when}`} →
+            </button>
+          </p>
+        )}
       </section>
     </main>
   );

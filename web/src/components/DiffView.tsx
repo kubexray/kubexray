@@ -1,10 +1,12 @@
 import { useState } from "react";
 import type { DiffLine, Entry } from "../gen/feed";
+import { meaningful } from "../lib/feed";
+import { undoCommand } from "../lib/undo";
 
 /** Whether a change has anything to show under "See diff": a diff, or an
  * edit whose contents kubexray doesn't read (it says so). */
 export function hasDiff(entries: Entry[]): boolean {
-  return entries.some((e) => (e.diff?.length ?? 0) > 0 || unread(e));
+  return entries.some((e) => meaningful(e.diff).length > 0 || unread(e));
 }
 
 const unread = (e: Entry) => (e.kind === "ConfigMap" || e.kind === "Secret") && e.what === "edited" && !e.diff?.length;
@@ -14,7 +16,7 @@ const unread = (e: Entry) => (e.kind === "ConfigMap" || e.kind === "Secret") && 
  * show its value (not recorded, or hidden because it looks like a
  * credential). */
 export function DiffView({ entries }: { entries: Entry[] }) {
-  const shown = entries.filter((e) => (e.diff?.length ?? 0) > 0 || unread(e));
+  const shown = entries.filter((e) => meaningful(e.diff).length > 0 || unread(e));
   const several = new Set(shown.map((e) => e.object)).size > 1;
   return (
     <div className="diff-view" role="group" aria-label="What changed, before and after">
@@ -32,7 +34,9 @@ export function DiffView({ entries }: { entries: Entry[] }) {
               <span className="diff-val">edited · kubexray doesn't read {e.kind} contents, so it can't show the values</span>
             </div>
           )}
-          {e.diff?.map((l, j) => <Lines key={`${l.path}-${j}`} l={l} />)}
+          {meaningful(e.diff).map((l, j) => (
+            <Lines key={`${l.path}-${j}`} l={l} />
+          ))}
         </div>
       ))}
     </div>
@@ -42,18 +46,12 @@ export function DiffView({ entries }: { entries: Entry[] }) {
 const TOOL: Record<string, string> = { helm: "Helm", argocd: "Argo CD", flux: "Flux" };
 
 /** A hand edit to a managed object (ADR-0019): what it says, how the object
- * differs from what its tool last applied, and the command that puts it
- * back. */
+ * differs from what its tool last applied, and how to put it back: just
+ * the edit undone when kubexray can say how, else the whole object. */
 export function DriftView({ entry: e, label }: { entry: Entry; label?: boolean }) {
-  const [copied, setCopied] = useState(false);
   const tool = TOOL[e.origin?.tool ?? ""] ?? e.origin?.tool ?? "its tool";
-  const copy = () => {
-    if (!e.restore) return;
-    navigator.clipboard.writeText(e.restore).then(
-      () => setCopied(true),
-      () => setCopied(false),
-    );
-  };
+  const undo = undoCommand(e);
+  const restoreLabel = e.origin?.tool === "helm" ? "Put it back as Helm applied it:" : `Re-apply from Git (${tool} may keep fields added by hand):`;
   return (
     <div className="feed-drift">
       <div>
@@ -66,15 +64,34 @@ export function DriftView({ entry: e, label }: { entry: Entry; label?: boolean }
           {e.driftDiff?.map((l, i) => <Lines key={`${l.path}-${i}`} l={l} />)}
         </div>
       )}
-      {e.restore && (
-        <div className="drift-restore">
-          <span>{e.origin?.tool === "helm" ? "Put it back as Helm applied it:" : `Re-apply from Git (${tool} may keep fields added by hand):`}</span>
-          <code>{e.restore}</code>
-          <button type="button" onClick={copy}>
-            {copied ? "Copied" : "Copy"}
-          </button>
-        </div>
-      )}
+      {undo && <CopyCommand label="Undo the edit:" command={undo} />}
+      {e.restore &&
+        (undo ? (
+          <details className="drift-more">
+            <summary>Or put the whole object back as {tool} applied it</summary>
+            <CopyCommand command={e.restore} />
+          </details>
+        ) : (
+          <CopyCommand label={restoreLabel} command={e.restore} />
+        ))}
+    </div>
+  );
+}
+
+function CopyCommand({ label, command }: { label?: string; command: string }) {
+  const [copied, setCopied] = useState(false);
+  const copy = () =>
+    navigator.clipboard.writeText(command).then(
+      () => setCopied(true),
+      () => setCopied(false),
+    );
+  return (
+    <div className="drift-restore">
+      {label && <span>{label}</span>}
+      <code>{command}</code>
+      <button type="button" onClick={copy}>
+        {copied ? "Copied" : "Copy"}
+      </button>
     </div>
   );
 }
