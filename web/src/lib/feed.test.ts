@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Entry, Set as ChangeSet } from "../gen/feed";
-import { applyFilter, author, buckets, causeDiff, filterCounts, fittingRange, matches, searchView, summarize } from "./feed";
+import { applyFilter, author, buckets, causeDiff, filterCounts, fittingRange, labelOnly, matches, searchView, shownEntries, summarize, tone, verdictLabel, verdictNote } from "./feed";
 import type { NamespaceView } from "./view";
 
 const T = (m: number) => new Date(Date.UTC(2026, 9, 24, 10, m)).toISOString();
@@ -26,7 +26,7 @@ const sets: ChangeSet[] = [
 describe("change feed", () => {
   it("names who made a change, even when Kubernetes doesn't record it", () => {
     expect(author(sets[0]!)).toBe("kubectl patch");
-    expect(author(sets[1]!)).toBe("an autoscaler or kubectl scale");
+    expect(author(sets[1]!)).toBe("someone (Kubernetes doesn't record who scales)");
     expect(author(sets[3]!)).toBe("argocd");
   });
 
@@ -69,8 +69,40 @@ describe("change feed", () => {
       { name: "payments", system: false, rows: [{ key: "pay", workload: { node: node("pay"), pods: [], uses: new Map() }, services: [], ingresses: [] }] },
     ] as unknown as NamespaceView[];
     expect(searchView(view, "check").map((ns) => [ns.name, ns.rows.map((r) => r.key)])).toEqual([["shop", ["checkout"]]]);
+    const withImage = [{ ...view[0], rows: [{ ...view[0]!.rows[0], workload: { node: { ...node("api"), spec: { containers: [{ name: "app", image: "nginx:1.27-alpine" }] } }, pods: [], uses: new Map() } }] }] as unknown as NamespaceView[];
+    expect(searchView(withImage, "nginx")).toHaveLength(1); // images, as the placeholder says
+    expect(searchView(view, "nothing-like-this")).toEqual([]);
     expect(searchView(view, "payments")).toHaveLength(1);
     expect(searchView(view, "")).toBe(view);
+  });
+});
+
+describe("verdicts", () => {
+  const broke = set({ verdict: "broke", incident: "Deployment/shop/checkout", note: "checkout is degraded 59s later", at: T(0), ended: new Date(Date.parse(T(3)) + 25_000).toISOString() });
+
+  it("says what a change broke, and when it was fixed, without calling it good news", () => {
+    expect(verdictLabel(broke)).toBe("Broke checkout");
+    expect(verdictNote(broke)).toMatch(/^fixed 3m later · at /);
+    expect(tone(broke)).toBe("resolved");
+  });
+
+  it("knows only what had happened by the playhead", () => {
+    const before = Date.parse(T(1));
+    expect(verdictNote(broke, before)).toBe("checkout is degraded 59s later");
+    expect(tone(broke, before)).toBe("broke");
+  });
+
+  it("leaves out version label bumps a Helm upgrade makes", () => {
+    const labels = [
+      { path: 'metadata.labels["app.kubernetes.io/version"]', op: "changed", from: "1.2.0", to: "1.2.1" },
+      { path: 'metadata.labels["helm.sh/chart"]', op: "changed", from: "storefront-1.2.0", to: "storefront-1.2.1" },
+    ];
+    const svc = entry({ kind: "Service", name: "storefront", what: "changed", diff: labels });
+    const dep = entry({ kind: "Deployment", name: "storefront", what: "image", diff: [{ path: "image", op: "changed", from: "a", to: "b" }, ...labels] });
+    expect(labelOnly(svc)).toBe(true);
+    expect(labelOnly(dep)).toBe(false);
+    expect(shownEntries(set({ entries: [dep, svc] }))).toEqual([dep]);
+    expect(shownEntries(set({ entries: [svc] }))).toEqual([svc]); // all there is
   });
 });
 

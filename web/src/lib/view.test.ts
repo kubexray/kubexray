@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { Edge, Node } from "../gen/graph";
 import { podHealth } from "./health";
 import type { ClusterState } from "./state";
-import { allWorkloads, buildView, chainOf, workloadHealth, workloadProblem } from "./view";
+import { allWorkloads, buildView, chainOf, countIncidents, incidentCount, workloadHealth, workloadProblem } from "./view";
 
 const T = "2026-10-23T14:00:00Z";
 const n = (id: string, extra: Partial<Node> = {}): Node => {
@@ -77,6 +77,15 @@ describe("buildView", () => {
     expect(ns.problems).toBe(1);
     expect(ns.allHealthy).toBe(false);
     expect(view[1]!.allHealthy).toBe(true);
+  });
+
+  it("counts incidents from the incident list, like the header and the Incidents tab", () => {
+    const counted = countIncidents(view, [{ namespace: "shop" }, { namespace: "shop" }]);
+    expect(counted[0]!.problems).toBe(2);
+    expect(counted[1]!.problems).toBe(0);
+    expect(countIncidents(view, [])[0]!.problems).toBe(0); // failing pods, no incident yet: not counted
+    expect(incidentCount(1)).toBe("1 incident");
+    expect(incidentCount(3)).toBe("3 incidents");
   });
 
   it("traces the path to an app", () => {

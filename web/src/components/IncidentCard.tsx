@@ -160,9 +160,15 @@ interface Props {
 /** How many other incidents to list before "+N more". */
 const MORE_SHOWN = 4;
 
+/** The entry whose card was folded to one line: kept while the map is
+ * remounted (a jump from another view); a new incident on top unfolds. */
+let foldedKey: string | null = null;
+const entryKey = (e: Entry) => (e.group ? `g-${e.group.cause.object}` : (e.incidents[0]?.app ?? ""));
+
 export function IncidentCard({ list, at, canRewindTo, onShow, onRewind, actions }: Props) {
   const live = useNow();
   const [allShown, setAllShown] = useState(false);
+  const [folded, setFolded] = useState(foldedKey);
   const now = at ? Date.parse(at) : live;
   const [top, ...rest] = list;
   const first = top?.incidents[0];
@@ -172,27 +178,16 @@ export function IncidentCard({ list, at, canRewindTo, onShow, onRewind, actions 
   const since = top.incidents.map((i) => i.since).filter((s): s is string => !!s).sort()[0];
   const changedAt = cause?.at;
   const more = rest.flatMap((e) => e.incidents);
+  const key = entryKey(top);
+  const isFolded = folded === key;
+  const fold = (on: boolean) => {
+    foldedKey = on ? key : null;
+    setFolded(foldedKey);
+  };
+  const headline = top.group ? `${top.group.cause.summary}: ${affected(top.incidents.length)}` : `${first.name} ${stateText(first)}`;
 
-  return (
-    <section className="incident" aria-live="polite">
-      <div className="inc-head">
-        <span className="badge">Incident</span>
-        {top.group ? (
-          <h2>
-            {top.group.cause.summary}: {affected(top.incidents.length)}
-          </h2>
-        ) : (
-          <h2>
-            {first.name} {stateText(first)}
-          </h2>
-        )}
-        {!top.group && <SignalTag inc={first} />}
-        <span className="since">
-          {top.group ? "" : `in ${first.namespace} · `}
-          {since && <>for {duration(since, now)} · since {clock(since)}</>}
-          {!top.group && <> · {first.symptom.summary}</>}
-        </span>
-      </div>
+  const body = (
+    <>
       {top.group && (
         <div className="affected">
           {top.incidents.map((i) => (
@@ -239,6 +234,38 @@ export function IncidentCard({ list, at, canRewindTo, onShow, onRewind, actions 
           </span>
         )}
       </div>
+    </>
+  );
+
+  return (
+    <section className={`incident${isFolded ? " folded" : ""}`} aria-label="Incident">
+      {/* Said once when it changes; the durations below tick every second. */}
+      <p className="sr-only" aria-live="polite">
+        Incident: {headline}
+        {more.length ? `, and ${more.length} more` : ""}
+      </p>
+      <div className="inc-head">
+        <span className="badge">Incident</span>
+        <h2>{headline}</h2>
+        {!top.group && <SignalTag inc={first} />}
+        <span className="since">
+          {top.group ? "" : `in ${first.namespace} · `}
+          {since && <>for {duration(since, now)} · since {clock(since)}</>}
+          {!top.group && !isFolded && <> · {first.symptom.summary}</>}
+          {isFolded && more.length > 0 && <> · {more.length} more</>}
+        </span>
+        {isFolded && (
+          <button type="button" className="inc-show" onClick={() => onShow(first.app)}>
+            Show on map
+          </button>
+        )}
+        <button type="button" className="inc-fold" aria-expanded={!isFolded} aria-label={isFolded ? "Expand the incident" : "Collapse the incident to one line"} title={isFolded ? "Expand" : "Collapse"} onClick={() => fold(!isFolded)}>
+          <svg aria-hidden="true" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+            <path d={isFolded ? "m6 9 6 6 6-6" : "m6 15 6-6 6 6"} />
+          </svg>
+        </button>
+      </div>
+      {!isFolded && body}
     </section>
   );
 }

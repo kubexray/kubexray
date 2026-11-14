@@ -1,20 +1,14 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import type { Me } from "../lib/api";
+import { hm } from "../lib/format";
+import { useEscape } from "../lib/keys";
+import type { View } from "../lib/route";
 import { applyTheme, savedTheme, type Theme } from "../lib/theme";
 import type { StreamStatus } from "../lib/useStream";
-import { allWorkloads, type NamespaceView, workloadHealth } from "../lib/view";
+import { allWorkloads, incidentCount, type NamespaceView, workloadHealth } from "../lib/view";
 import { Wordmark } from "./Wordmark";
 
-const STATUS: Record<StreamStatus | "replay", string> = {
-  connecting: "Connecting…",
-  live: "Live",
-  reconnecting: "Reconnecting…",
-  "signed-out": "Signed out",
-  replay: "Replay",
-};
-
-/** The three views: the map, the change feed, and incidents. */
-export type View = "map" | "changes" | "incidents" | "sources";
+export type { View } from "../lib/route";
 
 interface Props {
   view: NamespaceView[];
@@ -22,13 +16,24 @@ interface Props {
   rewound?: boolean;
   /** What's being shown, e.g. which cluster a replay is from. */
   label?: string;
-  /** sources: show the Sources view (live only). incidentApps: apps with an
-   * incident, which need attention even when their pods look fine (a
-   * signal such as failing requests, ADR-0016). */
-  nav?: { active: View; onChange: (v: View) => void; incidents: number; sources?: boolean; incidentApps?: string[] };
-  search?: { value: string; onChange: (q: string) => void };
+  /** incidents: how many there are at the moment shown, from the same list
+   * the Incidents view shows; the count is the way into it. */
+  nav?: { active: View; onChange: (v: View) => void; incidents: number };
+  /** Hidden on views it doesn't search. */
+  search?: { value: string; onChange: (q: string) => void; placeholder: string };
   /** Who is signed in, with sign-in (ADR-0013). */
   me?: Me | null;
+  /** Not up to date: the stream is reconnecting or the API isn't answering.
+   * When it last was, if ever. */
+  stale?: { since: string | null } | null;
+  /** What isn't needed at 3 a.m., in a menu: Sources, another replay. */
+  menu?: MenuItem[];
+}
+
+export interface MenuItem {
+  label: string;
+  note?: string;
+  onSelect: () => void;
 }
 
 const VIEWS: { id: View; label: string }[] = [
@@ -37,27 +42,28 @@ const VIEWS: { id: View; label: string }[] = [
   { id: "incidents", label: "Incidents" },
 ];
 
-export function Header({ view, status, rewound = false, label, nav, search, me }: Props) {
-  const ws = allWorkloads(view);
-  const count = (h: string) => ws.filter(({ w }) => workloadHealth(w) === h).length;
-  const incidentApps = new Set(nav?.incidentApps ?? []);
-  const crit = ws.filter(({ w }) => workloadHealth(w) === "crit").map(({ w }) => w.node.id);
-  const bad = new Set([...crit, ...incidentApps]).size;
-  const updating = count("warn");
+export function Header({ view, status, rewound = false, label, nav, search, me, stale, menu = [] }: Props) {
+  const updating = allWorkloads(view).filter(({ w }) => workloadHealth(w) === "warn").length;
+  const n = nav?.incidents ?? 0;
+  const past = rewound || status === "replay";
   return (
     <header className="header">
       <div className="brand">
         <Wordmark />
         {/* Live is the normal state, and the timeline says so: only the others show. */}
-        {(rewound || status !== "live") && <span className={`status ${rewound ? "rewound" : status}`}>{rewound ? "Rewound" : STATUS[status]}</span>}
+        {(rewound || status === "replay") && <span className={`status ${rewound ? "rewound" : status}`}>{rewound ? "Rewound" : "Replay"}</span>}
         {label && <span className="label">{label}</span>}
       </div>
       {nav && (
         <nav className="views" aria-label="Views">
-          {[...VIEWS, ...(nav.sources ? [{ id: "sources" as View, label: "Sources" }] : [])].map((v) => (
+          {VIEWS.map((v) => (
             <button key={v.id} type="button" aria-current={nav.active === v.id ? "page" : undefined} className={nav.active === v.id ? "on" : ""} onClick={() => nav.onChange(v.id)}>
               {v.label}
-              {v.id === "incidents" && nav.incidents > 0 && <span className="views-count">{nav.incidents}</span>}
+              {v.id === "incidents" && n > 0 && (
+                <span className="views-count" aria-label={incidentCount(n)}>
+                  {n}
+                </span>
+              )}
             </button>
           ))}
         </nav>
@@ -68,49 +74,93 @@ export function Header({ view, status, rewound = false, label, nav, search, me }
             <circle cx="11" cy="11" r="7" />
             <path d="m20 20-3.5-3.5" />
           </svg>
-          <span className="sr-only">Search apps and changes</span>
-          <input type="search" value={search.value} placeholder="Search apps, people, images…" onChange={(e) => search.onChange(e.target.value)} />
+          <span className="sr-only">{search.placeholder}</span>
+          <input type="search" value={search.value} placeholder={search.placeholder} onChange={(e) => search.onChange(e.target.value)} />
+          <kbd aria-hidden="true">/</kbd>
         </label>
       )}
-      {/* How the cluster is doing, in one line: the map shows the rest. */}
-      <div className={`health${bad ? " bad" : ""}`} aria-live="polite">
-        {bad ? (
-          <>
+      {/* How the cluster is doing, in one line: the map shows the rest. Out
+          of date, it says so instead: an old "no incidents" isn't news. */}
+      <div className="health-slot" aria-live="polite">
+        {status === "connecting" || status === "reconnecting" || stale ? (
+          <span className="health stale">
+            <i className="dot stale" aria-hidden="true" />
+            {stale?.since ? `Last update ${hm(stale.since)} · reconnecting` : "Connecting…"}
+          </span>
+        ) : n > 0 ? (
+          <button type="button" className="health bad" onClick={() => nav?.onChange("incidents")} disabled={!nav || nav.active === "incidents"}>
             <i className="dot crit" aria-hidden="true" />
-            <span>
-              <b>{bad}</b> need{bad === 1 ? "s" : ""} attention
-            </span>
-          </>
+            <b>{incidentCount(n)}</b>
+          </button>
         ) : (
-          <>
+          <span className="health">
             <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
               <path d="m5 12.5 4.5 4.5L19 7.5" />
             </svg>
-            No incidents{rewound || status === "replay" ? " at this moment" : ""}
-          </>
+            No incidents{past ? " at this moment" : ""}
+          </span>
         )}
-        {updating > 0 && <span className="updating">· {updating} updating</span>}
+        {updating > 0 && !stale && status !== "reconnecting" && <span className="updating">· {updating} updating</span>}
       </div>
       <ThemeToggle />
-      {me?.email && <Account me={me} />}
+      {(me?.email || menu.length > 0) && <Menu me={me} items={menu} />}
     </header>
   );
 }
 
-/** Who is signed in, and Sign out. */
-function Account({ me }: { me: Me }) {
-  const who = me.name || me.email || "";
+/** What isn't needed at 3 a.m., and the account. */
+function Menu({ me, items }: { me?: Me | null; items: MenuItem[] }) {
+  const [open, setOpen] = useState(false);
+  const box = useRef<HTMLDivElement>(null);
+  useEscape(open, () => setOpen(false));
+  const who = me?.name || me?.email || "";
   return (
-    <div className="account">
-      <span className="account-avatar" aria-hidden="true">
-        {who.slice(0, 1).toUpperCase()}
-      </span>
-      <span className="account-who" title={me.email}>
-        {who}
-      </span>
-      <a className="account-out" href={me.signOut ?? "/auth/logout"}>
-        Sign out
-      </a>
+    <div
+      className="hmenu"
+      ref={box}
+      onBlur={(e) => {
+        if (!box.current?.contains(e.relatedTarget as globalThis.Node | null)) setOpen(false);
+      }}
+    >
+      <button type="button" className={`hmenu-btn${who ? " who" : ""}`} aria-haspopup="menu" aria-expanded={open} aria-label="Menu" title={me?.email} onClick={() => setOpen(!open)}>
+        {who ? (
+          who.slice(0, 1).toUpperCase()
+        ) : (
+          <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+            <circle cx="5" cy="12" r="1.8" />
+            <circle cx="12" cy="12" r="1.8" />
+            <circle cx="19" cy="12" r="1.8" />
+          </svg>
+        )}
+      </button>
+      {open && (
+        <div className="hmenu-list" role="menu">
+          {who && (
+            <p className="hmenu-who">
+              Signed in as <b>{who}</b>
+            </p>
+          )}
+          {items.map((it) => (
+            <button
+              key={it.label}
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                setOpen(false);
+                it.onSelect();
+              }}
+            >
+              {it.label}
+              {it.note && <small>{it.note}</small>}
+            </button>
+          ))}
+          {me?.email && (
+            <a role="menuitem" href={me.signOut ?? "/auth/logout"}>
+              Sign out
+            </a>
+          )}
+        </div>
+      )}
     </div>
   );
 }

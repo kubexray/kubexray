@@ -28,6 +28,28 @@ test("the demo incident explains itself", async ({ page }) => {
   await shot(page, "incident");
 });
 
+test("every incident count agrees, and the header's is the way in", async ({ page }) => {
+  await openDemo(page);
+  await expect(page.locator(".views-count")).toHaveText("1");
+  await expect(page.locator(".ns-chip.bad")).toContainText("1 incident");
+  await page.getByRole("button", { name: "1 incident", exact: true }).click();
+  await expect(page.getByRole("heading", { name: /^Broken at / })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Incidents 1 incident" })).toHaveAttribute("aria-current", "page");
+});
+
+test("the incident card folds to one line, for more map", async ({ page }) => {
+  await openDemo(page);
+  const map = page.getByLabel("Cluster map");
+  const before = (await map.boundingBox())?.height ?? 0;
+  await page.getByRole("button", { name: "Collapse the incident to one line" }).click();
+  await expect(page.locator("section.incident .cause")).toHaveCount(0);
+  await expect(page.locator("section.incident h2")).toHaveText("checkout is degraded");
+  expect((await map.boundingBox())?.height ?? 0).toBeGreaterThan(before + 60);
+  await shot(page, "incident-folded");
+  await page.getByRole("button", { name: "Expand the incident" }).click();
+  await expect(page.locator("section.incident .cause").first()).toBeVisible();
+});
+
 test("the timeline goes back to before the incident, and on past its end", async ({ page }) => {
   await openDemo(page); // lands on the incident
   await seek(page, "min");
@@ -42,6 +64,7 @@ test("compare shows what changed between two moments", async ({ page }) => {
   await page.getByRole("button", { name: "Compare" }).click();
   await seek(page, "max");
   const panel = page.locator(".compare-panel");
+  await expect(panel.getByRole("heading", { level: 2 })).toHaveText(/^Compared .+ → .+/);
   await expect(panel).toContainText("ConfigMap checkout-config");
   await expect(panel).toContainText("changed by kubectl patch"); // edited, then put back: no net change
   await expect(panel).toContainText("Deployment checkout");
@@ -90,33 +113,53 @@ test("light by default, dark when chosen", async ({ page }) => {
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
 });
 
-test("the change feed says what each change did", async ({ page }) => {
-  await openDemo(page);
+test("in a replay, the change feed shows what had happened by the playhead", async ({ page }) => {
+  await openDemo(page); // paused on the incident
   await page.getByRole("button", { name: "Changes", exact: true }).click();
+  const cards = page.locator(".feed-card");
+  await expect(cards).toHaveCount(7);
+  await expect(page.getByRole("region", { name: "Later in the recording" })).toContainText("10 more come later in the recording");
+  await expect(page.locator(".feed-stats")).not.toContainText("today");
+  await expect(page.locator(".hist-title")).not.toContainText("last");
+  // The edit is still breaking checkout at the playhead: no hindsight.
+  await expect(cards.filter({ hasText: "ConfigMap checkout-config edited" }).locator(".verdict")).toHaveText("Broke checkout");
+  await expect(cards.filter({ hasText: "ConfigMap checkout-config edited" })).toHaveClass(/broke/);
+  await page.getByRole("button", { name: "Go to the end" }).click();
+  await expect(cards).toHaveCount(17);
+});
+
+test("the change feed says what each change did", async ({ page }) => {
+  await page.goto("/play/?replay=demo.kxr&view=changes"); // the whole recording
   const cards = page.locator(".feed-card");
   await expect(cards).toHaveCount(17); // the demo's 37 minutes
   await expect(cards.filter({ hasText: "api scaled 3 → 4 replicas" }).locator(".verdict")).toHaveText("Healthy");
-  await expect(cards.filter({ hasText: "Helm upgrade storefront 1.0.0 → 1.1.0" }).locator(".verdict")).toHaveText("Healthy");
+  await expect(cards.filter({ hasText: "api scaled 3 → 4 replicas" })).toContainText("Kubernetes doesn't record who scales");
+  const upgrade = cards.filter({ hasText: "Helm upgrade storefront 1.0.0 → 1.1.0" });
+  await expect(upgrade.locator(".verdict")).toHaveText("Healthy");
+  await expect(upgrade).not.toContainText("metadata.labels"); // version label bumps: the title says it
   const configEdits = cards.filter({ hasText: "ConfigMap checkout-config edited" });
-  // The edit that broke checkout, fixed since: green, and says so.
-  const resolved = configEdits.filter({ hasText: "Resolved" });
-  await expect(resolved).toContainText(/broke checkout for .* · resolved at /);
+  // The edit that broke checkout, fixed since: says both, and isn't green.
+  const resolved = configEdits.filter({ hasText: "Broke checkout" });
+  await expect(resolved).toContainText(/fixed \d+m later · at /);
   await expect(resolved).toHaveClass(/resolved/);
   await expect(configEdits.filter({ hasText: "Fixed an incident" })).toContainText("checkout healthy");
   const drift = cards.filter({ hasText: "env PROMO_BANNER added" });
   await expect(drift).toContainText("managed by Helm release storefront"); // the hand edit: drift
-  await expect(drift.locator(".drift-restore code")).toContainText("helm get manifest storefront -n shop");
+  // The edit undone first; the whole object put back, a click away.
+  await expect(drift.locator(".drift-restore code").first()).toHaveText("kubectl set env deploy/storefront -n shop PROMO_BANNER-");
+  await drift.getByText("Or put the whole object back as Helm applied it").click();
+  await expect(drift.locator(".drift-more code")).toContainText("helm get manifest storefront -n shop");
   await expect(cards.filter({ hasText: "env PROMO_BANNER removed" })).toBeVisible(); // put back with that command
   // Requests failing while every pod looks healthy: the Service edit.
-  await expect(cards.filter({ hasText: "spec.ports[0].targetPort 80 → 8080" })).toContainText(/broke api for .* · resolved at /);
+  await expect(cards.filter({ hasText: "spec.ports[0].targetPort 80 → 8080" })).toContainText("Broke api");
   await shot(page, "changes");
 
   await page.getByRole("button", { name: /^Broke something/ }).click();
   await expect(cards).toHaveCount(3);
   await page.getByRole("button", { name: /^All changes/ }).click();
-  await page.getByPlaceholder("Search apps, people, images…").fill("checkout-config");
+  await page.getByPlaceholder("Search changes and people…").fill("checkout-config");
   await expect(cards).toHaveCount(2);
-  await page.getByPlaceholder("Search apps, people, images…").fill("");
+  await page.getByPlaceholder("Search changes and people…").fill("");
 
   // The change that broke checkout, opened, then rewound to on the map.
   await resolved.getByRole("button", { name: "Details" }).click();
@@ -128,16 +171,72 @@ test("the change feed says what each change did", async ({ page }) => {
   await expect(page.locator(".details .name")).toHaveText("checkout");
 });
 
-test("the incidents view lists what broke", async ({ page }) => {
+test("the incidents view lists what's broken at the moment shown", async ({ page }) => {
   await openDemo(page);
   await page.getByRole("button", { name: /^Incidents/ }).click();
-  await expect(page.getByRole("heading", { name: "Changes that broke something" })).toBeVisible();
-  await expect(page.locator(".feed-list").last()).toContainText("ConfigMap checkout-config edited");
+  await expect(page.getByRole("heading", { name: /^Broken at / })).toBeVisible();
+  await expect(page.locator(".feed-card")).toHaveCount(1);
+  await expect(page.locator(".feed-card")).toContainText("checkout is degraded");
+  // Changes that broke something are the change feed's: a link there.
+  await page.getByRole("button", { name: /^1 change broke something up to/ }).click();
+  await expect(page.getByRole("button", { name: /^Broke something/ })).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator(".feed-card")).toHaveCount(1);
+  // Back returns to Incidents.
+  await page.goBack();
+  await expect(page.getByRole("heading", { name: /^Broken at / })).toBeVisible();
+});
+
+test("the address bar keeps the view, the moment and the app; Back moves between views", async ({ page }) => {
+  await openDemo(page);
+  await expect(page).toHaveURL(/[?&]t=/);
+  await page.getByRole("button", { name: "Changes", exact: true }).click();
+  await expect(page).toHaveURL(/view=changes/);
+  await page.goBack();
+  await expect(page).not.toHaveURL(/view=/);
+  await expect(page.getByLabel("Cluster map")).toBeVisible();
+  await page.reload();
+  await expect(page.locator(".details .name")).toHaveText("checkout");
+});
+
+test("search says when nothing matches, and goes away where it can't search", async ({ page }) => {
+  await openDemo(page);
+  await page.keyboard.press("/");
+  await expect(page.getByPlaceholder("Search apps and images…")).toBeFocused();
+  await page.keyboard.type("nginx:1.27");
+  await expect(page.locator(".workload")).not.toHaveCount(0); // images match
+  await page.getByPlaceholder("Search apps and images…").fill("no-such-app");
+  await expect(page.getByText(/Nothing on the map matches “no-such-app”/)).toBeVisible();
+  await page.getByRole("button", { name: "Clear the search" }).click();
+  await expect(page.locator(".workload").first()).toBeVisible();
+  await page.getByRole("button", { name: /^Incidents/ }).click();
+  await page.getByPlaceholder("Search incidents…").fill("payments");
+  await expect(page.getByText("No incident matches “payments”.")).toBeVisible();
+});
+
+test("Escape closes the innermost thing first", async ({ page }) => {
+  await openDemo(page);
+  await expect(page.locator(".details .name")).toHaveText("checkout");
+  await page.getByRole("navigation", { name: "Namespaces" }).getByRole("button", { name: /^System/ }).click();
+  await expect(page.getByRole("menu")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("menu")).toHaveCount(0);
+  await expect(page.locator(".details .name")).toHaveText("checkout"); // still selected
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".details .empty")).toHaveText(/Select an app/);
+});
+
+test("the map is usable without colour or a mouse", async ({ page }) => {
+  await openDemo(page);
+  const card = page.locator('.workload[data-key="Deployment/shop/checkout"]');
+  await expect(card).not.toHaveAttribute("role", "button"); // no buttons inside a button
+  await expect(card.locator(".pod.crit").first()).toHaveCSS("border-radius", "2px"); // failing pods are square
+  await card.getByRole("button", { name: /^Deployment checkout/ }).focus();
+  await page.keyboard.press("Enter");
+  await expect(page.locator(".details .name")).toHaveText("checkout");
 });
 
 test("the histogram shows and picks changes", async ({ page }) => {
-  await openDemo(page);
-  await page.getByRole("button", { name: "Changes", exact: true }).click();
+  await page.goto("/play/?replay=demo.kxr&view=changes");
   await page.getByRole("button", { name: "Hour", exact: true }).click();
   const full = page.locator(".hist-bar").filter({ has: page.locator(".seg") });
   await expect(full.first()).toBeVisible();
@@ -168,7 +267,7 @@ test("the histogram shows and picks changes", async ({ page }) => {
 
 test("see diff shows what changed, value by value", async ({ page }) => {
   await page.goto("/play/?replay=demo.kxr&view=changes");
-  const edit = page.locator(".feed-card").filter({ hasText: "ConfigMap checkout-config edited" }).filter({ hasText: "Resolved" });
+  const edit = page.locator(".feed-card").filter({ hasText: "ConfigMap checkout-config edited" }).filter({ hasText: "Broke checkout" });
   await edit.getByRole("button", { name: "See diff" }).click();
   await expect(edit.locator(".diff-line.del")).toContainText("info");
   await expect(edit.locator(".diff-line.add")).toContainText("verbose");

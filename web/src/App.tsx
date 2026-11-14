@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { FeedSets } from "./lib/feedContext";
 import { ChangesView } from "./components/ChangesView";
-import { Header, type View } from "./components/Header";
+import { Header } from "./components/Header";
 import { IncidentsView } from "./components/IncidentsView";
 import { SourcesView } from "./components/SourcesView";
 import type { Entry } from "./components/IncidentCard";
@@ -16,16 +16,27 @@ import { changeEvents, mergeEvents } from "./lib/events";
 import { type ClusterState, fromSnapshot } from "./lib/state";
 import { MAX_EVENTS, useStream } from "./lib/useStream";
 import { Wordmark } from "./components/Wordmark";
+import type { Filter } from "./lib/feed";
+import { readRoute, type Route, routeURL, SEARCH, useRouteHistory, type View } from "./lib/route";
 
-/** Polls an API endpoint, keeping the last good answer. */
-function usePoll<T>(load: (signal: AbortSignal) => Promise<T | null>, every: number): T | null {
-  const [value, setValue] = useState<T | null>(null);
+interface Polled<T> {
+  value: T | null;
+  /** When it last answered. */
+  ok: string | null;
+  /** Failing: the last two tries didn't answer. */
+  failing: boolean;
+}
+
+/** Polls an API endpoint, keeping the last good answer, and saying when
+ * the endpoint stops answering. */
+function usePoll<T>(load: (signal: AbortSignal) => Promise<T | null>, every: number): Polled<T> {
+  const [polled, setPolled] = useState<Polled<T> & { misses: number }>({ value: null, ok: null, failing: false, misses: 0 });
   useEffect(() => {
     const ctl = new AbortController();
     const run = () =>
       load(ctl.signal).then(
-        (v) => v !== null && setValue(v),
-        () => {},
+        (v) => setPolled((p) => ({ value: v ?? p.value, ok: new Date().toISOString(), failing: false, misses: 0 })),
+        () => !ctl.signal.aborted && setPolled((p) => ({ ...p, misses: p.misses + 1, failing: p.misses + 1 >= 2 })),
       );
     void run();
     const t = setInterval(run, every);
@@ -34,7 +45,7 @@ function usePoll<T>(load: (signal: AbortSignal) => Promise<T | null>, every: num
       ctl.abort();
     };
   }, [load, every]);
-  return value;
+  return polled;
 }
 
 /** Who is signed in, asked once. */
@@ -106,19 +117,9 @@ function useWhy(id: string | null, enabled: boolean): Incident | null {
   return enabled && why?.id === id ? why.inc : null;
 }
 
-// A link can open a moment with an app selected (alerts link to the moment
-// an incident started, ADR-0011): ?t=<time>&app=<id>.
-// Read once, then dropped from the address bar so a reload shows live.
-const LINK = new URLSearchParams(location.search);
-if (LINK.has("t") || LINK.has("app")) history.replaceState(null, "", location.pathname);
-function linkedMoment(): string | null {
-  const t = Date.parse(LINK.get("t") ?? "");
-  return Number.isFinite(t) ? new Date(t).toISOString() : null;
-}
-function linkedApp(): { id: string; app: string } | null {
-  const id = LINK.get("app");
-  return id ? { id, app: id } : null; // links name apps, not pods
-}
+// A link opens a view at a moment with an app selected (alerts link to the
+// moment an incident started, ADR-0011): ?view=…&t=<time>&app=<id>.
+const LINK = readRoute();
 
 /** Status events are only seen while the page is open (ADR-0007). */
 const OPENED = new Date().toISOString();
@@ -129,20 +130,33 @@ const APP_KINDS = new Set(["Deployment", "StatefulSet", "DaemonSet", "Job", "Rep
 export function App() {
   const stream = useStream();
   const me = useMe();
-  const history = usePoll<HistoryResponse>(fetchHistory, 5000);
-  const changes = usePoll<Change[]>(fetchChanges, 10_000);
-  const sources = usePoll<Sources>(fetchSources, 30_000);
-  const feed = usePoll<FeedResponse>(fetchFeed, 5000);
-  const [view, setView] = useState<View>("map");
+  const history = usePoll<HistoryResponse>(fetchHistory, 5000).value;
+  const changes = usePoll<Change[]>(fetchChanges, 10_000).value;
+  const sources = usePoll<Sources>(fetchSources, 30_000).value;
+  const feedPoll = usePoll<FeedResponse>(fetchFeed, 5000);
+  const feed = feedPoll.value;
+  const [view, setView] = useState<View>(LINK.view);
   const [query, setQuery] = useState("");
+  const [changesFilter, setChangesFilter] = useState<Filter>("all");
   // Jumping to the map from the feed or incidents selects an object there
   // (a new Workspace, seeded with it).
-  const [focus, setFocus] = useState<{ id: string | null; n: number }>(() => ({ id: LINK.get("app"), n: 0 }));
-  const [at, setAt] = useState<string | null>(linkedMoment);
+  const [focus, setFocus] = useState<{ id: string | null; n: number }>(() => ({ id: LINK.app, n: 0 }));
+  const [at, setAt] = useState<string | null>(LINK.t);
   const { past, last } = usePast(at);
-  const [selected, setSelected] = useState<{ id: string; app: string } | null>(linkedApp);
+  const [selected, setSelected] = useState<{ id: string; app: string } | null>(LINK.app ? { id: LINK.app, app: LINK.app } : null); // links name apps, not pods
   const [sharing, setSharing] = useState<Entry | null>(null);
   const [drafting, setDrafting] = useState<Entry | null>(null);
+
+  // The address bar follows the view, the moment and the selection; Back
+  // and Forward bring them back.
+  const route = useMemo<Route>(() => ({ view, t: at, app: selected?.app ?? null }), [view, at, selected?.app]);
+  const onPop = useCallback((r: Route) => {
+    setView(r.view);
+    setAt(r.t);
+    setSelected(r.app ? { id: r.app, app: r.app } : null);
+    setFocus((f) => ({ id: r.app, n: f.n + 1 }));
+  }, []);
+  useRouteHistory(route, onPop, { enabled: stream.status !== "signed-out" });
 
   // While a past moment loads (or isn't recorded), keep showing the last one
   // loaded, or the live cluster, dimmed.
@@ -153,7 +167,9 @@ export function App() {
   const missing = !!past && "missing" in past;
   const loading = !!at && !(past && "state" in past);
   const events = useMemo(() => mergeEvents(stream.events, changeEvents(changes ?? [])), [stream.events, changes]);
-
+  // Out of date: the stream is down, or the API stopped answering. Said
+  // with when it last was, never with a stale "No incidents".
+  const stale = stream.status !== "live" ? { since: stream.updated } : feedPoll.failing ? { since: feedPoll.ok } : null;
   const listed = incidents.some((i) => i.app === selected?.app || i.symptom.badPods?.includes(selected?.id ?? ""));
   const explainable = APP_KINDS.has(state?.nodes.get(selected?.id ?? "")?.kind ?? "");
   const why = useWhy(selected?.id ?? null, !at && !listed && explainable);
@@ -189,16 +205,34 @@ export function App() {
     setSelected(id ? { id, app: id } : null); // the new Workspace doesn't report its seeded selection
     setView("map");
   };
+  const go = (v: View) => {
+    if (v === "changes") setChangesFilter("all");
+    setView(v);
+  };
   const sets = feed?.sets ?? [];
   const now = Date.parse(feed?.now ?? state.ts); // the server's clock, like the sets' times
+  const moment = at ? Date.parse(at) : now;
   const page =
     view === "changes" ? (
-      <ChangesView sets={sets} now={now} query={query} live canRewindTo={canRewindTo} onRewind={(ts, id) => showOnMap(id, ts)} recommend={history?.recommend} />
+      <ChangesView key={changesFilter} sets={sets} now={now} query={query} live initialFilter={changesFilter} canRewindTo={canRewindTo} onRewind={(ts, id) => showOnMap(id, ts)} recommend={history?.recommend} />
     ) : view === "incidents" ? (
-      <IncidentsView incidents={incidents} groups={groups} sets={sets} now={at ? Date.parse(at) : now} onShow={(id) => showOnMap(id, at)} />
+      <IncidentsView
+        incidents={incidents}
+        groups={groups}
+        now={moment}
+        live={!at}
+        query={query}
+        broke={sets.filter((s) => s.verdict === "broke" && Date.parse(s.at) <= moment).length}
+        onShow={(id) => showOnMap(id, at)}
+        onBroke={() => {
+          setChangesFilter("broke");
+          setView("changes");
+        }}
+      />
     ) : view === "sources" ? (
       <SourcesView sources={sources} now={now} />
     ) : undefined;
+  const placeholder = SEARCH[view];
 
   return (
     <FeedSets.Provider value={sets}>
@@ -206,14 +240,19 @@ export function App() {
         key={focus.n}
         page={page}
         search={query}
+        onClearSearch={() => setQuery("")}
+        stale={!!stale}
+        onLive={at ? () => setAt(null) : undefined}
         header={(v) => (
           <Header
             view={v}
             status={stream.status}
             rewound={!!at}
-            nav={{ active: view, onChange: setView, incidents: incidents.length, sources: true, incidentApps: incidents.map((i) => i.app) }}
-            search={{ value: query, onChange: setQuery }}
+            stale={stale}
+            nav={{ active: view, onChange: go, incidents: incidents.length }}
+            search={placeholder ? { value: query, onChange: setQuery, placeholder } : undefined}
             me={me}
+            menu={[{ label: "Signal sources", note: "Where incidents come from", onSelect: () => setView("sources") }]}
           />
         )}
         notice={missing && <div className="notice">kubexray has no history for that moment. Pick a later time, or go back to live.</div>}
@@ -238,7 +277,20 @@ export function App() {
             </button>
           </>
         )}
-        timeline={(compare, ghost) => <Timeline bounds={history} at={at} mode="live" incidents={stream.incidents} onSeek={setAt} onFocus={(app, ts) => showOnMap(app, ts)} compare={compare} ghost={ghost} />}
+        timeline={(compare, ghost) => (
+          <Timeline
+            bounds={history}
+            at={at}
+            mode="live"
+            incidents={stream.incidents}
+            onSeek={setAt}
+            onFocus={(app, ts) => showOnMap(app, ts)}
+            compare={compare}
+            ghost={ghost}
+            stale={!!stale}
+            link={() => routeURL({ view: "map", t: at ?? new Date().toISOString(), app: selected?.app ?? null })}
+          />
+        )}
       />
       {drafting && (
         <PostmortemDialog

@@ -6,6 +6,8 @@ import { hm } from "../lib/format";
 interface Props {
   sets: ChangeSet[];
   now: number;
+  /** What the right edge is called: "now", or a replay's playhead. */
+  end: string;
   range: Range;
   onRange: (r: Range) => void;
   /** The time picked by clicking or dragging across bars. */
@@ -24,7 +26,7 @@ function when(t: number, range: Range): string {
 
 /** Changes over time, Kibana style: hover a bar to see its changes, click it
  * to show only those, drag across bars to pick a range. */
-export function ActivityHistogram({ sets, now, range, onRange, picked, onPick }: Props) {
+export function ActivityHistogram({ sets, now, end, range, onRange, picked, onPick }: Props) {
   const bars = useMemo(() => buckets(sets, range, now), [sets, range, now]);
   const [hover, setHover] = useState<number | null>(null);
   const [drag, setDrag] = useState<{ from: number; to: number } | null>(null);
@@ -53,7 +55,9 @@ export function ActivityHistogram({ sets, now, range, onRange, picked, onPick }:
       <div className="hist-head">
         <div className="hist-title">
           <span>
-            {total} change{total === 1 ? "" : "s"} in the last {RANGES.find((r) => r.id === range)?.label.toLowerCase()}
+            {total} change{total === 1 ? "" : "s"} in the {end === "now" ? "last " : ""}
+            {RANGES.find((r) => r.id === range)?.label.toLowerCase()}
+            {end === "now" ? "" : ` to ${end}`}
           </span>
           {picked && (
             <span className="hist-window">
@@ -156,7 +160,7 @@ export function ActivityHistogram({ sets, now, range, onRange, picked, onPick }:
               {bars[i] ? when(bars[i].start, range) : ""}
             </span>
           ))}
-          <span className="end">now</span>
+          <span className="end">{end}</span>
         </div>
       </div>
     </section>
