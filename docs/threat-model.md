@@ -39,8 +39,9 @@ It is a living document: update it whenever a change adds a listener, an API end
 | DNS rebinding against the local listener | Validate the `Host` header against the bound address |
 | Other users or hosts on the network | Bind to `127.0.0.1` by default; binding elsewhere requires an explicit flag and a warning |
 | Unauthenticated access to an in-cluster install | No anonymous mode in Helm; require a bearer token, OIDC sign-in with a required allow-list (ADR-0013), or an auth proxy (e.g. oauth2-proxy); chart ships a NetworkPolicy |
+| A page on another site posts to kubexray, carried by an auth proxy's cookie | Requests that change something refuse form and plain-text bodies, and requests the browser marks as from another site (`Sec-Fetch-Site`, or `Origin` where a browser doesn't send it). Alert nodes from Alertmanager are capped per app and overall |
 | Sign-in CSRF, code interception, token replay | Authorization code flow with PKCE, `state` and `nonce` in an HMAC-signed short-lived cookie; ID tokens verified against the provider's keys; verified email required; return paths kept on-site |
-| Guessing tokens or forcing sign-ins | 48-character random tokens; bad bearer tokens rate limited per client address; sign-in codes single-use and bound to PKCE; audit log of sign-ins, denials and exports |
+| Guessing tokens or forcing sign-ins | 48-character random tokens; bad bearer tokens rate limited per client address, never the right one (everyone may share an Ingress's address); sessions re-checked against the allow-list on every request; sign-in codes single-use and bound to PKCE; audit log of sign-ins, denials and exports |
 | Unverified emails passing an allow-list | Email and domain rules only match emails the provider marks verified; group rules use the groups claim |
 | Resource exhaustion by a client | Connection limit, max message size, bounded per-client send buffers with back-pressure / disconnect |
 

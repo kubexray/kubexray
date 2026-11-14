@@ -127,12 +127,17 @@ func parse(body []byte) ([]Sample, error) {
 // Find looks for Prometheus among the cluster's Services: named prometheus
 // or prometheus-server, or labelled app.kubernetes.io/name=prometheus. Its
 // port is 9090, or the first one.
+//
+// Anyone who can create a Service can name it prometheus, so when two
+// Services look equally like Prometheus, Find picks neither: incidents from
+// a lookalike would be worse than none. --prometheus says which one.
 func Find(services corelisters.ServiceLister) (ns, name, port string, ok bool) {
 	list, err := services.List(labels.Everything())
 	if err != nil {
 		return "", "", "", false
 	}
 	var best *corev1.Service
+	tied := false
 	score := func(s *corev1.Service) int {
 		switch {
 		case s.Name == "prometheus" || s.Name == "prometheus-server" || s.Name == "prometheus-operated":
@@ -145,11 +150,17 @@ func Find(services corelisters.ServiceLister) (ns, name, port string, ok bool) {
 		return 0
 	}
 	for _, s := range list {
-		if score(s) > 0 && len(s.Spec.Ports) > 0 && (best == nil || score(s) > score(best)) {
-			best = s
+		if score(s) == 0 || len(s.Spec.Ports) == 0 {
+			continue
+		}
+		switch {
+		case best == nil || score(s) > score(best):
+			best, tied = s, false
+		case score(s) == score(best):
+			tied = true
 		}
 	}
-	if best == nil {
+	if best == nil || tied {
 		return "", "", "", false
 	}
 	port = strconv.Itoa(int(best.Spec.Ports[0].Port))

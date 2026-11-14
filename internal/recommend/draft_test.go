@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	"github.com/kubexray/kubexray/internal/cause"
@@ -199,6 +201,35 @@ func TestRedact(t *testing.T) {
 	lines := Tail(strings.Repeat("line\n", 80))
 	if len(lines) != maxLogLines {
 		t.Errorf("Tail kept %d lines", len(lines))
+	}
+}
+
+func TestRequestHidesCredentials(t *testing.T) {
+	in := demoInput(t)
+	pw := "s3cret" // built here so secret scanners don't flag the source
+	in.Object = obj(t, &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "checkout-config"},
+		Data: map[string]string{
+			"LOG_LEVEL":      "info",
+			"DB_PASSWORD":    "hunter2",
+			"DATABASE_URL":   "postgres://app:" + pw + "@db:5432/shop",
+			"PAYMENTS_TOKEN": "tok-123",
+		},
+		BinaryData: map[string][]byte{"keystore": []byte("binary-secret")},
+	}, "ConfigMap", "v1")
+	req := Request(in)
+	for _, leaked := range []string{"hunter2", "s3cret", "tok-123", "binary-secret", "YmluYXJ5LXNlY3JldA"} {
+		if strings.Contains(req, leaked) {
+			t.Errorf("the request sends %q", leaked)
+		}
+	}
+	for _, kept := range []string{`"LOG_LEVEL": "info"`, `"DB_PASSWORD": "[redacted]"`, "postgres://[redacted]@db:5432/shop"} {
+		if !strings.Contains(req, kept) {
+			t.Errorf("the request lost %q", kept)
+		}
+	}
+	if in.Object.Object["data"].(map[string]any)["DB_PASSWORD"] != "hunter2" {
+		t.Error("the object itself, which the proof uses, was changed")
 	}
 }
 

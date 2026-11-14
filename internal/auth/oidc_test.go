@@ -300,12 +300,40 @@ func TestCapGroups(t *testing.T) {
 	for i := 0; i < 200; i++ {
 		many = append(many, fmt.Sprintf("team-%03d", i))
 	}
-	kept, dropped := capGroups(append([]string{"admins", long}, many...))
+	kept, dropped := capGroups(append([]string{"admins", long}, many...), nil)
 	total := 0
 	for _, g := range kept {
 		total += len(g)
 	}
 	if kept[0] != "admins" || slices.Contains(kept, long) || total > maxGroupBytes || dropped == 0 || len(kept)+dropped != 202 {
 		t.Errorf("kept %d (%d bytes), dropped %d", len(kept), total, dropped)
+	}
+	// The group that lets someone in is kept, wherever the provider put it.
+	if kept, _ := capGroups(append(slices.Clone(many), "sre"), []string{"sre"}); kept[0] != "sre" {
+		t.Errorf("allowed group not kept first: %v", kept[:3])
+	}
+}
+
+func TestSessionFollowsTheAllowList(t *testing.T) {
+	p := authtest.New(t)
+	o := newOIDC(t, p, Rules{Emails: []string{"ada@example.com"}, Groups: []string{"sre"}})
+	ada := session(signIn(t, o, p, "/", authtest.Code, map[string]any{"email": "ada@example.com", "email_verified": true}))
+	bob := session(signIn(t, o, p, "/", authtest.Code, map[string]any{"email": "bob@example.com", "email_verified": true, "groups": []any{"sre"}}))
+	if ada == nil || bob == nil {
+		t.Fatal("no session")
+	}
+	signedIn := func(c *http.Cookie) bool {
+		r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/", nil)
+		r.AddCookie(c)
+		_, _, ok := o.User(r)
+		return ok
+	}
+	if !signedIn(ada) || !signedIn(bob) {
+		t.Fatal("not signed in while allowed")
+	}
+	// kubexray restarts with ada and the sre group taken off the list.
+	o.cfg.Rules = Rules{Emails: []string{"cy@example.com"}}
+	if signedIn(ada) || signedIn(bob) {
+		t.Error("still signed in after being taken off the allow-list")
 	}
 }

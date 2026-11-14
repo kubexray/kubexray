@@ -167,7 +167,16 @@ func (o *OIDC) User(r *http.Request) (User, time.Time, bool) {
 	}
 	var u User
 	until, ok := o.seal.Open("session", c.Value, o.now(), &u)
-	return u, until, ok
+	if !ok {
+		return User{}, time.Time{}, false
+	}
+	// The allow-list as it is now, not as it was at sign-in: someone taken
+	// off it is signed out at kubexray's next start, not when the session
+	// would have ended.
+	if allowed, _ := o.cfg.Rules.Allow(u.Email, u.Groups); !allowed {
+		return User{}, time.Time{}, false
+	}
+	return u, until, true
 }
 
 // Session is the cookie that signs u in, until the session lifetime ends.
@@ -252,7 +261,7 @@ func (o *OIDC) Callback(w http.ResponseWriter, r *http.Request) {
 		u.KubeUser, _ = claims[o.cfg.UsernameClaim].(string)
 	}
 	var dropped int
-	u.Groups, dropped = capGroups(groups)
+	u.Groups, dropped = capGroups(groups, o.cfg.Rules.Groups)
 	if dropped > 0 {
 		// Fewer groups can only mean fewer permissions, never more.
 		o.log.Warn("too many groups to keep in a session; values in some namespaces may be hidden", "email", u.Email, "dropped", dropped)
@@ -321,9 +330,15 @@ const (
 	maxGroupBytes = 1536
 )
 
-func capGroups(groups []string) (kept []string, dropped int) {
+// Groups named in first are kept before any other, so the group that let
+// someone in is still in their session when it's checked again.
+func capGroups(groups, first []string) (kept []string, dropped int) {
+	ordered := slices.Clone(groups)
+	slices.SortStableFunc(ordered, func(a, b string) int {
+		return cmp.Compare(rank(first, a), rank(first, b))
+	})
 	total := 0
-	for _, g := range groups {
+	for _, g := range ordered {
 		if len(g) > maxGroup || total+len(g) > maxGroupBytes {
 			dropped++
 			continue
@@ -332,6 +347,13 @@ func capGroups(groups []string) (kept []string, dropped int) {
 		kept = append(kept, g)
 	}
 	return kept, dropped
+}
+
+func rank(first []string, g string) int {
+	if slices.Contains(first, g) {
+		return 0
+	}
+	return 1
 }
 
 func random() string {

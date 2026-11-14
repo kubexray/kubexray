@@ -32,7 +32,7 @@ packages:
   - path: "github.com/kubexray/kubexray/internal/server"
     output_path: "web/src/gen/server.ts"
     enum_style: "union"
-    exclude_files: ["server.go", "hub.go"]
+    exclude_files: ["server.go", "hub.go", "guard.go"]
     type_mappings:
       cause.Incident: "cause.Incident"
       cause.Group: "cause.Group"

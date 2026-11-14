@@ -71,6 +71,7 @@ jobs:
       - name: Install kind
         run: go install sigs.k8s.io/kind@v0.33.0
       - run: helm lint --strict charts/kubexray
+      - run: scripts/chart-guards.sh
       - run: make e2e-helm
         env:
           DEMO_SIGNALS: "0"

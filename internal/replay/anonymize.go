@@ -188,6 +188,7 @@ func (a *anonymizer) node(n *graph.Node) {
 	if n.Origin != nil {
 		o := *n.Origin
 		o.Name = a.replace("release", o.Name, "release")
+		o.Namespace = a.namespace(o.Namespace) // where the release lives
 		n.Origin = &o
 	}
 }

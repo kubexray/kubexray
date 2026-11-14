@@ -6,9 +6,19 @@
 version: 2
 project_name: kubexray
 
+# Versions come from release tags (v1.2.3) only: other tags, such as the
+# snapshot/* bookmarks kept before big changes, would name the archives
+# with a slash in a subdirectory.
+git:
+  ignore_tags:
+    - "snapshot/*"
+
+# The UI is embedded in the binary. CI builds it in a job of its own and
+# hands it over, so npm never runs beside the release's signing identity;
+# locally, run `make web` first.
 before:
   hooks:
-    - make web # the UI is embedded in the binary
+    - test -f internal/web/dist/index.html
 
 builds:
   - id: kubexray

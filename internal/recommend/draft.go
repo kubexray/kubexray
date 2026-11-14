@@ -16,6 +16,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	"github.com/kubexray/kubexray/internal/cause"
+	"github.com/kubexray/kubexray/internal/redact"
 )
 
 // Input is what a recommendation is drafted from.
@@ -232,11 +233,25 @@ func correction(answer string, failures []string) string {
 	return b.String()
 }
 
-// stripped is an object without the noise a rule shouldn't depend on.
+// stripped is an object without the noise a rule shouldn't depend on, and
+// without credentials: values under credential-like keys are left out, and
+// credential-like parts of the others hidden, as on the way into a replay.
+// The proof still runs against the object itself.
 func stripped(o *unstructured.Unstructured) map[string]any {
 	c := o.DeepCopy()
 	unstructured.RemoveNestedField(c.Object, "metadata", "managedFields")
 	unstructured.RemoveNestedField(c.Object, "metadata", "annotations", "kubectl.kubernetes.io/last-applied-configuration")
+	unstructured.RemoveNestedField(c.Object, "binaryData")
+	if data, ok, _ := unstructured.NestedStringMap(c.Object, "data"); ok {
+		for k, v := range data {
+			if redact.SensitiveName(k) {
+				data[k] = "[redacted]"
+			} else {
+				data[k], _ = redact.Text(v)
+			}
+		}
+		_ = unstructured.SetNestedStringMap(c.Object, data, "data")
+	}
 	return c.Object
 }
 

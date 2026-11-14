@@ -349,6 +349,10 @@ func TestServeModeLimitsBadTokens(t *testing.T) {
 	if got := f.status(req{path: "/api/history", bearer: "wrong-" + testToken}); got != http.StatusTooManyRequests {
 		t.Errorf("bad token past the limit = %d, want 429", got)
 	}
+	// From the same address, as everyone is behind an Ingress.
+	if got := f.status(req{path: "/api/history", bearer: testToken}); got != http.StatusOK {
+		t.Errorf("right token from a limited address = %d, want 200", got)
+	}
 }
 
 func TestServeModeStreamEndsWithTheSignIn(t *testing.T) {
