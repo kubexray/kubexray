@@ -750,6 +750,7 @@ func (s *Server) alertmanager(w http.ResponseWriter, r *http.Request) {
 	}
 	now := s.now()
 	s.lastAlert.Store(&now)
+	dropped := 0 // alerts past the cap; counted, as names come from the request
 	for _, a := range n.Alerts {
 		id, byPod := a.Target()
 		inc, known := incidents[id]
@@ -765,7 +766,7 @@ func (s *Server) alertmanager(w http.ResponseWriter, r *http.Request) {
 			case s.alertIdx.add(inc.App, n.ID):
 				s.alertNodes(n, false)
 			default:
-				s.log.Warn("too many firing alerts to show; leaving this one out", "alert", a.Name(), "app", inc.App)
+				dropped++
 			}
 		}
 		if !s.alerts.Enabled() {
@@ -787,6 +788,9 @@ func (s *Server) alertmanager(w http.ResponseWriter, r *http.Request) {
 			at = a.StartsAt
 		}
 		s.alerts.Queue(alert.Message{Alert: a, Incident: inc, Link: alert.Link(s.publicURL, at, inc.App)})
+	}
+	if dropped > 0 {
+		s.log.Warn("too many firing alerts to show; left some out", "dropped", dropped, "per_app", maxAlertsPerApp, "total", maxAlerts)
 	}
 	w.WriteHeader(http.StatusAccepted)
 }
