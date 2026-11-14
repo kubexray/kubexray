@@ -101,16 +101,31 @@ spec:
             - --secure-cookie
             {{- end }}
             {{- end }}
+          env:
+            # The Go runtime keeps its heap under this, with headroom, so a
+            # big cluster's snapshot makes the GC work harder instead of
+            # getting the pod OOM-killed. Set GOMEMLIMIT to override.
+            - name: KUBEXRAY_MEMORY_LIMIT
+              valueFrom:
+                resourceFieldRef: {containerName: kubexray, resource: limits.memory}
           {{- if not $proxy }}
           ports:
             - {name: http, containerPort: 8080}
-          readinessProbe:
+          # kubexray answers /healthz as soon as it listens, before it syncs
+          # the cluster and reads back its history, and /readyz once the
+          # live stream is up. The startup probe covers what comes before
+          # listening (opening the history, OIDC discovery) with room to spare.
+          startupProbe:
             httpGet: {path: /healthz, port: http}
+            periodSeconds: 5
+            failureThreshold: 60
+          readinessProbe:
+            httpGet: {path: /readyz, port: http}
             periodSeconds: 5
           livenessProbe:
             httpGet: {path: /healthz, port: http}
-            initialDelaySeconds: 30
             periodSeconds: 20
+            failureThreshold: 3
           {{- end }}
           securityContext: {{- toYaml .Values.securityContext | nindent 12 }}
           resources: {{- toYaml .Values.resources | nindent 12 }}

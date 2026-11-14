@@ -31,8 +31,10 @@ type Options struct {
 }
 
 // ErrTooLarge is returned when a window doesn't fit in a replay that players
-// will accept; pick a shorter window.
-var ErrTooLarge = fmt.Errorf("replay: the window is larger than %d MiB uncompressed; pick a shorter one", MaxUncompressed>>20)
+// will accept. Its message says why and what to do.
+var ErrTooLarge = errors.New("replay: too large for players to accept")
+
+var errWindowTooLarge = fmt.Errorf("%w: the window is larger than %d MiB uncompressed; pick a shorter one", ErrTooLarge, MaxUncompressed>>20)
 
 // recheck is how often incidents are re-analyzed while nothing changes, so
 // problems that outlast the grace period appear on time (as live, ADR-0007).
@@ -45,11 +47,17 @@ func Write(ctx context.Context, w io.Writer, msgs [][]byte, opts Options) error 
 	counted := &countingWriter{w: gz}
 	enc := json.NewEncoder(counted)
 	emit := func(v any) error {
+		before := counted.n
 		if err := enc.Encode(v); err != nil {
 			return err
 		}
+		// Players read a line at a time, up to MaxLine (with its newline):
+		// a longer one would export fine and then never play.
+		if n := counted.n - before; n > MaxLine {
+			return lineTooLarge(v, n)
+		}
 		if counted.n > MaxUncompressed {
-			return ErrTooLarge
+			return errWindowTooLarge
 		}
 		return nil
 	}
@@ -158,6 +166,22 @@ func Write(ctx context.Context, w io.Writer, msgs [][]byte, opts Options) error 
 		return err
 	}
 	return gz.Close()
+}
+
+// lineTooLarge explains a message too large for one replay line. A
+// snapshot is the whole cluster: a shorter window doesn't help.
+func lineTooLarge(v any, n int64) error {
+	what := "one message"
+	if m, ok := v.(graph.Message); ok {
+		switch m.Type {
+		case graph.MessageSnapshot:
+			what = "the cluster's snapshot at " + m.TS.UTC().Format(time.RFC3339)
+		case graph.MessageDelta:
+			what = "the changes at " + m.TS.UTC().Format(time.RFC3339)
+		case graph.MessageHeartbeat, graph.MessageError:
+		}
+	}
+	return fmt.Errorf("%w: %s takes %.1f MiB, more than the %d MiB a replay line may hold; this cluster is too large to export as a replay", ErrTooLarge, what, float64(n)/(1<<20), MaxLine>>20)
 }
 
 type countingWriter struct {

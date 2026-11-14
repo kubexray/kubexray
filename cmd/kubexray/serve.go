@@ -10,6 +10,8 @@ import (
 	"log/slog"
 	"net/url"
 	"os"
+	"runtime/debug"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -122,9 +124,14 @@ func serve(ctx context.Context, args []string, stderr io.Writer) error {
 		return errors.New("--retention and --retention-size-mb must be positive")
 	}
 
+	if limit, ok := memoryLimit(os.Getenv); ok {
+		debug.SetMemoryLimit(limit)
+		log.Info("memory limit for the Go runtime", "bytes", limit)
+	}
+
 	opts := recorder.Options{
 		Window: *retention, MaxBytes: recorder.DefaultOptions.MaxBytes, KeyframeEvery: recorder.DefaultOptions.KeyframeEvery,
-		Dir: *dataDir, MaxDiskBytes: *retentionMB << 20,
+		Dir: *dataDir, MaxDiskBytes: *retentionMB << 20, Log: log,
 	}
 	var rec *recorder.Recorder
 	if *dataDir != "" {
@@ -152,16 +159,7 @@ func serve(ctx context.Context, args []string, stderr io.Writer) error {
 		name = "in-cluster"
 	}
 	hub := server.NewHub(server.MaxClients, server.ClientQueue)
-	// The change feed of what was recorded before this start (ADR-0012),
-	// rebuilt in the background while recording goes on.
-	go func() {
-		history := feed.New(feed.MaxSets)
-		if err := feed.Rebuild(history, rec.Walk); err != nil {
-			log.Warn("rebuilding the change feed from history", "err", err)
-			return
-		}
-		hub.Feed().Seed(history)
-	}()
+	traffic := learnFromHistory(rec.Walk, hub, log)
 	srv, err := server.New(hub, rec, web.Assets(), log, server.Info{Cluster: name, Version: version.Version})
 	if err != nil {
 		return err
@@ -210,21 +208,81 @@ func serve(ctx context.Context, args []string, stderr io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("listening: %w", err)
 	}
-	conn.history = rec.Walk // baselines survive a restart
+	// Serve from here on: /healthz says the process is alive while the
+	// cluster syncs, and /readyz says it's ready once the first snapshot can
+	// be streamed. Syncing a big cluster, or reading a week of history,
+	// must not get the pod killed for being slow to start.
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	running := startServing(ctx, cancel, srv, ln)
 	g, _, err := conn.sync(ctx, log, stderr)
 	if err != nil {
-		_ = ln.Close()
-		if errors.Is(err, context.Canceled) {
-			return nil
-		}
-		return err
+		return running.abort(err)
 	}
 	graphOnce.Store(g)
 	watcherOnce.Store(conn.watcher)
-	return recordAndServe(ctx, g, rec, hub, srv, ln, log, func() {
+	go func() { // baselines survive a restart, once learned
+		select {
+		case h := <-traffic:
+			conn.watcher.SeedTraffic(h)
+		case <-ctx.Done():
+		}
+	}()
+	return recordAndServe(running, g, rec, hub, log, func() {
 		from, _, _ := rec.Bounds()
 		log.Info("kubexray is serving", "addr", ln.Addr().String(), "cluster", name, "history_from", from, "secrets", !conn.noSecrets)
 	})
+}
+
+// learnFromHistory walks what was recorded before this start once, in the
+// background while recording goes on, for the change feed (ADR-0012), which
+// it seeds, and the traffic baselines (ADR-0016), which it sends on the
+// returned channel. A long history takes a while to read: startup doesn't
+// wait for it.
+func learnFromHistory(walk recorder.WalkFunc, hub *server.Hub, log *slog.Logger) <-chan *cluster.TrafficHistory {
+	traffic := make(chan *cluster.TrafficHistory, 1)
+	go func() {
+		history := feed.New(feed.MaxSets)
+		var learned *cluster.TrafficHistory
+		errs := recorder.Tee(walk,
+			func(walk recorder.WalkFunc) error { return feed.Rebuild(history, walk) },
+			func(walk recorder.WalkFunc) (err error) {
+				learned, err = cluster.LearnTraffic(walk)
+				return err
+			})
+		if errs[0] != nil {
+			log.Warn("rebuilding the change feed from history", "err", errs[0])
+		} else {
+			hub.Feed().Seed(history)
+		}
+		if errs[1] != nil {
+			log.Warn("learning traffic baselines from history", "err", errs[1])
+		}
+		traffic <- learned
+	}()
+	return traffic
+}
+
+// memoryHeadroom is the share of the container's memory limit the Go
+// runtime aims to stay under: the rest is for what it doesn't count, like
+// the kernel's page cache of history segments and thread stacks.
+const memoryHeadroom = 0.9
+
+// memoryLimit is the soft memory limit for the Go runtime, from the
+// container's memory limit, which the Helm chart passes in
+// KUBEXRAY_MEMORY_LIMIT (bytes, from the pod's resources). Without one the
+// garbage collector lets the heap double before collecting, and a big
+// cluster's snapshot can get the pod OOM-killed. GOMEMLIMIT, when set, is
+// the operator's own choice and wins.
+func memoryLimit(getenv func(string) string) (int64, bool) {
+	if getenv("GOMEMLIMIT") != "" {
+		return 0, false
+	}
+	limit, err := strconv.ParseInt(strings.TrimSpace(getenv("KUBEXRAY_MEMORY_LIMIT")), 10, 64)
+	if err != nil || limit <= 0 {
+		return 0, false
+	}
+	return int64(float64(limit) * memoryHeadroom), true
 }
 
 // readURL reads a destination URL from a file (a mounted Secret: the URL is

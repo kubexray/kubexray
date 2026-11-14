@@ -352,15 +352,37 @@ func (s *Server) Handler() http.Handler {
 
 	secured := s.checkHost(s.headers(sameOrigin(s.session(api))))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Liveness and readiness probes: no data, no authentication, and any
-		// Host (the kubelet uses the pod's IP).
-		if s.remote != nil && r.URL.Path == "/healthz" {
+		// Probes: no data, no authentication, and any Host (the kubelet
+		// uses the pod's IP). /healthz says the process is alive, from the
+		// moment it listens; /readyz that it's ready to stream, once the
+		// cluster has synced and the first snapshot is out. Reading a long
+		// history and syncing a big cluster take a while: the pod mustn't
+		// be killed for it, nor sent traffic before.
+		if s.remote != nil && (r.URL.Path == "/healthz" || r.URL.Path == "/readyz") {
 			w.Header().Set("Content-Type", "text/plain")
+			if r.URL.Path == "/readyz" && !s.ready() {
+				w.WriteHeader(http.StatusServiceUnavailable)
+				_, _ = io.WriteString(w, "starting\n")
+				return
+			}
 			_, _ = io.WriteString(w, "ok\n")
 			return
 		}
 		secured.ServeHTTP(w, r)
 	})
+}
+
+// ready reports whether the live stream has its first snapshot.
+func (s *Server) ready() bool {
+	if s.hub == nil {
+		return false
+	}
+	select {
+	case <-s.hub.Ready():
+		return true
+	default:
+		return false
+	}
 }
 
 // checkHost rejects requests addressed to any other host name, which is what

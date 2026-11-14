@@ -120,7 +120,6 @@ func TestSensitivities(t *testing.T) {
 
 func TestSeedTraffic(t *testing.T) {
 	t.Parallel()
-	w := &Watcher{history: map[string]history{}}
 	var msgs [][]byte
 	for i := range 90 {
 		ts := day0.Add(time.Duration(i) * time.Minute)
@@ -140,10 +139,54 @@ func TestSeedTraffic(t *testing.T) {
 		}
 		return nil
 	}
-	if err := w.SeedTraffic(walk); err != nil {
+	learned, err := LearnTraffic(walk)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if got := len(w.history["Traffic/shop/deployment.api"]); got != 90 {
-		t.Errorf("seeded %d minutes, want 90", got)
+	// The watcher has been running a while already: what it read itself
+	// stays, after what was recorded before it.
+	const id = "Traffic/shop/deployment.api"
+	first := day0.Add(89*time.Minute + 20*time.Second) // the last recorded minute, read again live
+	w := &Watcher{now: func() time.Time { return first.Add(time.Minute) }, history: map[string]history{
+		id: {{at: first, rps: 7}, {at: first.Add(time.Minute), rps: 8}},
+	}}
+	w.SeedTraffic(learned)
+	h := w.history[id]
+	if len(h) != 91 {
+		t.Fatalf("seeded %d minutes, want the 89 recorded before the watcher started and its own 2", len(h))
+	}
+	if !h[88].at.Before(h[89].at) || h[89].rps != 7 || h[90].rps != 8 {
+		t.Errorf("the watcher's own minutes didn't stay last: %+v", h[87:])
+	}
+}
+
+func TestSeedTrafficDropsAppsLongGone(t *testing.T) {
+	t.Parallel()
+	gone := graph.Node{ID: "Traffic/shop/deployment.old", Kind: graph.KindTraffic, Traffic: &graph.Traffic{RPS: 5}}
+	raw, _ := json.Marshal(graph.Message{Type: graph.MessageSnapshot, TS: day0, Nodes: []graph.Node{gone}})
+	learned, err := LearnTraffic(func(fn func([]byte) error) error { return fn(raw) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := &Watcher{now: func() time.Time { return day0.Add(keepHistory + time.Hour) }, history: map[string]history{}}
+	w.SeedTraffic(learned)
+	if _, ok := w.history[gone.ID]; ok {
+		t.Error("seeded a baseline for an app with no traffic in over a week")
+	}
+}
+
+func TestGoneAppsLoseTheirHistory(t *testing.T) {
+	t.Parallel()
+	w := newSignalWatcher()
+	now := day0.Add(30 * 24 * time.Hour)
+	w.now = func() time.Time { return now }
+	w.history["Traffic/shop/deployment.gone"] = history{{at: now.Add(-keepHistory - time.Minute)}}
+	w.history["Traffic/shop/deployment.quiet"] = history{{at: now.Add(-time.Hour)}}
+	w.readTraffic(t.Context(), nil, nil) // Prometheus has neither of them this minute
+	if _, ok := w.history["Traffic/shop/deployment.gone"]; ok {
+		t.Error("an app gone for over a week kept its traffic history")
+	}
+	if _, ok := w.history["Traffic/shop/deployment.quiet"]; !ok {
+		t.Error("an app missing for an hour lost its baseline")
 	}
 }
