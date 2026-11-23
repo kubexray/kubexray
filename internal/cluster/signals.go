@@ -37,7 +37,10 @@ type memUse struct {
 // Only restarts of a pod that had been ready since its previous one count:
 // the signal is for apps that look fine between restarts. A crash loop
 // never gets ready, and is an incident of its own while it lasts; its
-// restarts mustn't keep the app broken for an hour after it's fixed.
+// restarts mustn't keep the app broken for an hour after it's fixed. Nor
+// do restarts that ended for reason Unknown: the node or its container
+// runtime went away under the pod (a reboot, Docker restarting), which
+// isn't the app restarting.
 // Called with w.mu held.
 func (w *Watcher) noteRestarts(id string, old, pod *corev1.Pod) []time.Time {
 	defer func() {
@@ -53,13 +56,13 @@ func (w *Watcher) noteRestarts(id string, old, pod *corev1.Pod) []time.Time {
 	}
 	now := restartCount(pod)
 	times := w.restarts[id]
-	if old == nil && now > 0 {
+	if old == nil && now > 0 && !nodeWentAway(pod) {
 		if at := lastRestart(pod); !at.IsZero() {
 			times = []time.Time{at}
 		}
 	}
 	if before < now && old != nil {
-		if w.wasReady[id] {
+		if w.wasReady[id] && !nodeWentAway(pod) {
 			at := lastRestart(pod)
 			if at.IsZero() {
 				at = w.now()
@@ -73,6 +76,19 @@ func (w *Watcher) noteRestarts(id string, old, pod *corev1.Pod) []time.Time {
 	}
 	w.restarts[id] = times
 	return slices.Clone(times)
+}
+
+// nodeWentAway reports whether the container that stopped last ended for
+// reason Unknown, which the kubelet gives when the runtime lost it rather
+// than the app exiting.
+func nodeWentAway(pod *corev1.Pod) bool {
+	var last *corev1.ContainerStateTerminated
+	for _, cs := range pod.Status.ContainerStatuses {
+		if t := cs.LastTerminationState.Terminated; t != nil && (last == nil || t.FinishedAt.After(last.FinishedAt.Time)) {
+			last = t
+		}
+	}
+	return last != nil && last.Reason == "Unknown"
 }
 
 func podReady(pod *corev1.Pod) bool {
